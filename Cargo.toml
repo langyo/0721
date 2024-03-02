@@ -1,0 +1,72 @@
+[workspace]
+members = ["packages/*"]
+default-members = ["packages/server"]
+resolver = "2"
+
+[profile.release]
+lto = true
+opt-level = 'z'
+codegen-units = 1
+panic = "abort"
+
+[workspace.package]
+authors = ["langyo <langyo.china@gmail.com>"]
+publish = false
+
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+hikari-boot = { git = "https://github.com/celestia-island/hikari" }
+tairitsu-utils = { git = "https://github.com/celestia-island/tairitsu" }
+
+anyhow = "^1"
+async-trait = "^0.1"
+derive_more = "*"
+once_cell = "^1"
+
+base64 = "^0.22"
+bytes = "^1"
+chrono = { version = "^0.4", features = ["serde", "unstable-locales"] }
+futures = "^0.3"
+
+serde = { version = "^1", features = ["derive"] }
+serde_json = "^1"
+postcard = { version = "^1", features = ["alloc"] }
+toml = "^0.8"
+# FIXME - https://github.com/SeaQL/sea-orm/pull/2088
+strum = { version = "^0.25", features = ["derive"] }
+uuid = { version = "^1", features = [
+    'v4',
+    'fast-rng',
+    'macro-diagnostics',
+    'serde',
+] }
+
+log = "^0.4"
+tracing = "^0.1"
+tracing-subscriber = "^0.3"
+tracing-appender = "^0.2"
+console_log = "^1"
+
+web-sys = { version = "^0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlHeadElement",
+    "HtmlBodyElement",
+    "HtmlStyleElement",
+    "HtmlTextAreaElement",
+    "HtmlInputElement",
+    "HtmlFormElement",
+    "CssStyleDeclaration",
+    "WheelEvent",
+] }
+js-sys = "^0.3"
+wasm-bindgen = "0.2.90"
+wasm-bindgen-futures = "^0.4"
+gloo = "^0.11"
+
+redb = "^1.5"
+image = { version = "^0.24", features = ["gif", "jpeg", "png", "webp"] }

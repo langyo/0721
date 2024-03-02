@@ -1,0 +1,40 @@
+[package]
+name = "_database"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tairitsu-utils = { workspace = true }
+
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+derive_more = { workspace = true }
+once_cell = { workspace = true }
+
+base64 = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+postcard = { workspace = true }
+toml = { workspace = true }
+strum = { workspace = true }
+uuid = { workspace = true }
+
+log = { workspace = true }
+tracing = { workspace = true }
+
+jsonwebtoken = "^9"
+bcrypt = "^0.15"
+sha3 = "^0.10"
+
+image = { workspace = true }
+redb = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "^1", features = ["full"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "^1", features = ["rt", "macros"] }

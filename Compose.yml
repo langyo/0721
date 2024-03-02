@@ -1,0 +1,19 @@
+version: '3'
+
+volumes:
+  db:
+  images:
+  logs:
+
+services:
+  service:
+    image: ciallo-0721:latest
+    ports:
+      - 80:80
+    restart: unless-stopped
+    volumes:
+      - images:/home/res/images
+      - logs:/home/res/logs
+      - db:/home/res/database
+    environment:
+      - JWT_SECRET=ciallo@0721

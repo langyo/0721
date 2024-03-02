@@ -1,0 +1,52 @@
+[package]
+name = "_client"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+_database = { path = "../database" }
+
+hikari-boot = { workspace = true }
+tairitsu-utils = { workspace = true }
+
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+derive_more = { workspace = true }
+once_cell = { workspace = true }
+
+base64 = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+strum = { workspace = true }
+uuid = { workspace = true }
+
+log = { workspace = true }
+console_log = { workspace = true }
+
+web-sys = { workspace = true }
+js-sys = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+gloo = { workspace = true }
+
+reqwest = { version = "^0.11", features = [
+    "cookies",
+    "gzip",
+    "brotli",
+    "json",
+] }
+
+stylist = { version = "^0.13", features = [
+    "yew_integration",
+    "ssr",
+    "hydration",
+] }
+yew = { version = "^0.21", features = ["ssr", "hydration"] }
+yew-router = "^0.18"

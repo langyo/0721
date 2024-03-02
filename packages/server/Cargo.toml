@@ -1,0 +1,66 @@
+[package]
+name = "_server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+_client = { path = "../client" }
+_database = { path = "../database" }
+
+hikari-boot = { workspace = true }
+tairitsu-utils = { workspace = true }
+
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+derive_more = { workspace = true }
+once_cell = { workspace = true }
+
+base64 = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+tokio = { version = "^1", features = ["full"] }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+strum = { workspace = true }
+uuid = { workspace = true }
+
+log = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+image = { workspace = true }
+webp = "^0.2"
+
+axum = { version = "^0.7", features = ["query", "multipart"] }
+axum-extra = { version = "^0.9", features = [
+  "typed-header",
+  "multipart",
+  "cookie",
+] }
+clap = { version = "^4", features = ["derive"] }
+hyper = { version = "^1", features = ["server", "http1"] }
+tower = { version = "^0.4", features = ["make"] }
+tower-http = { version = "^0.5", features = [
+  "fs",
+  "trace",
+  "compression-gzip",
+] }
+
+stylist = { version = "^0.13", features = [
+  "yew_integration",
+  "ssr",
+  "hydration",
+] }
+yew = { version = "^0.21", features = ["ssr", "hydration"] }
+
+sea-orm = { version = "^0.12", features = [
+  "sqlx-sqlite",
+  "runtime-tokio-rustls",
+  "with-uuid",
+  "with-chrono",
+  "with-json",
+  "debug-print",
+] }
