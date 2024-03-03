@@ -1,9 +1,9 @@
 version: '3'
 
 volumes:
+  media:
+  log:
   db:
-  images:
-  logs:
 
 services:
   service:
@@ -13,7 +13,7 @@ services:
     restart: unless-stopped
     volumes:
       - media:/home/res/media
-      - logs:/home/res/logs
+      - log:/home/res/log
       - db:/home/res/database
     environment:
       - JWT_SECRET=ciallo@0721

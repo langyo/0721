@@ -12,4 +12,4 @@ Cargo.lock
 # dev files
 res/database/*
 res/media/*
-res/logs/*
+res/log/*

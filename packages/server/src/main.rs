@@ -34,21 +34,10 @@ where
 async fn main() -> Result<()> {
     #[cfg(not(debug_assertions))]
     {
-        use std::path::Path;
+        use _database::LOG_DIR;
         use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-        let file_appender = tracing_appender::rolling::daily(
-            {
-                let mut path = std::env::var("ROOT_DIR")
-                    .ok()
-                    .map(|dir| Path::new(&dir).to_path_buf())
-                    .expect("ROOT_DIR not exists");
-                path.push("logs");
-
-                path
-            },
-            "log",
-        );
+        let file_appender = tracing_appender::rolling::daily((*LOG_DIR).clone(), "log");
         let std_out = std::io::stdout.with_max_level(tracing::Level::INFO);
         tracing_subscriber::fmt()
             .with_writer(std_out.and(file_appender))

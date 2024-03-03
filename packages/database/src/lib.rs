@@ -18,7 +18,6 @@ pub async fn init() -> Result<()> {
 
     let db = redb::Database::create({
         let mut path = (*DATABASE_DIR).clone();
-        let _ = tokio::fs::create_dir_all(&path).await;
         path.push("ciallo.redb");
         path
     })?;
