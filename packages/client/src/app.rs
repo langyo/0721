@@ -81,6 +81,23 @@ impl DeclType for App {
                 --icon-color: var(--color-light);
                 --shadow-half: 0 0 8px rgba(0, 0, 0, 0.5);
             }
+
+            button {
+                padding: 8px 16px;
+                border: none;
+                outline: none;
+                border-radius: 4px;
+                box-shadow: var(--shadow-half);
+
+                background: var(--color-primary-most);
+                color: var(--color-light-most);
+                cursor: pointer;
+            }
+
+            button:hover {
+                background: var(--color-primary);
+                color: var(--color-light);
+            }
         "#;
 
         yew::html! {

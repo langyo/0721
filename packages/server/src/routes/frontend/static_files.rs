@@ -18,6 +18,14 @@ pub async fn route() -> Result<Router> {
         .route_service(
             "/favicon.ico",
             get_service(ServeFile::new(WEBSITE_RES_DIR.clone().join("favicon.ico"))),
+        )
+        .route_service(
+            "/bg.webp",
+            get_service(ServeFile::new(WEBSITE_RES_DIR.clone().join("bg.webp"))),
+        )
+        .route_service(
+            "/logo.webp",
+            get_service(ServeFile::new(WEBSITE_RES_DIR.clone().join("logo.webp"))),
         );
 
     Ok(router)
