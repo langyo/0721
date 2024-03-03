@@ -16,7 +16,7 @@ pub async fn query(
     let ret = super::html_render(
         uri,
         AppStates {
-            title: "页面未找到".to_string(),
+            title: "Not found".to_string(),
             auth,
         },
     )

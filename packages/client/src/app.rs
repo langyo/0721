@@ -83,7 +83,6 @@ impl DeclType for App {
             }
 
             button {
-                padding: 8px 16px;
                 border: none;
                 outline: none;
                 border-radius: 4px;

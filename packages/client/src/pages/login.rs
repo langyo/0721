@@ -7,9 +7,12 @@ use stylist::css;
 use yew::prelude::*;
 
 use crate::functions::api::auth::{login, verify};
+use _database::types::language_config::load_config;
 
 #[function_component]
-pub fn Login() -> Html {
+pub fn Login() -> HtmlResult {
+    let t = load_config().unwrap();
+
     let is_verifying = use_state(|| true);
 
     let name_raw = use_state(|| "".to_string());
@@ -45,10 +48,7 @@ pub fn Login() -> Html {
                 wasm_bindgen_futures::spawn_local(async move {
                     match verify().await {
                         Ok(_) => {
-                            gloo::utils::window()
-                                .location()
-                                .set_href("/backend")
-                                .unwrap();
+                            gloo::utils::window().location().set_href("/").unwrap();
                         }
                         Err(err) => {
                             error!("Verify failed: {:?}", err);
@@ -63,7 +63,7 @@ pub fn Login() -> Html {
         });
     }
 
-    html! {
+    Ok(html! {
         <div class={css!("
             padding: 64px 0;
 
@@ -77,11 +77,17 @@ pub fn Login() -> Html {
                 width: 400px;
                 height: 100%;
                 padding: 16px;
+                padding-bottom: 64px;
 
                 display: flex;
                 flex-direction: column;
                 align-items: center;
                 justify-content: center;
+
+                background: var(--color-light-half);
+                border-radius: 8px;
+                box-shadow: var(--shadow-half);
+                backdrop-filter: blur(4px);
             ")}>
                 <h1 class={css!("
                     height: 48px;
@@ -95,13 +101,13 @@ pub fn Login() -> Html {
                     color: var(--color-primary);
                     user-select: none;
                 ")}>
-                    { "内部登录" }
+                    { t.header.login.clone() }
                 </h1>
 
                 <input
                     class={input_style.clone()}
                     type="text"
-                    placeholder="用户名"
+                    placeholder={t.header.username}
                     value={(*name_raw).clone()}
                     oninput={{
                         let name_raw = name_raw.clone();
@@ -118,7 +124,7 @@ pub fn Login() -> Html {
                 <input
                     class={input_style.clone()}
                     type="password"
-                    placeholder="密码"
+                    placeholder={t.header.password}
                     value={(*password_raw).clone()}
                     oninput={{
                         let password_raw = password_raw.clone();
@@ -189,11 +195,11 @@ pub fn Login() -> Html {
                                     Ok(info) => {
                                         info!("Login success: {:?}", info);
 
-                                        gloo::utils::window().location().set_href("/backend").unwrap();
+                                        gloo::utils::window().location().set_href("/").unwrap();
                                     }
                                     Err(err) => {
                                         error!("Login failed: {:?}", err);
-                                        gloo::dialogs::alert(&format!("登录失败：{:?}", err));
+                                        gloo::dialogs::alert(&format!("Login failed: {:?}", err));
                                     }
                                 }
 
@@ -204,13 +210,13 @@ pub fn Login() -> Html {
                 >
                     {{
                         if *is_verifying {
-                            "正在验证"
+                            t.header.loading
                         } else {
-                            "登录"
+                            t.header.login.clone()
                         }
                     }}
                 </button>
             </div>
         </div>
-    }
+    })
 }

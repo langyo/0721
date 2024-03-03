@@ -1,11 +1,14 @@
+use gloo::storage::{LocalStorage, Storage};
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
 use crate::functions::api::auth::refresh;
-use _database::types::response::AuthInfo;
+use _database::types::{language_config::load_config, response::AuthInfo};
 
 #[styled_component]
-pub fn Header() -> Html {
+pub fn Header() -> HtmlResult {
+    let t = load_config().unwrap();
+
     let auth = use_state(|| AuthInfo::None);
 
     use_effect_with((), {
@@ -25,7 +28,7 @@ pub fn Header() -> Html {
         }
     });
 
-    html! {
+    Ok(html! {
         <>
             <div class={css!("
                 position: fixed;
@@ -35,6 +38,7 @@ pub fn Header() -> Html {
                 top: 0;
 
                 background: url('/bg.webp') center / cover no-repeat;
+                filter: blur(4px);
                 z-index: -1;
                 pointer-events: none;
             ")} />
@@ -101,7 +105,7 @@ pub fn Header() -> Html {
                                             display: none;
                                         }
                                     ")}>
-                                        {"欢迎，"}
+                                        {t.header.welcome}
                                         <p class={css!("
                                             display: inline;
                                             font-weight: bolder;
@@ -120,18 +124,36 @@ pub fn Header() -> Html {
                                             }
                                         ")}
                                         onclick={move |_| {
-                                            gloo::utils::window().location().set_href("/backend").unwrap();
+                                            LocalStorage::delete("token");
+                                            gloo::utils::window().location().reload().unwrap();
                                         }}
                                     >
-                                        {"转到后台"}
+                                        {t.header.logout}
                                     </button>
                                 </>
                             },
-                            _ => html! {}
+                            _ => html! {
+                                <button
+                                    class={css!("
+                                        height: 32px;
+                                        padding: 0 16px;
+                                        margin: 8px;
+
+                                        @media (max-width: 991px) {
+                                            display: none;
+                                        }
+                                    ")}
+                                    onclick={move |_| {
+                                        gloo::utils::window().location().set_href("/login").unwrap();
+                                    }}
+                                >
+                                    {t.header.login}
+                                </button>
+                            }
                         }
                     }
                 </aside>
             </header>
         </>
-    }
+    })
 }

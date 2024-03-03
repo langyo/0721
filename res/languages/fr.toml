@@ -1,0 +1,10 @@
+[header]
+welcome = "Bienvenue, "
+loading = "Chargement"
+
+login = "Connexion"
+logout = "Déconnexion"
+register = "Inscription"
+
+username = "Nom d'utilisateur"
+password = "Mot de passe"
