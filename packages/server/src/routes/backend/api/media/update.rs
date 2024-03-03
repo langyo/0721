@@ -7,7 +7,7 @@ use axum::{
 use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
-use _database::functions::backend::image::delete as do_delete;
+use _database::functions::backend::media::delete as do_delete;
 
 #[tracing::instrument]
 pub async fn delete(

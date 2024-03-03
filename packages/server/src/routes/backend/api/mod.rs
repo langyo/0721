@@ -1,5 +1,5 @@
 mod config;
-mod image;
+mod media;
 mod user;
 
 use anyhow::Result;
@@ -43,7 +43,7 @@ async fn auth_middleware(
 pub async fn route() -> Result<Router> {
     let router = Router::new()
         .nest("/config", config::route().await?)
-        .nest("/image", image::route().await?)
+        .nest("/media", media::route().await?)
         .nest("/user", user::route().await?)
         .layer(middleware::from_fn(auth_middleware));
 

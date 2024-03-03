@@ -15,12 +15,12 @@ pub static WEBSITE_RES_DIR: Lazy<PathBuf> = Lazy::new(|| {
     path.push("website");
     path
 });
-pub static IMAGE_RES_DIR: Lazy<PathBuf> = Lazy::new(|| {
+pub static MEDIA_RES_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut path = std::env::var("ROOT_DIR")
         .ok()
         .map(|dir| Path::new(&dir).to_path_buf())
         .unwrap_or(std::env::current_dir().unwrap().join("res"));
-    path.push("images");
+    path.push("media");
     path
 });
 

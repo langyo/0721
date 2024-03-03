@@ -9,5 +9,7 @@ Cargo.lock
 /.idea/
 /.vscode/
 
-# database files
+# dev files
 res/database/*
+res/media/*
+res/logs/*

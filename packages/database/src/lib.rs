@@ -26,7 +26,7 @@ pub async fn init() -> Result<()> {
     {
         ctx.open_table(models::config::TABLE)?;
         ctx.open_table(models::user::TABLE)?;
-        ctx.open_table(models::image_file::TABLE)?;
+        ctx.open_table(models::media::TABLE)?;
     }
     ctx.commit()?;
 

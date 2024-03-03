@@ -13,4 +13,4 @@ pub struct Model {
     pub mime: String,
 }
 
-pub const TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("image_file");
+pub const TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("media");

@@ -7,7 +7,7 @@ use redb::ReadableTable as _;
 use crate::{
     models::{user::Permission, *},
     types::response::AuthInfo,
-    DB_CONN, IMAGE_RES_DIR,
+    DB_CONN, MEDIA_RES_DIR,
 };
 
 pub async fn get_file(auth: AuthInfo, hash: String) -> Result<(String, Bytes)> {
@@ -16,11 +16,11 @@ pub async fn get_file(auth: AuthInfo, hash: String) -> Result<(String, Bytes)> {
             .get()
             .ok_or(anyhow!("Failed to get database connection"))?
             .begin_read()?;
-        let table = ctx.open_table(image_file::TABLE)?;
+        let table = ctx.open_table(media::TABLE)?;
         let raw = table
             .get(hash.as_str())?
             .ok_or(anyhow!("Image not found"))?;
-        postcard::from_bytes::<image_file::Model>(raw.value())?
+        postcard::from_bytes::<media::Model>(raw.value())?
     };
 
     // Check permission
@@ -39,7 +39,7 @@ pub async fn get_file(auth: AuthInfo, hash: String) -> Result<(String, Bytes)> {
 
     let mime = ImageFormat::from_mime_type(&item.mime)
         .ok_or(anyhow!("Failed to get MIME type from image"))?;
-    let path = IMAGE_RES_DIR.clone();
+    let path = MEDIA_RES_DIR.clone();
     let path = path.join(format!(
         "{}.{}",
         item.hash,

@@ -1,3 +1,3 @@
 pub mod config;
-pub mod image_file;
+pub mod media;
 pub mod user;

@@ -2,6 +2,6 @@
 
 Ciallo～(∠·ω< )⌒★
 
-The engine of image hosting written in Rust.
+The engine of media hosting written in Rust.
 
 > Still in development.

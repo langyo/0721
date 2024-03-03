@@ -4,7 +4,7 @@ use axum::{extract::Multipart, response::IntoResponse};
 use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
-use _database::{functions::backend::image::insert as do_insert, types::response::AuthInfo};
+use _database::{functions::backend::media::insert as do_insert, types::response::AuthInfo};
 
 #[tracing::instrument]
 pub async fn insert(

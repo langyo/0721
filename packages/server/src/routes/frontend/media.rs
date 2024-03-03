@@ -25,7 +25,7 @@ impl Args {
 }
 
 #[tracing::instrument]
-pub async fn download_image(
+pub async fn download_media(
     Path(hash): Path<String>,
     ExtractAuthInfo(auth): ExtractAuthInfo,
     Query(args): Query<Args>,

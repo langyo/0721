@@ -1,4 +1,4 @@
-pub mod image;
+pub mod media;
 pub mod pages;
 pub mod static_files;
 
@@ -10,7 +10,7 @@ pub async fn route() -> Result<Router> {
     let router = Router::new()
         .nest("/", static_files::route().await?)
         .nest("/", pages::route().await?)
-        .route("/image/:hash", get(image::download_image));
+        .route("/media/:hash", get(media::download_media));
 
     Ok(router)
 }

@@ -12,7 +12,7 @@ services:
       - 80:80
     restart: unless-stopped
     volumes:
-      - images:/home/res/images
+      - media:/home/res/media
       - logs:/home/res/logs
       - db:/home/res/database
     environment:
