@@ -8,3 +8,9 @@ register = "注册"
 
 username = "用户名"
 password = "密码"
+email = "邮箱"
+
+[portal]
+upload = "上传"
+download = "下载"
+delete = "删除"

@@ -8,3 +8,9 @@ register = "Register"
 
 username = "Username"
 password = "Password"
+email = "Email"
+
+[portal]
+upload = "Upload"
+download = "Download"
+delete = "Delete"

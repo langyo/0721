@@ -4,11 +4,15 @@ use web_sys::HtmlInputElement;
 use stylist::css;
 use yew::prelude::*;
 
+use _database::types::language_config::load_config;
+
 #[function_component]
 pub fn Register() -> Html {
-    let name_raw: UseStateHandle<String> = use_state(|| "".to_string());
+    let t = load_config().unwrap();
+
+    let name_raw = use_state(|| "".to_string());
     let email_raw = use_state(|| "".to_string());
-    let phone_raw = use_state(|| "".to_string());
+    let password_raw = use_state(|| "".to_string());
 
     #[rustfmt::skip]
     let input_style = css!("
@@ -63,13 +67,13 @@ pub fn Register() -> Html {
                     color: var(--color-primary);
                     user-select: none;
                 ")}>
-                    { "来宾登记" }
+                    { t.header.register.clone() }
                 </h1>
 
                 <input
                     class={input_style.clone()}
                     type="text"
-                    placeholder="联系人姓名"
+                    placeholder={t.header.username}
                     value={(*name_raw).clone()}
                     oninput={{
                         let name_raw = name_raw.clone();
@@ -86,7 +90,7 @@ pub fn Register() -> Html {
                 <input
                     class={input_style.clone()}
                     type="text"
-                    placeholder="联系邮箱"
+                    placeholder={t.header.email}
                     value={(*email_raw).clone()}
                     oninput={{
                         let email_raw = email_raw.clone();
@@ -105,20 +109,17 @@ pub fn Register() -> Html {
                 />
                 <input
                     class={input_style.clone()}
-                    type="phone"
-                    placeholder="联系电话"
-                    value={(*phone_raw).clone()}
+                    type="password"
+                    placeholder={t.header.password}
+                    value={(*password_raw).clone()}
                     oninput={{
-                        let phone_raw = phone_raw.clone();
+                        let password_raw = password_raw.clone();
                         Callback::from(move |e: InputEvent| {
                             let target = e.target();
                             let input = target.and_then(|target| target.dyn_into::<HtmlInputElement>().ok());
 
                             if let Some(input) = input {
-                                let value = input.value();
-                                let value = value.chars().filter(|c| c.is_digit(10) || *c == '+').collect::<String>();
-
-                                phone_raw.set(value);
+                                password_raw.set(input.value());
                             }
                         })
                     }}
@@ -152,7 +153,7 @@ pub fn Register() -> Html {
                         filter: brightness(0.8);
                     }
                 ")}>
-                    { "注册" }
+                    { t.header.register }
                 </button>
             </div>
         </div>

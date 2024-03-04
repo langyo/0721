@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 
-use gloo::storage::{LocalStorage, Storage};
+use gloo::storage::{LocalStorage, Storage as _};
 use reqwest::Client;
 
 use crate::utils::get_host;

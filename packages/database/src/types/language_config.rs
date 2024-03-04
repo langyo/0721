@@ -6,6 +6,7 @@ use std::collections::HashSet;
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
     pub header: Header,
+    pub portal: Portal,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -20,6 +21,15 @@ pub struct Header {
 
     pub username: String,
     pub password: String,
+    pub email: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Portal {
+    pub upload: String,
+    pub download: String,
+    pub delete: String,
 }
 
 pub fn load_config() -> Result<Config> {
