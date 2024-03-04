@@ -43,29 +43,150 @@ pub fn Portal() -> HtmlResult {
                                 justify-content: center;
                             ")}>
                                 {
-                                    file_names.iter().zip(file_blobs.iter())
-                                        .map(|(name, blob)| {
+                                    file_blobs.iter().enumerate().zip(file_names.iter())
+                                        .map(|((index, blob), name)| {
                                             let src = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
 
                                             html! {
-                                                <img
+                                                <div
                                                     class={css!("
+                                                        position: relative;
                                                         width: 128px;
                                                         height: 128px;
                                                         margin: 8px;
 
                                                         border-radius: 4px;
                                                         box-shadow: var(--shadow-half);
-                                                        object-fit: cover;
+
                                                         user-select: none;
+                                                        cursor: pointer;
+
+                                                        --image-filter: none;
+                                                        --show: 0;
+
+                                                        &:hover {
+                                                            --image-filter: brightness(0.5) blur(4px);
+                                                            --show: 1;
+                                                        }
                                                     ")}
-                                                    alt={name.clone()}
-                                                    src={src}
-                                                />
+                                                    onclick={
+                                                        let file_blobs = file_blobs.clone();
+                                                        let file_names = file_names.clone();
+                                                        Callback::from(move |_| {
+                                                            file_blobs.set(
+                                                                file_blobs.iter().enumerate().filter_map(
+                                                                    |(i, b)| if i == index { None } else { Some(b.clone()) }
+                                                                ).collect()
+                                                            );
+                                                            file_names.set(
+                                                                file_names.iter().enumerate().filter_map(
+                                                                    |(i, n)| if i == index { None } else { Some(n.clone()) }
+                                                                ).collect()
+                                                            );
+                                                        })
+                                                    }
+                                                >
+                                                    <img
+                                                        class={css!("
+                                                            position: absolute;
+                                                            top: 0;
+                                                            left: 0;
+                                                            width: 100%;
+                                                            height: 100%;
+
+                                                            object-fit: cover;
+                                                            border-radius: 4px;
+                                                            filter: var(--image-filter);
+                                                        ")}
+                                                        alt={name.clone()}
+                                                        src={src}
+                                                    />
+
+                                                    <div class={css!("
+                                                        position: absolute;
+                                                        top: 50%;
+                                                        left: 50%;
+                                                        width: 24px;
+                                                        height: 4px;
+
+                                                        background: var(--color-light);
+                                                        transform: translate(-50%, -50%) rotate(45deg);
+                                                        opacity: var(--show, 0);
+                                                    ")} />
+                                                    <div class={css!("
+                                                        position: absolute;
+                                                        top: 50%;
+                                                        left: 50%;
+                                                        width: 24px;
+                                                        height: 4px;
+
+                                                        background: var(--color-light);
+                                                        transform: translate(-50%, -50%) rotate(-45deg);
+                                                        opacity: var(--show, 0);
+                                                    ")} />
+                                                </div>
                                             }
                                         })
                                         .collect::<Html>()
                                 }
+
+                                <button
+                                    class={css!("
+                                        position: relative;
+                                        width: 48px;
+                                        height: 48px;
+                                        margin: 8px;
+                                        margin-left: calc(8px + (128px - 48px) / 2);
+
+                                        border: none;
+                                        border-radius: 4px;
+                                        box-shadow: var(--shadow-half);
+                                        background: var(--color-light-most);
+
+                                        cursor: pointer;
+
+                                        &:hover {
+                                            background: var(--color-light);
+                                        }
+                                    ")}
+                                    onclick={
+                                        let uploader = uploader.clone();
+                                        let file_blobs = file_blobs.clone();
+                                        let file_names = file_names.clone();
+
+                                        Callback::from(move |_| {
+                                            let uploader = uploader.to_owned();
+                                            let file_blobs = file_blobs.to_owned();
+                                            let file_names = file_names.to_owned();
+
+                                            uploader.as_ref().map(|uploader| {
+                                                uploader.upload(move |blobs, names| {
+                                                    file_blobs.set((*file_blobs).clone().into_iter().chain(blobs).collect());
+                                                    file_names.set((*file_names).clone().into_iter().chain(names).collect());
+                                                });
+                                            });
+                                        })
+                                    }
+                                >
+                                    <div class={css!("
+                                        position: absolute;
+                                        top: 50%;
+                                        left: 50%;
+                                        width: 24px;
+                                        height: 4px;
+                                        background: var(--color-dark);
+                                        transform: translate(-50%, -50%);
+                                    ")} />
+                                    <div class={css!("
+                                        position: absolute;
+                                        top: 50%;
+                                        left: 50%;
+                                        width: 4px;
+                                        height: 24px;
+                                        background: var(--color-dark);
+                                        transform: translate(-50%, -50%);
+                                    ")} />
+                                </button>
                             </div>
 
                             <button
