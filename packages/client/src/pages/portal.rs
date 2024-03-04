@@ -1,12 +1,35 @@
 use stylist::yew::styled_component;
+use wasm_bindgen::{closure::Closure, JsCast as _};
 use yew::prelude::*;
 
-use crate::utils::FileUploader;
-use _database::types::language_config::load_config;
+use crate::{
+    functions::{api::auth::refresh, models::media::insert},
+    utils::FileUploader,
+};
+use _database::types::{language_config::load_config, response::AuthInfo};
 
 #[styled_component]
 pub fn Portal() -> HtmlResult {
     let t = load_config().unwrap();
+
+    let auth = use_state(|| AuthInfo::None);
+
+    use_effect_with((), {
+        let auth = auth.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                match refresh().await {
+                    Ok(info) => {
+                        auth.set(AuthInfo::User(info));
+                    }
+                    Err(_) => {
+                        auth.set(AuthInfo::None);
+                    }
+                }
+            });
+            || {}
+        }
+    });
 
     let uploader = use_state(|| None);
     let file_blobs = use_state(|| vec![]);
@@ -198,6 +221,63 @@ pub fn Portal() -> HtmlResult {
                                     font-size: 16px;
                                     font-weight: bolder;
                                 ")}
+                                onclick={
+                                    let token = auth.clone();
+                                    let file_blobs = file_blobs.clone();
+
+                                    Callback::from(move |_| {
+                                        let token = match (*token).clone() {
+                                            AuthInfo::User(token) => token,
+                                            AuthInfo::None => {
+                                                gloo::dialogs::alert("请先登录");
+                                                return;
+                                            }
+                                        };
+
+                                        let file_blobs = file_blobs.to_owned();
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            let token = token.to_owned();
+                                            for blob in (*file_blobs).clone().iter() {
+                                                let token = token.to_owned();
+                                                let reader = web_sys::FileReader::new().unwrap();
+                                                let cb = Closure::wrap({
+                                                    let token = token.to_owned();
+                                                    let reader = reader.to_owned();
+
+                                                    Box::new(move |_: web_sys::Event| {
+                                                        let token = token.to_owned();
+                                                        let reader = reader.to_owned();
+
+                                                        wasm_bindgen_futures::spawn_local(async move {
+                                                            let token = token.to_owned();
+                                                            let data = reader.result().unwrap();
+                                                            let data = js_sys::Uint8Array::new(&data).to_vec();
+                                                            log::warn!("{:?}", data.len());
+
+                                                            match insert(token, data).await {
+                                                                Ok(info) => {
+                                                                    gloo::dialogs::alert(&format!("上传成功：{:?}", info));
+                                                                }
+                                                                Err(err) => {
+                                                                    gloo::dialogs::alert(&format!("上传失败：{:?}", err));
+                                                                }
+                                                            }
+                                                        });
+                                                    }) as Box<dyn FnMut(_)>
+                                                });
+
+                                                reader
+                                                    .add_event_listener_with_callback(
+                                                        "loadend",
+                                                        &cb.as_ref().unchecked_ref(),
+                                                    )
+                                                    .unwrap();
+                                                cb.forget();
+                                                reader.read_as_array_buffer(&blob).unwrap();
+                                            }
+                                        });
+                                    })
+                                }
                             >
                                 { t.portal.upload }
                             </button>

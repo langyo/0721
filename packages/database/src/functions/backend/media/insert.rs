@@ -5,7 +5,7 @@ use sha3::{Digest, Sha3_256};
 
 use crate::{models::*, DB_CONN, MEDIA_RES_DIR};
 
-pub async fn insert(uploader: String, data: Bytes) -> Result<()> {
+pub async fn insert(uploader: String, data: Bytes) -> Result<String> {
     let hash = Sha3_256::digest(&data).to_vec();
     let hash = BASE64_URL_SAFE_NO_PAD.encode(&hash);
     let size = data.len() as u64;
@@ -30,7 +30,7 @@ pub async fn insert(uploader: String, data: Bytes) -> Result<()> {
     let raw = postcard::to_allocvec(&media::Model {
         uploader: uploader.clone(),
         permission: user::Permission::Guest,
-        hash,
+        hash: hash.clone(),
         size,
         mime: mime.to_mime_type().to_string(),
     })?;
@@ -44,5 +44,5 @@ pub async fn insert(uploader: String, data: Bytes) -> Result<()> {
     }
     ctx.commit()?;
 
-    Ok(())
+    Ok(hash)
 }

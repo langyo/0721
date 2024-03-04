@@ -23,10 +23,10 @@ pub async fn insert(
                 .await
                 .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
 
-            do_insert(info.name, data)
+            let ret = do_insert(info.name, data)
                 .await
                 .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-            Ok(())
+            Ok(ret)
         }
         _ => Err((StatusCode::FORBIDDEN, "No permission".to_string())),
     }
