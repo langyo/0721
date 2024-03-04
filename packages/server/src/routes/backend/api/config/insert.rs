@@ -5,7 +5,7 @@ use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
 use _database::{
-    functions::backend::config::insert as do_insert, types::request::models::Config as VO,
+    functions::backend::config::set as do_insert, types::request::models::Config as VO,
 };
 
 #[tracing::instrument]

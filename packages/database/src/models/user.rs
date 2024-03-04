@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
-use redb::TableDefinition;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString};
+
+use redb::TableDefinition;
 
 #[derive(
     Clone, Debug, PartialEq, EnumIter, EnumString, Display, Deserialize, Serialize, Default,

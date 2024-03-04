@@ -1,4 +1,4 @@
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::Lazy;
 use std::path::{Path, PathBuf};
 
 pub static WASM_DIR: Lazy<PathBuf> = Lazy::new(|| {
@@ -52,5 +52,3 @@ pub static LOG_DIR: Lazy<PathBuf> = Lazy::new(|| {
     }
     path
 });
-
-pub static DB_CONN: OnceCell<redb::Database> = OnceCell::new();

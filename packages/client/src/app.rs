@@ -90,6 +90,7 @@ impl DeclType for App {
 
                 background: var(--color-primary-most);
                 color: var(--color-light-most);
+                user-select: none;
                 cursor: pointer;
             }
 

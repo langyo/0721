@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use jsonwebtoken::{encode, DecodingKey, EncodingKey, Header};
 
-use crate::{models::user, DB_CONN};
+use crate::{functions::backend::user::*, models::user::Model};
 
 struct Keys {
     encoding: EncodingKey,
@@ -59,7 +59,7 @@ mod jwt_numeric_date {
     }
 }
 
-pub async fn generate_token(name: String, user: user::Model) -> Result<(String, DateTime<Utc>)> {
+pub async fn generate_token(name: String, user: Model) -> Result<(String, DateTime<Utc>)> {
     let now = chrono::Utc::now();
     let claims = Claims {
         name: name.clone(),
@@ -67,16 +67,9 @@ pub async fn generate_token(name: String, user: user::Model) -> Result<(String, 
         exp: now.clone() + chrono::Duration::days(15),
     };
 
-    let raw = postcard::to_allocvec(&user)?;
-    let ctx = DB_CONN
-        .get()
-        .ok_or(anyhow!("Failed to get database connection"))?
-        .begin_write()?;
-    {
-        let mut table = ctx.open_table(user::TABLE)?;
-        table.insert(&name.as_str(), &raw.as_slice())?;
-    }
-    ctx.commit()?;
+    set(name, &user)
+        .await
+        .map_err(|err| anyhow!("Failed to update user: {}", err))?;
 
     Ok((
         encode(&Header::default(), &claims, &JWT_SECRET.encoding)

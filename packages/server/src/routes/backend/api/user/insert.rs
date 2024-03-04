@@ -6,7 +6,7 @@ use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
 use _database::{
-    functions::backend::user::insert as do_insert, models::user::Model as DTO,
+    functions::backend::user::set as do_insert, models::user::Model as DTO,
     types::request::models::User as VO,
 };
 
@@ -21,7 +21,7 @@ pub async fn insert(
 
     do_insert(
         vo.name,
-        DTO {
+        &DTO {
             updated_at: Utc::now(),
             permission: vo.permission,
             password_hash: vo.password_hash,

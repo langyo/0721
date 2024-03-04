@@ -55,12 +55,3 @@ stylist = { version = "^0.13", features = [
   "hydration",
 ] }
 yew = { version = "^0.21", features = ["ssr", "hydration"] }
-
-sea-orm = { version = "^0.12", features = [
-  "sqlx-sqlite",
-  "runtime-tokio-rustls",
-  "with-uuid",
-  "with-chrono",
-  "with-json",
-  "debug-print",
-] }

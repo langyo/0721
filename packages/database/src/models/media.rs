@@ -1,5 +1,6 @@
-use redb::TableDefinition;
 use serde::{Deserialize, Serialize};
+
+use redb::TableDefinition;
 
 use super::user::Permission;
 

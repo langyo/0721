@@ -2,26 +2,14 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 
 use image::ImageFormat;
-use redb::ReadableTable as _;
 
 use crate::{
-    models::{user::Permission, *},
-    types::response::AuthInfo,
-    DB_CONN, MEDIA_RES_DIR,
+    functions::backend::media::*, models::user::Permission, types::response::AuthInfo,
+    MEDIA_RES_DIR,
 };
 
 pub async fn get_file(auth: AuthInfo, hash: String) -> Result<(String, Bytes)> {
-    let item = {
-        let ctx = DB_CONN
-            .get()
-            .ok_or(anyhow!("Failed to get database connection"))?
-            .begin_read()?;
-        let table = ctx.open_table(media::TABLE)?;
-        let raw = table
-            .get(hash.as_str())?
-            .ok_or(anyhow!("Image not found"))?;
-        postcard::from_bytes::<media::Model>(raw.value())?
-    };
+    let item = get(hash).await?.ok_or(anyhow!("Image not found"))?;
 
     // Check permission
     match auth {
