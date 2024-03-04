@@ -4,44 +4,35 @@ use bytes::Bytes;
 use once_cell::sync::Lazy;
 use sha3::{Digest as _, Sha3_256};
 
-use redb::{Database, ReadableTable as _};
-
 use crate::{
     models::{media::*, user::Permission},
     MEDIA_RES_DIR,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-pub const DB: Lazy<Database> = Lazy::new(|| {
-    let db = Database::create({
+pub const DB: Lazy<sled::Db> = Lazy::new(|| {
+    let db = sled::open({
         let mut path = (*crate::DATABASE_DIR).clone();
-        path.push("media.redb");
+        path.push("media.db");
         path
     })
     .unwrap();
-    let ctx = db.begin_write().unwrap();
-    {
-        ctx.open_table(TABLE).unwrap();
-    }
-    ctx.commit().unwrap();
     db
 });
 
-pub async fn count() -> Result<u64> {
-    let count = DB.begin_read()?.open_table(TABLE)?.len()?;
+pub async fn count() -> Result<usize> {
+    let count = DB.len();
 
     Ok(count)
 }
 
 pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {
     let ret = DB
-        .begin_read()?
-        .open_table(TABLE)?
-        .iter()?
+        .iter()
         .skip(offset)
         .take(limit)
-        .map(|raw| raw.unwrap().1.value().into())
-        .map(|raw: Vec<u8>| postcard::from_bytes::<Model>(&raw.as_slice()).unwrap())
+        .map(|r| r.unwrap())
+        .map(|r| postcard::from_bytes(r.1.to_vec().as_slice()).unwrap())
         .collect::<Vec<_>>();
 
     Ok(ret)
@@ -77,25 +68,21 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
         mime: mime.to_mime_type().to_string(),
     };
     let raw = postcard::to_allocvec(&value)?;
-    DB.begin_write()?
-        .open_table(TABLE)?
-        .insert(hash.to_string().as_str(), &raw.as_ref())?;
+    DB.insert(hash.as_str(), raw)?;
 
     Ok(hash)
 }
 
 pub async fn get(key: impl ToString) -> Result<Option<Model>> {
     let ret = DB
-        .begin_read()?
-        .open_table(TABLE)?
-        .get(key.to_string().as_str())?
-        .map(|r| postcard::from_bytes(r.value()).unwrap());
+        .get(key.to_string().as_bytes())?
+        .map(|r| postcard::from_bytes(r.to_vec().as_slice()).unwrap());
 
     Ok(ret)
 }
 
 pub async fn delete(id: String) -> Result<()> {
-    DB.begin_write()?.open_table(TABLE)?.remove(&id.as_str())?;
+    DB.remove(id.as_bytes())?;
 
     Ok(())
 }

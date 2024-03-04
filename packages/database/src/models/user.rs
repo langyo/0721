@@ -2,8 +2,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString};
 
-use redb::TableDefinition;
-
 #[derive(
     Clone, Debug, PartialEq, EnumIter, EnumString, Display, Deserialize, Serialize, Default,
 )]
@@ -41,5 +39,3 @@ pub struct Model {
     pub password_hash: String,
     pub email: String,
 }
-
-pub const TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("user");

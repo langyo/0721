@@ -31,7 +31,7 @@ bcrypt = "^0.15"
 sha3 = "^0.10"
 
 image = { workspace = true }
-redb = { workspace = true }
+sled = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "^1", features = ["full"] }

@@ -1,57 +1,45 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
-
-use redb::{Database, ReadableTable as _};
-
-use crate::models::config::*;
+use std::collections::HashMap;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub const DB: Lazy<Database> = Lazy::new(|| {
-    let db = Database::create({
+pub const DB: Lazy<sled::Db> = Lazy::new(|| {
+    let db = sled::open({
         let mut path = (*crate::DATABASE_DIR).clone();
-        path.push("config.redb");
+        path.push("config.db");
         path
     })
     .unwrap();
-    let ctx = db.begin_write().unwrap();
-    {
-        ctx.open_table(TABLE).unwrap();
-    }
-    ctx.commit().unwrap();
     db
 });
 
-pub async fn list() -> Result<Vec<String>> {
+pub async fn list() -> Result<HashMap<String, String>> {
     let ret = DB
-        .begin_read()?
-        .open_table(TABLE)?
-        .iter()?
-        .map(|raw| raw.unwrap().1.value().into())
-        .collect::<Vec<_>>();
+        .iter()
+        .map(|r| r.unwrap())
+        .map(|r| (r.0.to_vec(), r.1.to_vec()))
+        .map(|(k, v)| (String::from_utf8(k).unwrap(), String::from_utf8(v).unwrap()))
+        .collect::<HashMap<String, String>>();
 
     Ok(ret)
 }
 
 pub async fn set(key: impl ToString, value: impl ToString) -> Result<()> {
-    DB.begin_write()?
-        .open_table(TABLE)?
-        .insert(key.to_string().as_str(), &value.to_string().as_str())?;
+    DB.insert(key.to_string().as_bytes(), value.to_string().as_bytes())?;
 
     Ok(())
 }
 
 pub async fn get(key: impl ToString) -> Result<Option<String>> {
     let ret = DB
-        .begin_read()?
-        .open_table(TABLE)?
-        .get(key.to_string().as_str())?
-        .map(|r| r.value().to_string());
+        .get(key.to_string().as_bytes())?
+        .map(|r| String::from_utf8(r.to_vec()).unwrap());
 
     Ok(ret)
 }
 
 pub async fn delete(id: String) -> Result<()> {
-    DB.begin_write()?.open_table(TABLE)?.remove(&id.as_str())?;
+    DB.remove(id.as_bytes())?;
 
     Ok(())
 }
