@@ -1,17 +1,20 @@
 use gloo::storage::{LocalStorage, Storage};
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
+use yew_router::prelude::*;
 
-use crate::functions::api::auth::refresh;
+use crate::{app::Routes, functions::api::auth::refresh};
 use _database::types::language_config::load_config;
 
 #[styled_component]
 pub fn Header() -> HtmlResult {
+    let navigator = use_navigator().unwrap();
     let t = load_config().unwrap();
 
     let auth = use_state(|| None);
 
     use_effect_with((), {
+        let navigator = navigator.clone();
         let auth = auth.clone();
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
@@ -20,7 +23,7 @@ pub fn Header() -> HtmlResult {
                         auth.set(Some(info));
                     }
                     Err(_) => {
-                        gloo::utils::window().location().set_href("/login").unwrap();
+                        navigator.push(&Routes::Login);
                     }
                 }
             });
