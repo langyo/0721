@@ -30,9 +30,9 @@ where
                     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
                 })?;
 
-                Ok(Self(AuthInfo::User(info)))
+                Ok(Self(Some(info)))
             }
-            Err(_) => Ok(Self(AuthInfo::None)),
+            Err(_) => Ok(Self(None)),
         }
     }
 }

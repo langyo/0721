@@ -3,13 +3,13 @@ use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
 use crate::functions::api::auth::refresh;
-use _database::types::{language_config::load_config, response::AuthInfo};
+use _database::types::language_config::load_config;
 
 #[styled_component]
 pub fn Header() -> HtmlResult {
     let t = load_config().unwrap();
 
-    let auth = use_state(|| AuthInfo::None);
+    let auth = use_state(|| None);
 
     use_effect_with((), {
         let auth = auth.clone();
@@ -17,10 +17,10 @@ pub fn Header() -> HtmlResult {
             wasm_bindgen_futures::spawn_local(async move {
                 match refresh().await {
                     Ok(info) => {
-                        auth.set(AuthInfo::User(info));
+                        auth.set(Some(info));
                     }
                     Err(_) => {
-                        auth.set(AuthInfo::None);
+                        gloo::utils::window().location().set_href("/login").unwrap();
                     }
                 }
             });
@@ -90,8 +90,8 @@ pub fn Header() -> HtmlResult {
                     justify-content: center;
                 ")}>
                     {
-                        match (*auth).clone() {
-                            AuthInfo::User(info) => html! {
+                        if let Some(info) = (*auth).clone() {
+                            html! {
                                 <>
                                     <span class={css!("
                                         color: var(--color-light);
@@ -131,8 +131,9 @@ pub fn Header() -> HtmlResult {
                                         {t.header.logout}
                                     </button>
                                 </>
-                            },
-                            _ => html! {
+                            }
+                        } else {
+                            html! {
                                 <button
                                     class={css!("
                                         height: 32px;

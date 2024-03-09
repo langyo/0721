@@ -6,13 +6,13 @@ use crate::{
     functions::{api::auth::refresh, models::media::insert},
     utils::FileUploader,
 };
-use _database::types::{language_config::load_config, response::AuthInfo};
+use _database::types::language_config::load_config;
 
 #[styled_component]
 pub fn Portal() -> HtmlResult {
     let t = load_config().unwrap();
 
-    let auth = use_state(|| AuthInfo::None);
+    let auth = use_state(|| None);
 
     use_effect_with((), {
         let auth = auth.clone();
@@ -20,11 +20,9 @@ pub fn Portal() -> HtmlResult {
             wasm_bindgen_futures::spawn_local(async move {
                 match refresh().await {
                     Ok(info) => {
-                        auth.set(AuthInfo::User(info));
+                        auth.set(Some(info));
                     }
-                    Err(_) => {
-                        auth.set(AuthInfo::None);
-                    }
+                    Err(_) => {}
                 }
             });
             || {}
@@ -226,12 +224,11 @@ pub fn Portal() -> HtmlResult {
                                     let file_blobs = file_blobs.clone();
 
                                     Callback::from(move |_| {
-                                        let token = match (*token).clone() {
-                                            AuthInfo::User(token) => token,
-                                            AuthInfo::None => {
-                                                gloo::dialogs::alert("请先登录");
-                                                return;
-                                            }
+                                        let token = if let Some(token) = (*token).clone() {
+                                            token
+                                        } else {
+                                            gloo::dialogs::alert("Please login first");
+                                            return;
                                         };
 
                                         let file_blobs = file_blobs.to_owned();
@@ -256,10 +253,10 @@ pub fn Portal() -> HtmlResult {
 
                                                             match insert(token, data).await {
                                                                 Ok(info) => {
-                                                                    gloo::dialogs::alert(&format!("上传成功：{:?}", info));
+                                                                    gloo::dialogs::alert(&format!("Success: {:?}", info));
                                                                 }
                                                                 Err(err) => {
-                                                                    gloo::dialogs::alert(&format!("上传失败：{:?}", err));
+                                                                    gloo::dialogs::alert(&format!("Fail: {:?}", err));
                                                                 }
                                                             }
                                                         });

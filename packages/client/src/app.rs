@@ -15,6 +15,9 @@ pub enum Routes {
     #[at("/")]
     #[component(Portal)]
     Portal,
+    #[at("/dashboard")]
+    #[component(Dashboard)]
+    Dashboard,
 
     #[at("/login")]
     #[component(Login)]

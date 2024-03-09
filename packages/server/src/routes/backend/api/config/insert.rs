@@ -13,7 +13,13 @@ pub async fn insert(
     ExtractAuthInfo(info): ExtractAuthInfo,
     Json(vo): Json<VO>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    if !info.is_admin() {
+    if !info
+        .ok_or((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "No permission".to_string(),
+        ))?
+        .is_admin()
+    {
         return Err((StatusCode::FORBIDDEN, "No permission".to_string()));
     }
 
