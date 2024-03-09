@@ -5,12 +5,17 @@ use web_sys::HtmlInputElement;
 use gloo::storage::{LocalStorage, Storage as _};
 use stylist::css;
 use yew::prelude::*;
+use yew_router::prelude::*;
 
-use crate::functions::api::auth::{login, verify};
+use crate::{
+    app::Routes,
+    functions::api::auth::{login, verify},
+};
 use _database::types::language_config::load_config;
 
 #[function_component]
 pub fn Login() -> HtmlResult {
+    let navigator = use_navigator().unwrap();
     let t = load_config().unwrap();
 
     let is_verifying = use_state(|| true);
@@ -171,11 +176,14 @@ pub fn Login() -> HtmlResult {
                     }
                 })}
                 onclick={{
+                    let navigator = navigator.clone();
                     let is_verifying = is_verifying.clone();
                     let name_raw = name_raw.clone();
                     let password_raw = password_raw.clone();
 
                     Callback::from(move |_| {
+                        let navigator = navigator.to_owned();
+
                         is_verifying.set(true);
                         let is_verifying = is_verifying.clone();
 
@@ -183,11 +191,12 @@ pub fn Login() -> HtmlResult {
                         let password_raw = (*password_raw).clone();
 
                         wasm_bindgen_futures::spawn_local(async move {
+                            let navigator = navigator.to_owned();
+
                             match login(name_raw, password_raw).await {
                                 Ok(info) => {
                                     info!("Login success: {:?}", info);
-
-                                    gloo::utils::window().location().set_href("/").unwrap();
+                                    navigator.push(&Routes::Portal);
                                 }
                                 Err(err) => {
                                     error!("Login failed: {:?}", err);
