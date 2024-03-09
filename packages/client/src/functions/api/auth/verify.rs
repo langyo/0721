@@ -4,13 +4,14 @@ use gloo::storage::{LocalStorage, Storage as _};
 use reqwest::Client;
 
 use crate::utils::get_host;
+use _database::types::response::UserInfo;
 
 pub async fn verify() -> Result<()> {
-    match LocalStorage::get::<String>("token") {
-        Ok(token) => {
+    match LocalStorage::get::<UserInfo>("auth") {
+        Ok(info) => {
             let res = Client::new()
                 .get(format!("{}/api/auth/verify", get_host()?))
-                .bearer_auth(token)
+                .bearer_auth(info.token)
                 .send()
                 .await?;
 

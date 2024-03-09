@@ -44,29 +44,29 @@ pub fn Login() -> HtmlResult {
         cursor: text;
     ");
 
-    {
+    use_effect_with((), {
+        let navigator = navigator.clone();
         let is_verifying = is_verifying.clone();
 
-        use_effect_with((), {
-            let is_verifying = is_verifying.clone();
-            move |_| {
-                wasm_bindgen_futures::spawn_local(async move {
-                    match verify().await {
-                        Ok(_) => {
-                            gloo::utils::window().location().set_href("/").unwrap();
-                        }
-                        Err(err) => {
-                            error!("Verify failed: {:?}", err);
-                            LocalStorage::delete("token");
-                        }
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                match verify().await {
+                    Ok(_) => {
+                        info!("Verify success");
+                        navigator.push(&Routes::Portal);
+                        gloo::utils::window().location().reload().unwrap();
                     }
+                    Err(err) => {
+                        error!("Verify failed: {:?}", err);
+                        LocalStorage::delete("auth");
+                    }
+                }
 
-                    is_verifying.set(false);
-                });
-                || {}
-            }
-        });
-    }
+                is_verifying.set(false);
+            });
+            || {}
+        }
+    });
 
     Ok(html! {
         <div class={css!("
@@ -197,6 +197,7 @@ pub fn Login() -> HtmlResult {
                                 Ok(info) => {
                                     info!("Login success: {:?}", info);
                                     navigator.push(&Routes::Portal);
+                                    gloo::utils::window().location().reload().unwrap();
                                 }
                                 Err(err) => {
                                     error!("Login failed: {:?}", err);

@@ -15,7 +15,7 @@ pub async fn login(name: String, password_raw: String) -> Result<UserInfo> {
 
     if res.status().is_success() {
         let ret: UserInfo = res.json().await?;
-        LocalStorage::set("token", ret.token.clone()).unwrap();
+        LocalStorage::set("auth", ret.clone()).unwrap();
 
         Ok(ret)
     } else {

@@ -7,6 +7,7 @@ use yew_router::prelude::*;
 use crate::{
     components::{Footer, Header},
     pages::*,
+    utils::global_state::Provider,
 };
 use _database::types::response::AuthInfo;
 
@@ -104,7 +105,7 @@ impl DeclType for App {
         "#;
 
         yew::html! {
-            <>
+            <Provider>
                 <style>
                     {theme_raw}
                 </style>
@@ -127,7 +128,7 @@ impl DeclType for App {
                 </div>
 
                 <Footer />
-            </>
+            </Provider>
         }
     }
 

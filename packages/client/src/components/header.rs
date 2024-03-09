@@ -3,24 +3,27 @@ use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 use yew_router::prelude::*;
 
-use crate::{app::Routes, functions::api::auth::refresh};
+use crate::{
+    app::Routes,
+    functions::api::auth::refresh,
+    utils::global_state::{GlobalStateAction, GlobalStateContext},
+};
 use _database::types::language_config::load_config;
 
 #[styled_component]
 pub fn Header() -> HtmlResult {
     let navigator = use_navigator().unwrap();
     let t = load_config().unwrap();
-
-    let auth = use_state(|| None);
+    let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
 
     use_effect_with((), {
         let navigator = navigator.clone();
-        let auth = auth.clone();
+        let global_state = global_state.clone();
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 match refresh().await {
                     Ok(info) => {
-                        auth.set(Some(info));
+                        global_state.dispatch(GlobalStateAction::SetToken(Some(info)));
                     }
                     Err(_) => {
                         navigator.push(&Routes::Login);
@@ -73,9 +76,12 @@ pub fn Header() -> HtmlResult {
                         text-decoration: none;
                         cursor: pointer;
                     ")}
-                    onclick={move |_| {
-                        gloo::utils::window().location().set_href("/").unwrap();
-                    }}
+                    onclick={
+                        let navigator = navigator.clone();
+                        move |_| {
+                            navigator.push(&Routes::Portal);
+                        }
+                    }
                 >
                     // TODO - Custom the text by global config
                     {"Ciallo～(∠·ω< )⌒★"}
@@ -93,7 +99,7 @@ pub fn Header() -> HtmlResult {
                     justify-content: center;
                 ")}>
                     {
-                        if let Some(info) = (*auth).clone() {
+                        if let Some(info) = global_state.token.clone() {
                             html! {
                                 <>
                                     <span class={css!("
@@ -126,10 +132,13 @@ pub fn Header() -> HtmlResult {
                                                 display: none;
                                             }
                                         ")}
-                                        onclick={move |_| {
-                                            LocalStorage::delete("token");
-                                            gloo::utils::window().location().reload().unwrap();
-                                        }}
+                                        onclick={
+                                            let navigator = navigator.clone();
+                                            move |_| {
+                                                LocalStorage::delete("auth");
+                                                navigator.push(&Routes::Login);
+                                            }
+                                        }
                                     >
                                         {t.header.logout}
                                     </button>
@@ -147,9 +156,12 @@ pub fn Header() -> HtmlResult {
                                             display: none;
                                         }
                                     ")}
-                                    onclick={move |_| {
-                                        gloo::utils::window().location().set_href("/login").unwrap();
-                                    }}
+                                    onclick={
+                                        let navigator = navigator.clone();
+                                        move |_| {
+                                            navigator.push(&Routes::Login);
+                                        }
+                                    }
                                 >
                                     {t.header.login}
                                 </button>

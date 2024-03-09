@@ -2,32 +2,12 @@ use stylist::yew::styled_component;
 use wasm_bindgen::{closure::Closure, JsCast as _};
 use yew::prelude::*;
 
-use crate::{
-    functions::{api::auth::refresh, models::media::insert},
-    utils::FileUploader,
-};
+use crate::{functions::models::media::insert, utils::FileUploader};
 use _database::types::language_config::load_config;
 
 #[styled_component]
 pub fn Portal() -> HtmlResult {
     let t = load_config().unwrap();
-
-    let auth = use_state(|| None);
-
-    use_effect_with((), {
-        let auth = auth.clone();
-        move |_| {
-            wasm_bindgen_futures::spawn_local(async move {
-                match refresh().await {
-                    Ok(info) => {
-                        auth.set(Some(info));
-                    }
-                    Err(_) => {}
-                }
-            });
-            || {}
-        }
-    });
 
     let uploader = use_state(|| None);
     let file_blobs = use_state(|| vec![]);
@@ -220,38 +200,25 @@ pub fn Portal() -> HtmlResult {
                                     font-weight: bolder;
                                 ")}
                                 onclick={
-                                    let token = auth.clone();
                                     let file_blobs = file_blobs.clone();
 
                                     Callback::from(move |_| {
-                                        let token = if let Some(token) = (*token).clone() {
-                                            token
-                                        } else {
-                                            gloo::dialogs::alert("Please login first");
-                                            return;
-                                        };
-
                                         let file_blobs = file_blobs.to_owned();
                                         wasm_bindgen_futures::spawn_local(async move {
-                                            let token = token.to_owned();
                                             for blob in (*file_blobs).clone().iter() {
-                                                let token = token.to_owned();
                                                 let reader = web_sys::FileReader::new().unwrap();
                                                 let cb = Closure::wrap({
-                                                    let token = token.to_owned();
                                                     let reader = reader.to_owned();
 
                                                     Box::new(move |_: web_sys::Event| {
-                                                        let token = token.to_owned();
                                                         let reader = reader.to_owned();
 
                                                         wasm_bindgen_futures::spawn_local(async move {
-                                                            let token = token.to_owned();
                                                             let data = reader.result().unwrap();
                                                             let data = js_sys::Uint8Array::new(&data).to_vec();
                                                             log::warn!("{:?}", data.len());
 
-                                                            match insert(token, data).await {
+                                                            match insert(data).await {
                                                                 Ok(info) => {
                                                                     gloo::dialogs::alert(&format!("Success: {:?}", info));
                                                                 }

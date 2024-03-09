@@ -7,17 +7,17 @@ use crate::utils::get_host;
 use _database::types::response::UserInfo;
 
 pub async fn refresh() -> Result<UserInfo> {
-    match LocalStorage::get::<String>("token") {
-        Ok(token) => {
+    match LocalStorage::get::<UserInfo>("auth") {
+        Ok(info) => {
             let res = Client::new()
                 .get(format!("{}/api/auth/refresh", get_host()?,))
-                .bearer_auth(token)
+                .bearer_auth(info.token)
                 .send()
                 .await?;
 
             if res.status().is_success() {
                 let ret: UserInfo = res.json().await?;
-                LocalStorage::set("token", ret.token.clone()).unwrap();
+                LocalStorage::set("auth", ret.clone()).unwrap();
 
                 Ok(ret)
             } else {
