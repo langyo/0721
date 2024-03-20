@@ -12,11 +12,13 @@ use _database::types::language_config::load_config;
 
 #[styled_component]
 pub fn Header() -> HtmlResult {
+    let route = use_route::<Routes>().unwrap();
     let navigator = use_navigator().unwrap();
     let t = load_config().unwrap();
     let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
 
     use_effect_with((), {
+        let route = route.clone();
         let navigator = navigator.clone();
         let global_state = global_state.clone();
         move |_| {
@@ -26,7 +28,10 @@ pub fn Header() -> HtmlResult {
                         global_state.dispatch(GlobalStateAction::SetToken(Some(info)));
                     }
                     Err(_) => {
-                        navigator.push(&Routes::Login);
+                        if route != Routes::Login {
+                            navigator.push(&Routes::Login);
+                            gloo::utils::window().location().reload().unwrap();
+                        }
                     }
                 }
             });
@@ -80,6 +85,7 @@ pub fn Header() -> HtmlResult {
                         let navigator = navigator.clone();
                         move |_| {
                             navigator.push(&Routes::Portal);
+                            gloo::utils::window().location().reload().unwrap();
                         }
                     }
                 >
@@ -137,6 +143,7 @@ pub fn Header() -> HtmlResult {
                                             move |_| {
                                                 LocalStorage::delete("auth");
                                                 navigator.push(&Routes::Login);
+                                                gloo::utils::window().location().reload().unwrap();
                                             }
                                         }
                                     >
@@ -160,6 +167,7 @@ pub fn Header() -> HtmlResult {
                                         let navigator = navigator.clone();
                                         move |_| {
                                             navigator.push(&Routes::Login);
+                                            gloo::utils::window().location().reload().unwrap();
                                         }
                                     }
                                 >
