@@ -58,11 +58,10 @@ FROM ubuntu:latest as stage-server-build2
 RUN apt update && apt install -y openssl
 
 COPY ./res/website /home/res/website
+COPY ./res/Config.toml /home/res/Config.toml
 COPY --from=stage-client-build2 /home/dist/client_bg.wasm /home/res/client_bg.wasm
 COPY --from=stage-client-build2 /home/dist/client.js /home/res/client.js
 COPY --from=stage-server-build1 /home/target/release/_server /home/a
-
-COPY ./Config.toml /home/Config.toml
 
 ENV ROOT_DIR=/home/res
 WORKDIR /home

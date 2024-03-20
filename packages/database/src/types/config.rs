@@ -3,6 +3,8 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
+use crate::CONFIG_DIR;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
@@ -48,7 +50,7 @@ pub struct User {
 }
 
 pub static CONFIG: Lazy<Arc<Mutex<Config>>> = Lazy::new(|| {
-    let raw = std::fs::read_to_string("Config.toml").unwrap();
+    let raw = std::fs::read_to_string(CONFIG_DIR.clone()).unwrap();
     let ret: Config = toml::from_str(raw.as_str()).unwrap();
     Arc::new(Mutex::new(ret))
 });

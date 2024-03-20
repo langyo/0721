@@ -31,5 +31,5 @@ script = '''
 #!@duckscript
 
 exec docker build -t ciallo-0721 .
-exec docker run -d -p 8080:80 -v 0721-media:/home/res/media -v 0721-log:/home/res/log -v 0721-db:/home/res/database -e JWT_SECRET=ciallo@0721 --restart=always ciallo-0721:latest
+exec docker run -d -p 8080:80 -v 0721-cache:/home/res -e JWT_SECRET=ciallo@0721 --restart=always ciallo-0721:latest
 '''

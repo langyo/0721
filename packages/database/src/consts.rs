@@ -7,6 +7,14 @@ pub static WASM_DIR: Lazy<PathBuf> = Lazy::new(|| {
         .map(|dir| Path::new(&dir).to_path_buf())
         .unwrap_or(std::env::current_dir().unwrap().join("target/wasm32-html"))
 });
+pub static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| {
+    let mut path = std::env::var("ROOT_DIR")
+        .ok()
+        .map(|dir| Path::new(&dir).to_path_buf())
+        .unwrap_or(std::env::current_dir().unwrap().join("res"));
+    path.push("Config.toml");
+    path
+});
 pub static WEBSITE_RES_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut path = std::env::var("ROOT_DIR")
         .ok()
