@@ -9,7 +9,7 @@ use crate::{
     pages::*,
     utils::global_state::Provider,
 };
-use _database::types::response::AuthInfo;
+use _database::types::{config::Config, response::AuthInfo};
 
 #[derive(PartialEq, Clone, Debug, DeriveRoutes, Routable)]
 pub enum Routes {
@@ -37,6 +37,7 @@ pub enum Routes {
 pub struct AppStates {
     pub title: String,
     pub auth: AuthInfo,
+    pub config: Config,
 }
 
 #[derive(Clone, Debug, DeriveApplication)]
@@ -138,7 +139,9 @@ impl DeclType for App {
         state: Self::AppStates,
     ) -> String {
         let title = state.title.clone();
-        let state = ::serde_json::to_string(&state).unwrap();
+        let title_suffix = state.config.title_suffix.clone();
+
+        let state_raw = ::serde_json::to_string(&state).unwrap();
 
         format!("
             <!DOCTYPE html>
@@ -147,10 +150,10 @@ impl DeclType for App {
                     <meta charset='utf-8'>
                     <meta name='viewport' content='width=device-width, initial-scale=1'>
                     {style_raw}
-                    <title>{title} - Ciallo～(∠·ω< )⌒★</title>
+                    <title>{title} - {title_suffix}</title>
                 </head>
                 <body>
-                    <textarea id='__ssr_data' style='display: none;'>{state}</textarea>
+                    <textarea id='__ssr_data' style='display: none;'>{state_raw}</textarea>
                     <div id='app'>{html_raw}</div>
                     <script src='/client.js'></script>
                     <script>(async () => {{await wasm_vendor_entry('/client.wasm');(await (new wasm_vendor_entry.WebHandle())).start();}})()</script>

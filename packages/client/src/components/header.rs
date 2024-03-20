@@ -8,14 +8,29 @@ use crate::{
     functions::api::auth::refresh,
     utils::global_state::{GlobalStateAction, GlobalStateContext},
 };
-use _database::types::language_config::load_config;
+use _database::types::{
+    config::{load_config, Config},
+    i18n::load_i18n,
+};
 
 #[styled_component]
 pub fn Header() -> HtmlResult {
     let route = use_route::<Routes>().unwrap();
     let navigator = use_navigator().unwrap();
-    let t = load_config().unwrap();
+    let t = load_i18n().unwrap();
     let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
+
+    let global_config = use_prepared_state!((), async move |_| -> Option<Config> {
+        if let Ok(ret) = load_config() {
+            return Some(ret);
+        }
+        None
+    })?
+    .unwrap();
+    let title_suffix = (*global_config)
+        .clone()
+        .map(|config| config.title_suffix)
+        .unwrap_or("Ciallo～(∠·ω< )⌒★".to_string());
 
     use_effect_with((), {
         let route = route.clone();
@@ -89,8 +104,7 @@ pub fn Header() -> HtmlResult {
                         }
                     }
                 >
-                    // TODO - Custom the text by global config
-                    {"Ciallo～(∠·ω< )⌒★"}
+                    {title_suffix}
                 </h1>
 
                 <aside class={css!("

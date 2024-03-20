@@ -13,7 +13,10 @@ pub async fn refresh(token: String) -> Result<UserInfo> {
     let user = get(name.clone()).await?.ok_or(anyhow!("User not found"))?;
 
     let iat = token.claims.iat;
-    let updated_at_db = user.clone().updated_at - chrono::Duration::minutes(1);
+    let updated_at_db = user.clone().updated_at
+        - chrono::Duration::try_minutes(1).ok_or(anyhow!(
+            "Failed to create token: Failed to subtract 1 minute from updated_at"
+        ))?;
     if iat < updated_at_db {
         return Err(anyhow!("Token expired"));
     }

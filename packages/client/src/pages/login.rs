@@ -11,12 +11,12 @@ use crate::{
     app::Routes,
     functions::api::auth::{login, verify},
 };
-use _database::types::language_config::load_config;
+use _database::types::i18n::load_i18n;
 
 #[function_component]
 pub fn Login() -> HtmlResult {
     let navigator = use_navigator().unwrap();
-    let t = load_config().unwrap();
+    let t = load_i18n().unwrap();
 
     let is_verifying = use_state(|| true);
 

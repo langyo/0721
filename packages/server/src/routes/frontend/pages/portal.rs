@@ -5,6 +5,7 @@ use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
 use _client::app::AppStates;
+use _database::types::config::load_config;
 
 #[tracing::instrument]
 pub async fn query(
@@ -18,6 +19,8 @@ pub async fn query(
         AppStates {
             title: "Portal".to_string(),
             auth,
+            config: load_config()
+                .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?,
         },
     )
     .await

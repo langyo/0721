@@ -15,5 +15,6 @@ services:
       - media:/home/res/media
       - log:/home/res/log
       - db:/home/res/database
+      - ./Config.toml:/home/Config.toml
     environment:
       - JWT_SECRET=ciallo@0721

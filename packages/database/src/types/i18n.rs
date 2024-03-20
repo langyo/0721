@@ -32,14 +32,14 @@ pub struct Portal {
     pub delete: String,
 }
 
-pub fn load_config() -> Result<Config> {
+pub fn load_i18n() -> Result<Config> {
     // TODO - Multiple language support
     let raw = include_str!("../../../../res/languages/zh_hans.toml");
     let ret: Config = toml::from_str(raw)?;
     Ok(ret)
 }
 
-pub fn load_config_filtered_string() -> Result<String> {
+pub fn load_i18n_filtered_string() -> Result<String> {
     let raw = include_str!("../../../../res/languages/zh_hans.toml");
     Ok(raw
         .chars()

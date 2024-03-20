@@ -3,11 +3,11 @@ use wasm_bindgen::{closure::Closure, JsCast as _};
 use yew::prelude::*;
 
 use crate::{functions::models::media::insert, utils::FileUploader};
-use _database::types::language_config::load_config;
+use _database::types::i18n::load_i18n;
 
 #[styled_component]
 pub fn Portal() -> HtmlResult {
-    let t = load_config().unwrap();
+    let t = load_i18n().unwrap();
 
     let uploader = use_state(|| None);
     let file_blobs = use_state(|| vec![]);
