@@ -62,6 +62,8 @@ COPY --from=stage-client-build2 /home/dist/client_bg.wasm /home/res/client_bg.wa
 COPY --from=stage-client-build2 /home/dist/client.js /home/res/client.js
 COPY --from=stage-server-build1 /home/target/release/_server /home/a
 
+COPY ./Config.toml /home/Config.toml
+
 ENV ROOT_DIR=/home/res
 WORKDIR /home
 ENTRYPOINT [ "./a" ]
