@@ -1,9 +1,23 @@
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
+use _database::types::config::{load_config, Config};
+
 #[styled_component]
-pub fn Footer() -> Html {
-    html! {
+pub fn Footer() -> HtmlResult {
+    let global_config = use_prepared_state!((), async move |_| -> Option<Config> {
+        if let Ok(ret) = load_config() {
+            return Some(ret);
+        }
+        None
+    })?
+    .unwrap();
+    let footer_banner = (*global_config)
+        .clone()
+        .map(|config| config.portal.footer_banner)
+        .unwrap_or_default();
+
+    Ok(html! {
         <footer class={css!("
             position: absolute;
             width: 100%;
@@ -30,10 +44,10 @@ pub fn Footer() -> Html {
                     width: 100%;
                 }
             ")}>
-                {vec![
-                    // TODO - Custom the href and text by global config
-                    (Some("https://github.com/langyo"), "Some banner"),
-                ].into_iter().map(|(href, text)| {
+                {footer_banner.iter().map(|item| {
+                    let text = item.text.clone();
+                    let href = item.url.clone();
+
                     let class = css!("
                         width: 100%;
                         line-height: 24px;
@@ -51,7 +65,7 @@ pub fn Footer() -> Html {
 
                     if let Some(href) = href {
                         html! {
-                            <a href={href} class={class}>
+                            <a href={href} target={"_blank"} class={class}>
                                 {text}
                             </a>
                         }
@@ -63,5 +77,5 @@ pub fn Footer() -> Html {
                 }).collect::<Html>()}
             </aside>
         </footer>
-    }
+    })
 }

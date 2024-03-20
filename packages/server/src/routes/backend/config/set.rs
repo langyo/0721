@@ -1,4 +1,5 @@
 use anyhow::Result;
+use log::info;
 
 use axum::{extract::Json, response::IntoResponse};
 use hyper::StatusCode;
@@ -14,6 +15,14 @@ pub async fn set(Json(vo): Json<VO>) -> Result<impl IntoResponse, (StatusCode, S
             "Failed to update config".to_string(),
         )
     })?;
+
+    std::thread::spawn(|| {
+        info!("Wait for 1 second to ensure the response is sent");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        info!("Exit the process to restart the server and apply the new config");
+        std::process::exit(0);
+    });
 
     Ok(())
 }

@@ -19,10 +19,7 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Result<Response, (StatusCode, String)> {
     if let Err(err) = verify(bearer.token().to_string()).await {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            format!("Unauthorized: {}", err),
-        ));
+        return Err((StatusCode::UNAUTHORIZED, format!("Unauthorized: {}", err)));
     }
 
     Ok(next.run(request).await)

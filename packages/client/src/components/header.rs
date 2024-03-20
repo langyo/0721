@@ -29,7 +29,7 @@ pub fn Header() -> HtmlResult {
     .unwrap();
     let title_suffix = (*global_config)
         .clone()
-        .map(|config| config.title_suffix)
+        .map(|config| config.portal.title_suffix)
         .unwrap_or("Ciallo～(∠·ω< )⌒★".to_string());
 
     use_effect_with((), {

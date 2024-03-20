@@ -6,7 +6,45 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
+    pub portal: Portal,
+    pub router: Router,
+    pub upload: Upload,
+    pub user: User,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Portal {
     pub title_suffix: String,
+    pub footer_banner: Vec<FooterBannerItem>,
+    pub language: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct FooterBannerItem {
+    pub text: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Router {
+    pub image_entry_path: String,
+    pub backend_entry_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Upload {
+    pub image_size_limit: String,
+    pub webp_auto_convert: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct User {
+    pub allow_register: bool,
 }
 
 pub static CONFIG: Lazy<Arc<Mutex<Config>>> = Lazy::new(|| {

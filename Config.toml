@@ -1,1 +1,17 @@
+[portal]
 title-suffix = "Ciallo～(∠·ω< )⌒★"
+footer-banner = [
+    { text = "© 0721 project", url = "https://github.com/langyo/0721" },
+]
+language = "zh_hans"
+
+[router]
+image-entry-path = "/image"
+backend-entry-path = "/"
+
+[upload]
+image-size-limit = "8MiB"
+webp-auto-convert = true
+
+[user]
+allow-register = false

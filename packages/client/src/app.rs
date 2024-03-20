@@ -139,7 +139,7 @@ impl DeclType for App {
         state: Self::AppStates,
     ) -> String {
         let title = state.title.clone();
-        let title_suffix = state.config.title_suffix.clone();
+        let title_suffix = state.config.portal.title_suffix.clone();
 
         let state_raw = ::serde_json::to_string(&state).unwrap();
 
