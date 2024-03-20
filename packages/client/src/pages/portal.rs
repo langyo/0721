@@ -10,8 +10,8 @@ pub fn Portal() -> HtmlResult {
     let t = load_i18n().unwrap();
 
     let uploader = use_state(|| None);
-    let file_blobs = use_state(|| vec![]);
-    let file_names: UseStateHandle<Vec<String>> = use_state(|| vec![]);
+    let file_blobs = use_state(Vec::new);
+    let file_names: UseStateHandle<Vec<String>> = use_state(Vec::new);
 
     use_effect_with((), {
         let uploader = uploader.clone();
@@ -46,7 +46,7 @@ pub fn Portal() -> HtmlResult {
                                 {
                                     file_blobs.iter().enumerate().zip(file_names.iter())
                                         .map(|((index, blob), name)| {
-                                            let src = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+                                            let src = web_sys::Url::create_object_url_with_blob(blob).unwrap();
 
                                             html! {
                                                 <div
@@ -160,12 +160,12 @@ pub fn Portal() -> HtmlResult {
                                             let file_blobs = file_blobs.to_owned();
                                             let file_names = file_names.to_owned();
 
-                                            uploader.as_ref().map(|uploader| {
+                                            if let Some(uploader) = uploader.as_ref() {
                                                 uploader.upload(move |blobs, names| {
                                                     file_blobs.set((*file_blobs).clone().into_iter().chain(blobs).collect());
                                                     file_names.set((*file_names).clone().into_iter().chain(names).collect());
                                                 });
-                                            });
+                                            }
                                         })
                                     }
                                 >
@@ -233,11 +233,11 @@ pub fn Portal() -> HtmlResult {
                                                 reader
                                                     .add_event_listener_with_callback(
                                                         "loadend",
-                                                        &cb.as_ref().unchecked_ref(),
+                                                        cb.as_ref().unchecked_ref(),
                                                     )
                                                     .unwrap();
                                                 cb.forget();
-                                                reader.read_as_array_buffer(&blob).unwrap();
+                                                reader.read_as_array_buffer(blob).unwrap();
                                             }
                                         });
                                     })
@@ -274,12 +274,12 @@ pub fn Portal() -> HtmlResult {
                                     let file_blobs = file_blobs.to_owned();
                                     let file_names = file_names.to_owned();
 
-                                    uploader.as_ref().map(|uploader| {
+                                    if let Some(uploader) = uploader.as_ref() {
                                         uploader.upload(move |blobs, names| {
                                             file_blobs.set(blobs);
                                             file_names.set(names);
                                         });
-                                    });
+                                    }
                                 })
                             }
                         >

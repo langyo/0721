@@ -4,20 +4,17 @@ use once_cell::sync::Lazy;
 use crate::models::user::*;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub const DB: Lazy<sled::Db> = Lazy::new(|| {
-    let db = sled::open({
+pub static DB: Lazy<sled::Db> = Lazy::new(|| {
+    sled::open({
         let mut path = (*crate::DATABASE_DIR).clone();
         path.push("user.redb");
         path
     })
-    .unwrap();
-    db
+    .unwrap()
 });
 
 pub async fn count() -> Result<usize> {
-    let count = DB.len();
-
-    Ok(count)
+    Ok(DB.len())
 }
 
 pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {

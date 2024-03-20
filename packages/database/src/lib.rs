@@ -19,7 +19,7 @@ pub async fn init() -> Result<()> {
     };
 
     // If the user table is empty, create a default user
-    if count().await? <= 0 {
+    if count().await? == 0 {
         let profile = Model {
             updated_at: Utc::now(),
             password_hash: generate_hash("admin")?,

@@ -12,11 +12,8 @@ pub async fn route() -> Result<Router> {
     let router = Router::new()
         .route("/count", get(list::count))
         .route("/list", get(list::list))
-        .route("/insert", put(|token, vo| insert::insert(token, vo)))
-        .route(
-            "/delete/:id",
-            post(|token, path| update::delete(token, path)),
-        );
+        .route("/insert", put(insert::insert))
+        .route("/delete/:id", post(update::delete));
 
     Ok(router)
 }

@@ -76,7 +76,7 @@ impl FileUploader {
                 }) as Box<dyn FnMut(_)>
             });
             element
-                .add_event_listener_with_callback("input", &cb.as_ref().unchecked_ref())
+                .add_event_listener_with_callback("input", cb.as_ref().unchecked_ref())
                 .unwrap();
             cb.forget();
 

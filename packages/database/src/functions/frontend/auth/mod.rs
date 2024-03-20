@@ -63,8 +63,8 @@ pub async fn generate_token(name: String, user: Model) -> Result<(String, DateTi
     let now = chrono::Utc::now();
     let claims = Claims {
         name: name.clone(),
-        iat: now.clone(),
-        exp: now.clone()
+        iat: now,
+        exp: now
             + chrono::Duration::try_days(15).ok_or(anyhow!(
                 "Failed to create token: Failed to add 15 days to current time"
             ))?,

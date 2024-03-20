@@ -2,7 +2,7 @@ use yew::prelude::*;
 
 use _database::types::response::UserInfo;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct GlobalState {
     pub token: Option<UserInfo>,
 }
@@ -25,12 +25,6 @@ impl Reducible for GlobalState {
     }
 }
 
-impl Default for GlobalState {
-    fn default() -> Self {
-        GlobalState { token: None }
-    }
-}
-
 pub type GlobalStateContext = UseReducerHandle<GlobalState>;
 
 #[derive(Properties, Debug, PartialEq)]
@@ -41,7 +35,7 @@ pub struct GlobalStateProviderProps {
 
 #[function_component]
 pub fn Provider(props: &GlobalStateProviderProps) -> Html {
-    let state = use_reducer(|| GlobalState::default());
+    let state = use_reducer(GlobalState::default);
 
     html! {
         <ContextProvider<GlobalStateContext> context={state}>

@@ -15,13 +15,10 @@ pub async fn route() -> Result<Router> {
         .route("/list", get(list::list))
         .route(
             "/insert",
-            post(|token, vo| insert::insert(token, vo))
-                .layer(DefaultBodyLimit::max(1024 * 1024 * 8)), // 8 MiB
+            // TODO - Dynamic the max size by global config
+            post(insert::insert).layer(DefaultBodyLimit::max(1024 * 1024 * 8)), // 8 MiB
         )
-        .route(
-            "/delete/:id",
-            post(|token, path| update::delete(token, path)),
-        );
+        .route("/delete/:id", post(update::delete));
 
     Ok(router)
 }
