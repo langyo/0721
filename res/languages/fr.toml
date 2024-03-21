@@ -2,12 +2,12 @@
 welcome = "Bienvenue, "
 loading = "Chargement"
 
+portal = "Portail"
 images = "Images"
 users = "Utilisateurs"
 
 login = "Connexion"
 logout = "Déconnexion"
-register = "Inscription"
 
 username = "Nom d'utilisateur"
 password = "Mot de passe"

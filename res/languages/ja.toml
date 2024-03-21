@@ -2,12 +2,12 @@
 welcome = "ようこそ、"
 loading = "読み込み中"
 
+portal = "ポータル"
 images = "画像"
 users = "ユーザー"
 
 login = "ログイン"
 logout = "ログアウト"
-register = "登録"
 
 username = "ユーザー名"
 password = "パスワード"

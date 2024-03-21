@@ -17,12 +17,12 @@ pub mod config_item {
         pub welcome: String,
         pub loading: String,
 
+        pub portal: String,
         pub images: String,
         pub users: String,
 
         pub login: String,
         pub logout: String,
-        pub register: String,
 
         pub username: String,
         pub password: String,

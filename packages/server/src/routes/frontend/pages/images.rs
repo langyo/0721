@@ -14,11 +14,16 @@ pub async fn query(
     req: Request<Body>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let uri = req.uri().to_string();
+    let title = language
+        .to_config()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+        .header
+        .images;
 
     let ret = super::html_render(
         uri,
         AppStates {
-            title: "Images".to_string(),
+            title,
             auth,
             language,
             config: load_config()
