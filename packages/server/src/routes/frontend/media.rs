@@ -1,6 +1,7 @@
 use anyhow::Result;
 use bytes::Bytes;
 use image::EncodableLayout;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 use axum::{
@@ -24,14 +25,50 @@ impl Args {
     }
 }
 
+static WHITE_LIST: Lazy<Option<Vec<String>>> = Lazy::new(|| {
+    let config = _database::types::config::load_config().unwrap();
+    let white_list = config.router.limit_referrer_host.clone();
+    if let Some(white_list) = white_list {
+        if white_list.is_empty() {
+            None
+        } else {
+            Some(white_list)
+        }
+    } else {
+        None
+    }
+});
+
 #[tracing::instrument]
 pub async fn download_media(
+    headers: HeaderMap,
     Path(hash): Path<String>,
     ExtractAuthInfo(auth): ExtractAuthInfo,
     Query(args): Query<Args>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    // TODO - Check the referer header that the domain is allowed in the global config
-    //        If not, return 403 Forbidden
+    // Check the referer header that the domain is allowed in the global config.
+
+    let request_referer = headers
+        .get(hyper::header::REFERER)
+        .map(|v| v.to_str().unwrap().to_string());
+    if let Some(referer) = request_referer {
+        if let Some(white_list) = WHITE_LIST.as_ref() {
+            let referer = url::Url::parse(&referer).map_err(|err| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Failed to parse referer URL: {}", err),
+                )
+            })?;
+            if !white_list
+                .iter()
+                .any(|host| referer.host_str().unwrap() == host)
+            {
+                return Err((StatusCode::FORBIDDEN, "Referer not allowed".to_string()));
+            }
+        }
+    }
+
+    // Read the image file.
 
     let (mime, file) = get_file(auth, hash)
         .await

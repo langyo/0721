@@ -34,7 +34,7 @@ pub struct FooterBannerItem {
 pub struct Router {
     pub media_entry_path: String,
     pub backend_entry_path: String,
-    pub limit_referrer_host: Vec<String>,
+    pub limit_referrer_host: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
