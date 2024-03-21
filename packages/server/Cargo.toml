@@ -49,6 +49,7 @@ tower-http = { version = "^0.5", features = [
   "trace",
   "compression-gzip",
 ] }
+flate2 = "^1"
 
 stylist = { version = "^0.13", features = [
   "yew_integration",

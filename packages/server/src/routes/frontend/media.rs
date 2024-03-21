@@ -2,11 +2,13 @@ use anyhow::Result;
 use bytes::Bytes;
 use image::EncodableLayout;
 use serde::{Deserialize, Serialize};
+use std::io::prelude::*;
 
 use axum::{
     extract::{Path, Query},
     response::IntoResponse,
 };
+use flate2::{write::GzEncoder, Compression};
 use hyper::{HeaderMap, StatusCode};
 
 use crate::utils::ExtractAuthInfo;
@@ -26,6 +28,7 @@ impl Args {
 
 #[tracing::instrument]
 pub async fn download_media(
+    headers: HeaderMap,
     Path(hash): Path<String>,
     ExtractAuthInfo(auth): ExtractAuthInfo,
     Query(args): Query<Args>,
@@ -33,6 +36,10 @@ pub async fn download_media(
     // TODO - Check the referer header that the domain is allowed in the global config
     //        If not, return 403 Forbidden
 
+    let enable_gzip = headers
+        .get(hyper::header::ACCEPT_ENCODING)
+        .map(|value| value.to_str().unwrap_or("").contains("gzip"))
+        .unwrap_or(false);
     let (mime, file) = get_file(auth, hash)
         .await
         .map_err(|err| (StatusCode::NOT_FOUND, err.to_string()))?;
@@ -43,6 +50,13 @@ pub async fn download_media(
         hyper::header::HeaderValue::from_str(mime.as_str())
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?,
     );
+
+    if enable_gzip {
+        headers.insert(
+            hyper::header::CONTENT_ENCODING,
+            hyper::header::HeaderValue::from_static("gzip"),
+        );
+    }
 
     let image = if args.is_some() {
         let image = image::load_from_memory(&file)
@@ -72,6 +86,23 @@ pub async fn download_media(
     } else {
         file
     };
+
+    log::info!("enable_gzip: {}", enable_gzip);
+    log::info!("Before size: {}", image.len());
+    let image = if enable_gzip {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+        encoder
+            .write_all(&image)
+            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        Bytes::from(
+            encoder
+                .finish()
+                .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?,
+        )
+    } else {
+        image
+    };
+    log::info!("After size: {}", image.len());
 
     Ok((headers, image).into_response())
 }
