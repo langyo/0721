@@ -23,9 +23,8 @@ where
 
         if let Some(language_raw) = language_raw {
             let ret = match &language_raw[..2] {
-                "zh" => match &language_raw[..4] {
-                    "zh-CN" => Language::ZhHans,
-                    "zh-TW" => Language::ZhHant,
+                "zh" => match &language_raw[..5] {
+                    "zh-HK" | "zh-TW" => Language::ZhHant,
                     _ => Language::ZhHans,
                 },
                 "ru" => Language::Ru,
