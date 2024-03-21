@@ -23,13 +23,17 @@ where
 
         if let Some(language_raw) = language_raw {
             let ret = match &language_raw[..2] {
-                "fr" => Language::Fr,
-                "ja" => Language::Ja,
                 "zh" => match &language_raw[..4] {
                     "zh-CN" => Language::ZhHans,
                     "zh-TW" => Language::ZhHant,
                     _ => Language::ZhHans,
                 },
+                "ru" => Language::Ru,
+                "fr" => Language::Fr,
+                "de" => Language::De,
+                "ja" => Language::Ja,
+                "ko" => Language::Ko,
+                "it" => Language::It,
                 "en" | _ => Language::EnUs,
             };
             Ok(ExtractLanguageInfo(ret))

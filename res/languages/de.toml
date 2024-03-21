@@ -1,0 +1,19 @@
+[header]
+welcome = "Willkommen, "
+loading = "Laden..."
+
+portal = "Portal"
+images = "Bilder"
+users = "Benutzer"
+
+login = "Anmelden"
+logout = "Abmelden"
+
+username = "Benutzername"
+password = "Passwort"
+email = "E-Mail"
+
+[portal]
+upload = "Hochladen"
+download = "Herunterladen"
+delete = "Löschen"

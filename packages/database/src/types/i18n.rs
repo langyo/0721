@@ -41,21 +41,29 @@ pub mod config_item {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Language {
+    Ru,
+    Fr,
+    De,
+    Ja,
+    Ko,
+    It,
     ZhHans,
     ZhHant,
     EnUs,
-    Fr,
-    Ja,
 }
 
 impl Language {
     pub fn to_config(self) -> Result<Config> {
         let raw = match self {
+            Language::Ru => include_str!("../../../../res/languages/ru.toml"),
+            Language::Fr => include_str!("../../../../res/languages/fr.toml"),
+            Language::De => include_str!("../../../../res/languages/de.toml"),
+            Language::Ja => include_str!("../../../../res/languages/ja.toml"),
+            Language::Ko => include_str!("../../../../res/languages/ko.toml"),
+            Language::It => include_str!("../../../../res/languages/it.toml"),
             Language::ZhHans => include_str!("../../../../res/languages/zh_hans.toml"),
             Language::ZhHant => include_str!("../../../../res/languages/zh_hant.toml"),
             Language::EnUs => include_str!("../../../../res/languages/en_us.toml"),
-            Language::Fr => include_str!("../../../../res/languages/fr.toml"),
-            Language::Ja => include_str!("../../../../res/languages/ja.toml"),
         };
         toml::from_str(raw).map_err(|err| anyhow!("Failed to parse toml: {}", err))
     }

@@ -1,0 +1,19 @@
+[header]
+welcome = "환영합니다,"
+loading = "로딩 중..."
+
+portal = "포털"
+images = "이미지"
+users = "사용자"
+
+login = "로그인"
+logout = "로그아웃"
+
+username = "사용자 이름"
+password = "비밀번호"
+email = "이메일"
+
+[portal]
+upload = "업로드"
+download = "다운로드"
+delete = "삭제"

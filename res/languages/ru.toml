@@ -1,0 +1,19 @@
+[header]
+welcome = "Добро пожаловать, "
+loading = "Загрузка..."
+
+portal = "Портал"
+images = "Изображения"
+users = "Пользователи"
+
+login = "Войти"
+logout = "Выйти"
+
+username = "Имя пользователя"
+password = "Пароль"
+email = "Электронная почта"
+
+[portal]
+upload = "Загрузить"
+download = "Скачать"
+delete = "Удалить"

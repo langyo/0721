@@ -1,0 +1,19 @@
+[header]
+welcome = "Benvenuto,"
+loading = "Caricamento..."
+
+portal = "Portale"
+images = "Immagini"
+users = "Utenti"
+
+login = "Accesso"
+logout = "Disconnettersi"
+
+username = "Nome utente"
+password = "Parola d'ordine"
+email = "E-mail"
+
+[portal]
+upload = "Carica"
+download = "Scarica"
+delete = "Elimina"
