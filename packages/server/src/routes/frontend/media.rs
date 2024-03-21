@@ -1,6 +1,5 @@
 use anyhow::Result;
 use bytes::Bytes;
-use image::EncodableLayout;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
@@ -102,9 +101,6 @@ pub async fn download_media(
         let image = image::imageops::thumbnail(&image, width, height);
         let image = image::DynamicImage::from(image);
 
-        let image = webp::Encoder::from_image(&image)
-            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        let image = image.encode(100.0);
         Bytes::from(image.as_bytes().to_vec())
     } else {
         file

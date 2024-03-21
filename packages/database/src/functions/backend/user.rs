@@ -3,7 +3,6 @@ use once_cell::sync::Lazy;
 
 use crate::models::user::*;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
     sled::open({
         let mut path = (*crate::DATABASE_DIR).clone();

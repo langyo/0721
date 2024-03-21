@@ -33,7 +33,6 @@ tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 
 image = { workspace = true }
-webp = "^0.2"
 
 axum = { version = "^0.7", features = ["query", "multipart"] }
 axum-extra = { version = "^0.9", features = [

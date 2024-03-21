@@ -6,10 +6,10 @@ use sha3::{Digest as _, Sha3_256};
 
 use crate::{
     models::{media::*, user::Permission},
+    types::config::load_config,
     MEDIA_RES_DIR,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
     sled::open({
         let mut path = (*crate::DATABASE_DIR).clone();
@@ -17,6 +17,11 @@ pub static DB: Lazy<sled::Db> = Lazy::new(|| {
         path
     })
     .unwrap()
+});
+
+pub static IS_ENABLE_WEBP_AUTO_CONVERT: Lazy<bool> = Lazy::new(|| {
+    let config = load_config().unwrap();
+    config.upload.webp_auto_convert
 });
 
 pub async fn count() -> Result<usize> {
@@ -40,7 +45,16 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     let hash = BASE64_URL_SAFE_NO_PAD.encode(&hash);
     let size = data.len() as u64;
 
-    // TODO - Use MIME map instead of guessing from image library to support audios and videos
+    let data = if *IS_ENABLE_WEBP_AUTO_CONVERT {
+        let image = image::load_from_memory(&data)?;
+        let encoder = webp::Encoder::from_image(&image)
+            .map_err(|err| anyhow!("Failed to create webp encoder from image: {}", err))?;
+        let data = encoder.encode(100.0);
+        data.to_vec().into()
+    } else {
+        data
+    };
+
     let mime = image::guess_format(&data)?;
     let file_name = format!(
         "{}.{}",
@@ -55,8 +69,6 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     if file_path.exists() {
         return Err(anyhow!("Image already exists: {}", hash));
     }
-
-    // TODO - If the webp auto convert is enabled, convert the image to webp
 
     tokio::fs::write(&file_path, data).await?;
 
