@@ -8,46 +8,50 @@ use crate::CONFIG_DIR;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
-    pub portal: Portal,
-    pub router: Router,
-    pub upload: Upload,
-    pub user: User,
+    pub portal: config_item::Portal,
+    pub router: config_item::Router,
+    pub upload: config_item::Upload,
+    pub user: config_item::User,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Portal {
-    pub title_suffix: String,
-    pub footer_banner: Vec<FooterBannerItem>,
-    pub language: String,
-}
+pub mod config_item {
+    use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct FooterBannerItem {
-    pub text: String,
-    pub url: Option<String>,
-}
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct Portal {
+        pub title_suffix: String,
+        pub footer_banner: Vec<FooterBannerItem>,
+        pub language: String,
+    }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Router {
-    pub media_entry_path: String,
-    pub backend_entry_path: String,
-    pub limit_referrer_host: Option<Vec<String>>,
-}
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct FooterBannerItem {
+        pub text: String,
+        pub url: Option<String>,
+    }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Upload {
-    pub image_size_limit: String,
-    pub webp_auto_convert: bool,
-}
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct Router {
+        pub media_entry_path: String,
+        pub backend_entry_path: String,
+        pub limit_referrer_host: Option<Vec<String>>,
+    }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct User {
-    pub allow_register: bool,
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct Upload {
+        pub image_size_limit: String,
+        pub webp_auto_convert: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct User {
+        pub allow_register: bool,
+    }
 }
 
 pub static CONFIG: Lazy<Arc<Mutex<Config>>> = Lazy::new(|| {

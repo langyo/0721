@@ -1,10 +1,11 @@
 use yew::prelude::*;
 
-use _database::types::response::UserInfo;
+use _database::types::{i18n::Language, response::UserInfo};
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct GlobalState {
     pub token: Option<UserInfo>,
+    pub language: Language,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -20,6 +21,7 @@ impl Reducible for GlobalState {
             token: match action {
                 GlobalStateAction::SetToken(token) => token,
             },
+            language: self.language.clone(),
         }
         .into()
     }
@@ -29,13 +31,18 @@ pub type GlobalStateContext = UseReducerHandle<GlobalState>;
 
 #[derive(Properties, Debug, PartialEq)]
 pub struct GlobalStateProviderProps {
+    pub language: Language,
+
     #[prop_or_default]
     pub children: Html,
 }
 
 #[function_component]
-pub fn Provider(props: &GlobalStateProviderProps) -> Html {
-    let state = use_reducer(GlobalState::default);
+pub fn GlobalStateProvider(props: &GlobalStateProviderProps) -> Html {
+    let state = use_reducer(|| GlobalState {
+        token: None,
+        language: props.language,
+    });
 
     html! {
         <ContextProvider<GlobalStateContext> context={state}>

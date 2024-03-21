@@ -7,9 +7,9 @@ use yew_router::prelude::*;
 use crate::{
     components::{Footer, Header},
     pages::*,
-    utils::global_state::Provider,
+    utils::global_state::GlobalStateProvider,
 };
-use _database::types::{config::Config, response::AuthInfo};
+use _database::types::{config::Config, i18n::Language, response::AuthInfo};
 
 #[derive(PartialEq, Clone, Debug, DeriveRoutes, Routable)]
 pub enum Routes {
@@ -37,6 +37,7 @@ pub enum Routes {
 pub struct AppStates {
     pub title: String,
     pub auth: AuthInfo,
+    pub language: Language,
     pub config: Config,
 }
 
@@ -106,7 +107,7 @@ impl DeclType for App {
         "#;
 
         yew::html! {
-            <Provider>
+            <GlobalStateProvider language={props.states.language}>
                 <style>
                     {theme_raw}
                 </style>
@@ -129,7 +130,7 @@ impl DeclType for App {
                 </div>
 
                 <Footer />
-            </Provider>
+            </GlobalStateProvider>
         }
     }
 

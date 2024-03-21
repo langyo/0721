@@ -10,13 +10,15 @@ use yew_router::prelude::*;
 use crate::{
     app::Routes,
     functions::api::auth::{login, verify},
+    utils::global_state::GlobalStateContext,
 };
-use _database::types::i18n::load_i18n;
 
 #[function_component]
 pub fn Login() -> HtmlResult {
     let navigator = use_navigator().unwrap();
-    let t = load_i18n().unwrap();
+    let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
+
+    let t = global_state.language.to_config().unwrap();
 
     let is_verifying = use_state(|| true);
 

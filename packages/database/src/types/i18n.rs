@@ -1,49 +1,59 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
-    pub header: Header,
-    pub portal: Portal,
+    pub header: config_item::Header,
+    pub portal: config_item::Portal,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Header {
-    pub welcome: String,
-    pub loading: String,
+pub mod config_item {
+    use serde::{Deserialize, Serialize};
 
-    pub login: String,
-    pub logout: String,
-    pub register: String,
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct Header {
+        pub welcome: String,
+        pub loading: String,
 
-    pub username: String,
-    pub password: String,
-    pub email: String,
+        pub login: String,
+        pub logout: String,
+        pub register: String,
+
+        pub username: String,
+        pub password: String,
+        pub email: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct Portal {
+        pub upload: String,
+        pub download: String,
+        pub delete: String,
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Portal {
-    pub upload: String,
-    pub download: String,
-    pub delete: String,
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Language {
+    ZhHans,
+    ZhHant,
+    EnUs,
+    Fr,
+    Ja,
 }
 
-pub fn load_i18n() -> Result<Config> {
-    // TODO - Multiple language support
-    let raw = include_str!("../../../../res/languages/zh_hans.toml");
-    let ret: Config = toml::from_str(raw)?;
-    Ok(ret)
-}
-
-pub fn load_i18n_filtered_string() -> Result<String> {
-    let raw = include_str!("../../../../res/languages/zh_hans.toml");
-    Ok(raw
-        .chars()
-        .collect::<HashSet<char>>()
-        .into_iter()
-        .collect::<String>())
+impl Language {
+    pub fn to_config(self) -> Result<Config> {
+        let raw = match self {
+            Language::ZhHans => include_str!("../../../../res/languages/zh_hans.toml"),
+            Language::ZhHant => include_str!("../../../../res/languages/zh_hant.toml"),
+            Language::EnUs => include_str!("../../../../res/languages/en_us.toml"),
+            Language::Fr => include_str!("../../../../res/languages/fr.toml"),
+            Language::Ja => include_str!("../../../../res/languages/ja.toml"),
+        };
+        toml::from_str(raw).map_err(|err| anyhow!("Failed to parse toml: {}", err))
+    }
 }

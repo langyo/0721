@@ -2,12 +2,16 @@ use stylist::yew::styled_component;
 use wasm_bindgen::{closure::Closure, JsCast as _};
 use yew::prelude::*;
 
-use crate::{functions::models::media::insert, utils::FileUploader};
-use _database::types::i18n::load_i18n;
+use crate::{
+    functions::models::media::insert,
+    utils::{global_state::GlobalStateContext, FileUploader},
+};
 
 #[styled_component]
 pub fn Portal() -> HtmlResult {
-    let t = load_i18n().unwrap();
+    let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
+
+    let t = global_state.language.to_config().unwrap();
 
     let uploader = use_state(|| None);
     let file_blobs = use_state(Vec::new);

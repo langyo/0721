@@ -4,11 +4,13 @@ use web_sys::HtmlInputElement;
 use stylist::css;
 use yew::prelude::*;
 
-use _database::types::i18n::load_i18n;
+use crate::utils::global_state::GlobalStateContext;
 
 #[function_component]
 pub fn Register() -> Html {
-    let t = load_i18n().unwrap();
+    let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
+
+    let t = global_state.language.to_config().unwrap();
 
     let name_raw = use_state(|| "".to_string());
     let email_raw = use_state(|| "".to_string());

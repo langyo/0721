@@ -8,18 +8,15 @@ use crate::{
     functions::api::auth::refresh,
     utils::global_state::{GlobalStateAction, GlobalStateContext},
 };
-use _database::types::{
-    config::{load_config, Config},
-    i18n::load_i18n,
-};
+use _database::types::config::{load_config, Config};
 
 #[styled_component]
 pub fn Header() -> HtmlResult {
     let route = use_route::<Routes>().unwrap();
     let navigator = use_navigator().unwrap();
-    let t = load_i18n().unwrap();
     let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
 
+    let t = global_state.language.to_config().unwrap();
     let global_config = use_prepared_state!((), async move |_| -> Option<Config> {
         if let Ok(ret) = load_config() {
             return Some(ret);
