@@ -2,6 +2,9 @@
 welcome = "欢迎，"
 loading = "加载中"
 
+images = "图片"
+users = "用户"
+
 login = "登录"
 logout = "退出"
 register = "注册"

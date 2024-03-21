@@ -2,6 +2,9 @@
 welcome = "Welcome, "
 loading = "Loading"
 
+images = "Images"
+users = "Users"
+
 login = "Login"
 logout = "Logout"
 register = "Register"

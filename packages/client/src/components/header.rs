@@ -80,29 +80,63 @@ pub fn Header() -> HtmlResult {
                 background: var(--color-background-header);
                 z-index: 1000;
             ")}>
-                <h1
+                <a
                     class={css!("
                         width: max-content;
                         height: 96px;
                         margin-left: 24px;
 
-                        color: var(--color-light);
+                        color: var(--color-light-most);
                         font-size: 24px;
                         font-weight: bolder;
                         line-height: 96px;
                         text-decoration: none;
+
+                        transition: all 0.3s;
                         cursor: pointer;
-                    ")}
-                    onclick={
-                        let navigator = navigator.clone();
-                        move |_| {
-                            navigator.push(&Routes::Portal);
-                            gloo::utils::window().location().reload().unwrap();
+
+                        &:hover {
+                            color: var(--color-light);
                         }
-                    }
+                    ")}
+                    href={"/"}
                 >
                     {title_suffix}
-                </h1>
+                </a>
+
+                <nav class={css!("
+                    margin-left: 16px;
+                    margin-right: auto;
+
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+
+                    & > a {
+                        height: 32px;
+                        padding: 0 16px;
+                        margin: 8px;
+
+                        color: var(--color-light-most);
+                        font-size: 20px;
+                        line-height: 32px;
+                        text-decoration: none;
+                        
+                        transition: all 0.3s;
+                        cursor: pointer;
+                    }
+
+                    & > a:hover {
+                        color: var(--color-light);
+                    }
+                ")}>
+                    <a href={"/images"}>
+                        {t.header.images}
+                    </a>
+                    <a href={"/users"}>
+                        {t.header.users}
+                    </a>
+                </nav>
 
                 <aside class={css!("
                     position: absolute;

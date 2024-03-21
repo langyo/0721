@@ -18,7 +18,7 @@ pub async fn query(
     let ret = super::html_render(
         uri,
         AppStates {
-            title: "Register".to_string(),
+            title: "Users".to_string(),
             auth,
             language,
             config: load_config()

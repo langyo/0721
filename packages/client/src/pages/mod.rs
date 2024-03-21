@@ -1,13 +1,13 @@
 mod login;
 mod not_found;
-mod register;
+mod users;
 
-mod dashboard;
+mod images;
 mod portal;
 
 pub use login::Login;
 pub use not_found::NotFound;
-pub use register::Register;
+pub use users::Users;
 
-pub use dashboard::Dashboard;
+pub use images::Images;
 pub use portal::Portal;

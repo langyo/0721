@@ -9,12 +9,8 @@ language = "zh_hans"
 media-entry-path = "/media"
 # If it's empty, it means no limit
 limit-referrer-host = []
-backend-entry-path = "/"
 
 [upload]
 # Allow to use "KiB", "MiB" as unit, or pure number string as bytes
 image-size-limit = "8MiB"
 webp-auto-convert = true
-
-[user]
-allow-register = false

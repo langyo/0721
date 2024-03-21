@@ -2,8 +2,8 @@ use stylist::css;
 use yew::prelude::*;
 
 #[function_component]
-pub fn Dashboard() -> Html {
-    html! {
+pub fn Images() -> HtmlResult {
+    Ok(html! {
         <div class={css!("
             position: fixed;
             width: 100vw;
@@ -28,8 +28,8 @@ pub fn Dashboard() -> Html {
                 font-weight: bolder;
                 user-select: none;
             ")}>
-                {"Dashboard"}
+                {"Images"}
             </h1>
         </div>
-    }
+    })
 }

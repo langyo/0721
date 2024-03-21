@@ -16,16 +16,15 @@ pub enum Routes {
     #[at("/")]
     #[component(Portal)]
     Portal,
-    #[at("/dashboard")]
-    #[component(Dashboard)]
-    Dashboard,
-
     #[at("/login")]
     #[component(Login)]
     Login,
-    #[at("/register")]
-    #[component(Register)]
-    Register,
+    #[at("/images")]
+    #[component(Images)]
+    Images,
+    #[at("/users")]
+    #[component(Users)]
+    Users,
 
     #[not_found]
     #[at("/404")]

@@ -11,7 +11,6 @@ pub struct Config {
     pub portal: config_item::Portal,
     pub router: config_item::Router,
     pub upload: config_item::Upload,
-    pub user: config_item::User,
 }
 
 pub mod config_item {
@@ -36,7 +35,6 @@ pub mod config_item {
     #[serde(rename_all = "kebab-case")]
     pub struct Router {
         pub media_entry_path: String,
-        pub backend_entry_path: String,
         pub limit_referrer_host: Option<Vec<String>>,
     }
 
@@ -45,12 +43,6 @@ pub mod config_item {
     pub struct Upload {
         pub image_size_limit: String,
         pub webp_auto_convert: bool,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    #[serde(rename_all = "kebab-case")]
-    pub struct User {
-        pub allow_register: bool,
     }
 }
 
