@@ -26,6 +26,7 @@ COPY ./packages/database /home/packages/database
 
 COPY ./res/languages /home/res/languages
 COPY ./res/website /home/res/website
+COPY ./res/Config.default.toml /home/res/Config.default.toml
 
 # Stage 1 for client build, used to compile wasm file
 FROM stage-deps as stage-client-build1
@@ -57,13 +58,12 @@ FROM ubuntu:latest as stage-server-build2
 
 RUN apt update && apt install -y openssl
 
-COPY ./res/website /home/res/website
-COPY ./res/Config.toml /home/res/Config.toml
-COPY --from=stage-client-build2 /home/dist/client_bg.wasm /home/res/client_bg.wasm
-COPY --from=stage-client-build2 /home/dist/client.js /home/res/client.js
+COPY ./res/website /home/website
+COPY --from=stage-client-build2 /home/dist/client_bg.wasm /home/client_bg.wasm
+COPY --from=stage-client-build2 /home/dist/client.js /home/client.js
 COPY --from=stage-server-build1 /home/target/release/_server /home/a
 
-ENV ROOT_DIR=/home/res
+ENV ROOT_DIR=/home
 WORKDIR /home
 ENTRYPOINT [ "./a" ]
 EXPOSE 80

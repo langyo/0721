@@ -10,6 +10,4 @@ Cargo.lock
 /.vscode/
 
 # dev files
-res/database/*
-res/media/*
-res/log/*
+cache/
