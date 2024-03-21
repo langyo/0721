@@ -55,6 +55,9 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     if file_path.exists() {
         return Err(anyhow!("Image already exists: {}", hash));
     }
+
+    // TODO - If the webp auto convert is enabled, convert the image to webp
+
     tokio::fs::write(&file_path, data).await?;
 
     let value = Model {

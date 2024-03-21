@@ -33,3 +33,11 @@ script = '''
 exec docker build -t ciallo-0721 .
 exec docker run -d -p 8080:80 -v 0721-cache:/home/cache -e JWT_SECRET=ciallo@0721 --restart=always ciallo-0721:latest
 '''
+
+[tasks.clean]
+script = '''
+#!@duckscript
+
+exec cargo clean
+rm -r ./cache
+'''

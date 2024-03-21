@@ -30,6 +30,9 @@ pub async fn download_media(
     ExtractAuthInfo(auth): ExtractAuthInfo,
     Query(args): Query<Args>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // TODO - Check the referer header that the domain is allowed in the global config
+    //        If not, return 403 Forbidden
+
     let (mime, file) = get_file(auth, hash)
         .await
         .map_err(|err| (StatusCode::NOT_FOUND, err.to_string()))?;

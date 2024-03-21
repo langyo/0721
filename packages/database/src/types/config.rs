@@ -32,8 +32,9 @@ pub struct FooterBannerItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Router {
-    pub image_entry_path: String,
+    pub media_entry_path: String,
     pub backend_entry_path: String,
+    pub limit_referrer_host: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
