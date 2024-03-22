@@ -62,6 +62,8 @@ pub fn Images() -> HtmlResult {
                                 width: 100px;
                                 height: 100px;
                                 margin: 8px;
+
+                                object-fit: cover;
                             ")}
                             src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
                         />

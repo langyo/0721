@@ -112,8 +112,20 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
 
 pub fn generate_thumbnail(hash: impl ToString, data: Bytes) -> Result<Bytes> {
     let image = image::load_from_memory(&data)?;
-    let width = 128;
-    let height = 128;
+
+    let old_width = image.width();
+    let old_height = image.height();
+
+    let width = if old_width > old_height {
+        128
+    } else {
+        128 * old_width / old_height
+    };
+    let height = if old_width < old_height {
+        128
+    } else {
+        128 * old_height / old_width
+    };
 
     let image = image::imageops::thumbnail(&image, width, height);
     let image = image::DynamicImage::from(image);
