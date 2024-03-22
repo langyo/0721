@@ -8,6 +8,7 @@ use axum::{
     response::IntoResponse,
 };
 use hyper::{HeaderMap, StatusCode};
+use image::EncodableLayout as _;
 
 use crate::utils::ExtractAuthInfo;
 use _database::functions::frontend::image::get_file;
@@ -81,6 +82,7 @@ pub async fn download_media(
     );
 
     let image = if args.is_some() {
+        // TODO - Add cache for resized images.
         let image = image::load_from_memory(&file)
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
         let width = args
@@ -101,6 +103,9 @@ pub async fn download_media(
         let image = image::imageops::thumbnail(&image, width, height);
         let image = image::DynamicImage::from(image);
 
+        let image = webp::Encoder::from_image(&image)
+            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        let image = image.encode(100.0);
         Bytes::from(image.as_bytes().to_vec())
     } else {
         file

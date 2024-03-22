@@ -121,7 +121,7 @@ pub fn Header() -> HtmlResult {
                         font-size: 20px;
                         line-height: 32px;
                         text-decoration: none;
-                        
+
                         transition: all 0.3s;
                         cursor: pointer;
                     }

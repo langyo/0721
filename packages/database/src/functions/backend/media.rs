@@ -5,6 +5,7 @@ use once_cell::sync::Lazy;
 use sha3::{Digest as _, Sha3_256};
 
 use crate::{
+    functions::frontend::image::list_file,
     models::{media::*, user::Permission},
     types::config::load_config,
     MEDIA_RES_DIR,
@@ -28,14 +29,18 @@ pub async fn count() -> Result<usize> {
     Ok(DB.len())
 }
 
-pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {
-    let ret = DB
-        .iter()
-        .skip(offset)
-        .take(limit)
-        .map(|r| r.unwrap())
-        .map(|r| postcard::from_bytes(r.1.to_vec().as_slice()).unwrap())
-        .collect::<Vec<_>>();
+pub async fn list_by_order(offset: usize, limit: usize) -> Result<Vec<Model>> {
+    let ret = list_file(offset, limit)
+        .await?
+        .into_iter()
+        .map(|hash| {
+            let raw = DB
+                .get(hash.as_bytes())?
+                .ok_or(anyhow!("Image not found: {}", hash))?;
+            let value = postcard::from_bytes(raw.as_ref()).unwrap();
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(ret)
 }
@@ -81,6 +86,8 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     };
     let raw = postcard::to_allocvec(&value)?;
     DB.insert(hash.as_str(), raw)?;
+
+    super::media_insert_log::insert(hash.clone()).await?;
 
     Ok(hash)
 }

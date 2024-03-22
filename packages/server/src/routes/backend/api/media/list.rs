@@ -6,8 +6,10 @@ use axum::{
 };
 use hyper::StatusCode;
 
-use crate::routes::backend::api::PageArgs;
-use _database::functions::backend::media::{count as do_count, list as do_list};
+use _database::{
+    functions::backend::media::{count as do_count, list_by_order as do_list},
+    types::request::PageArgs,
+};
 
 #[tracing::instrument]
 pub async fn count() -> Result<impl IntoResponse, (StatusCode, String)> {
