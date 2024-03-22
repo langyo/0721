@@ -1,16 +1,17 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::prelude::*;
 use bytes::Bytes;
 use once_cell::sync::Lazy;
 
 use chrono::Utc;
+use image::EncodableLayout as _;
 use sha3::{Digest as _, Sha3_256};
 
 use crate::{
     functions::backend::media_insert_log::list as list_log,
     models::{media::*, user::Permission},
     types::config::load_config,
-    MEDIA_RES_DIR,
+    MEDIA_CACHE_DIR, MEDIA_DIR,
 };
 
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
@@ -72,13 +73,13 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
             mime.to_mime_type()
         ))?
     );
-    let file_path = MEDIA_RES_DIR.clone().join(&file_name);
+    let file_path = MEDIA_DIR.clone().join(&file_name);
 
     if file_path.exists() {
         return Err(anyhow!("Image already exists: {}", hash));
     }
 
-    tokio::fs::write(&file_path, data).await?;
+    tokio::fs::write(&file_path, data.clone()).await?;
 
     let value = Model {
         uploader: uploader.clone(),
@@ -93,7 +94,45 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
 
     super::media_insert_log::insert(hash.clone()).await?;
 
+    std::thread::spawn({
+        let hash = hash.clone();
+        move || {
+            generate_thumbnail(&hash, data)
+                .context(anyhow!(
+                    "Failed to generate thumbnail for image: {} (hash: {})",
+                    file_name,
+                    hash
+                ))
+                .unwrap();
+        }
+    });
+
     Ok(hash)
+}
+
+pub fn generate_thumbnail(hash: impl ToString, data: Bytes) -> Result<Bytes> {
+    let image = image::load_from_memory(&data)?;
+    let width = 128;
+    let height = 128;
+
+    let image = image::imageops::thumbnail(&image, width, height);
+    let image = image::DynamicImage::from(image);
+
+    let image = webp::Encoder::from_image(&image)
+        .map_err(|err| anyhow!("Failed to create webp encoder from image: {}", err))?;
+    let image = image.encode(100.0);
+    let image = Bytes::from(image.as_bytes().to_vec());
+
+    std::fs::write(
+        {
+            let mut path = MEDIA_CACHE_DIR.clone();
+            path.push(&format!("{}.webp", hash.to_string()));
+            path
+        },
+        &image,
+    )?;
+
+    Ok(image)
 }
 
 pub async fn get(key: impl ToString) -> Result<Option<Model>> {
@@ -104,8 +143,8 @@ pub async fn get(key: impl ToString) -> Result<Option<Model>> {
     Ok(ret)
 }
 
-pub async fn delete(id: String) -> Result<()> {
-    DB.remove(id.as_bytes())?;
+pub async fn delete(id: impl ToString) -> Result<()> {
+    DB.remove(id.to_string().as_bytes())?;
 
     Ok(())
 }

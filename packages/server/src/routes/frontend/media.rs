@@ -8,20 +8,25 @@ use axum::{
     response::IntoResponse,
 };
 use hyper::{HeaderMap, StatusCode};
-use image::EncodableLayout as _;
 
 use crate::utils::ExtractAuthInfo;
-use _database::functions::frontend::image::get_file;
+use _database::{
+    functions::{backend::media::generate_thumbnail, frontend::image::get_file},
+    MEDIA_CACHE_DIR,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Args {
-    pub height: Option<u32>,
-    pub width: Option<u32>,
+    pub thumbnail: Option<bool>,
 }
 
 impl Args {
     pub fn is_some(self) -> bool {
-        self.height.is_some() || self.width.is_some()
+        if let Some(flag) = self.thumbnail {
+            flag
+        } else {
+            false
+        }
     }
 }
 
@@ -70,7 +75,7 @@ pub async fn download_media(
 
     // Read the image file.
 
-    let (mime, file) = get_file(auth, hash)
+    let (mime, file) = get_file(auth, &hash)
         .await
         .map_err(|err| (StatusCode::NOT_FOUND, err.to_string()))?;
 
@@ -82,31 +87,17 @@ pub async fn download_media(
     );
 
     let image = if args.is_some() {
-        // TODO - Add cache for resized images.
-        let image = image::load_from_memory(&file)
-            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        let width = args
-            .width
-            .map(|n| n as f32)
-            .unwrap_or(
-                image.width() as f32 * (args.height.unwrap_or(120) as f32 / image.height() as f32),
-            )
-            .round() as u32;
-        let height = args
-            .height
-            .map(|n| n as f32)
-            .unwrap_or(
-                image.height() as f32 * (args.width.unwrap_or(120) as f32 / image.width() as f32),
-            )
-            .round() as u32;
+        // Try to read cache file.
 
-        let image = image::imageops::thumbnail(&image, width, height);
-        let image = image::DynamicImage::from(image);
+        let mut path = MEDIA_CACHE_DIR.clone();
+        path.push(&format!("{}.webp", hash));
 
-        let image = webp::Encoder::from_image(&image)
-            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        let image = image.encode(100.0);
-        Bytes::from(image.as_bytes().to_vec())
+        if let Ok(file_raw) = tokio::fs::read(path).await {
+            Bytes::from(file_raw)
+        } else {
+            generate_thumbnail(hash, file)
+                .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+        }
     } else {
         file
     };

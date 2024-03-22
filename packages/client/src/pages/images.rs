@@ -63,7 +63,7 @@ pub fn Images() -> HtmlResult {
                                 height: 100px;
                                 margin: 8px;
                             ")}
-                            src={format!("{}/{}?width=100&height=100", media_entry_path, item.hash)}
+                            src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
                         />
                     }).collect::<Html>()
                 }

@@ -4,11 +4,10 @@ use bytes::Bytes;
 use image::ImageFormat;
 
 use crate::{
-    functions::backend::media::*, models::user::Permission, types::response::AuthInfo,
-    MEDIA_RES_DIR,
+    functions::backend::media::*, models::user::Permission, types::response::AuthInfo, MEDIA_DIR,
 };
 
-pub async fn get_file(auth: AuthInfo, hash: String) -> Result<(String, Bytes)> {
+pub async fn get_file(auth: AuthInfo, hash: impl ToString) -> Result<(String, Bytes)> {
     let item = get(hash).await?.ok_or(anyhow!("Image not found"))?;
 
     // Check permission
@@ -22,7 +21,7 @@ pub async fn get_file(auth: AuthInfo, hash: String) -> Result<(String, Bytes)> {
 
     let mime = ImageFormat::from_mime_type(&item.mime)
         .ok_or(anyhow!("Failed to get MIME type from image"))?;
-    let path = MEDIA_RES_DIR.clone();
+    let path = MEDIA_DIR.clone();
     let path = path.join(format!(
         "{}.{}",
         item.hash,
