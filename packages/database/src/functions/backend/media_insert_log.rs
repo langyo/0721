@@ -3,8 +3,6 @@ use once_cell::sync::Lazy;
 
 use chrono::{DateTime, Utc};
 
-use crate::models::media_insert_log::*;
-
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
     sled::open({
         let mut path = (*crate::DATABASE_DIR).clone();
@@ -18,14 +16,20 @@ pub async fn count() -> Result<usize> {
     Ok(DB.len())
 }
 
-pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {
+pub async fn list(offset: usize, limit: usize) -> Result<Vec<(DateTime<Utc>, String)>> {
     let ret = DB
         .iter()
         .rev()
         .skip(offset)
         .take(limit)
-        .map(|r| r.unwrap())
-        .map(|r| postcard::from_bytes(r.1.to_vec().as_slice()).unwrap())
+        .map(|item| item.unwrap())
+        .map(|(key, value)| {
+            (
+                String::from_utf8(key.to_vec()).unwrap(),
+                String::from_utf8(value.to_vec()).unwrap(),
+            )
+        })
+        .map(|(date, hash)| (DateTime::parse_from_rfc3339(&date).unwrap().to_utc(), hash))
         .collect::<Vec<_>>();
 
     Ok(ret)
@@ -33,26 +37,21 @@ pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {
 
 pub async fn insert(hash: String) -> Result<DateTime<Utc>> {
     let now = Utc::now();
-    let value = Model {
-        hash,
-        update_at: now.clone(),
-    };
-    let raw = postcard::to_allocvec(&value)?;
-    DB.insert(now.to_rfc3339(), raw)?;
+    DB.insert(now.to_rfc3339(), hash.as_str())?;
 
     Ok(now)
 }
 
-pub async fn get(key: impl ToString) -> Result<Option<Model>> {
+pub async fn get(date: impl ToString) -> Result<Option<String>> {
     let ret = DB
-        .get(key.to_string().as_bytes())?
-        .map(|r| postcard::from_bytes(r.to_vec().as_slice()).unwrap());
+        .get(date.to_string().as_bytes())
+        .map(|item| item.map(|v| String::from_utf8(v.to_vec()).unwrap()))?;
 
     Ok(ret)
 }
 
-pub async fn delete(id: String) -> Result<()> {
-    DB.remove(id.as_bytes())?;
+pub async fn delete(date: impl ToString) -> Result<()> {
+    DB.remove(date.to_string().as_bytes())?;
 
     Ok(())
 }

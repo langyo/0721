@@ -7,7 +7,7 @@ use axum::{
 use hyper::StatusCode;
 
 use _database::{
-    functions::backend::media::{count as do_count, list_by_order as do_list},
+    functions::backend::media::{count as do_count, list as do_list},
     types::request::PageArgs,
 };
 

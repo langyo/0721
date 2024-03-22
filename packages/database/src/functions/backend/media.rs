@@ -2,10 +2,12 @@ use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use bytes::Bytes;
 use once_cell::sync::Lazy;
+
+use chrono::Utc;
 use sha3::{Digest as _, Sha3_256};
 
 use crate::{
-    functions::frontend::image::list_file,
+    functions::backend::media_insert_log::list as list_log,
     models::{media::*, user::Permission},
     types::config::load_config,
     MEDIA_RES_DIR,
@@ -29,13 +31,13 @@ pub async fn count() -> Result<usize> {
     Ok(DB.len())
 }
 
-pub async fn list_by_order(offset: usize, limit: usize) -> Result<Vec<Model>> {
-    let ret = list_file(offset, limit)
+pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {
+    let ret = list_log(offset, limit)
         .await?
         .into_iter()
-        .map(|hash| {
+        .map(|(_time, hash)| {
             let raw = DB
-                .get(hash.as_bytes())?
+                .get(hash.clone())?
                 .ok_or(anyhow!("Image not found: {}", hash))?;
             let value = postcard::from_bytes(raw.as_ref()).unwrap();
             Ok(value)
@@ -46,6 +48,7 @@ pub async fn list_by_order(offset: usize, limit: usize) -> Result<Vec<Model>> {
 }
 
 pub async fn set(uploader: String, data: Bytes) -> Result<String> {
+    let now = Utc::now();
     let hash = Sha3_256::digest(&data).to_vec();
     let hash = BASE64_URL_SAFE_NO_PAD.encode(&hash);
     let size = data.len() as u64;
@@ -80,6 +83,7 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     let value = Model {
         uploader: uploader.clone(),
         permission: Permission::Guest,
+        created_at: now,
         hash: hash.clone(),
         size,
         mime: mime.to_mime_type().to_string(),
