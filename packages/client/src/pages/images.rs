@@ -1,7 +1,7 @@
 use stylist::css;
 use yew::prelude::*;
 
-use crate::{components::icons, functions::models::media::list};
+use crate::{components::icons, functions::models::media::list, utils::copy_to_clipboard};
 use _database::types::config::{load_config, Config};
 
 #[function_component]
@@ -131,24 +131,39 @@ pub fn Images() -> HtmlResult {
                                             src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
                                         />
 
-                                        <div class={css!("
-                                            width: 64px;
-                                            height: 64px;
-                                            border-radius: 0 0 0 4px;
+                                        <div
+                                            class={css!("
+                                                width: 64px;
+                                                height: 64px;
+                                                border-radius: 0 0 0 4px;
 
-                                            display: flex;
-                                            align-items: center;
-                                            justify-content: center;
+                                                display: flex;
+                                                align-items: center;
+                                                justify-content: center;
 
-                                            user-select: none;
-                                            cursor: pointer;
-                                            opacity: var(--show);
-                                            z-index: 1;
+                                                user-select: none;
+                                                cursor: pointer;
+                                                opacity: var(--show);
+                                                z-index: 1;
 
-                                            &:hover {
-                                                background: var(--color-light-less);
+                                                &:hover {
+                                                    background: var(--color-light-less);
+                                                }
+
+                                                &:active {
+                                                    background: var(--color-light-most);
+                                                }
+                                            ")}
+                                            onclick={
+                                                let origin = gloo::utils::document().location().unwrap().origin().unwrap();
+                                                let media_entry_path = media_entry_path.clone();
+                                                let hash = item.hash.clone();
+                                                Callback::from(move |_| {
+                                                    copy_to_clipboard(format!("{}{}/{}", origin, media_entry_path, hash));
+                                                    gloo::dialogs::alert("Copied to clipboard!");
+                                                })
                                             }
-                                        ")}>
+                                        >
                                             <icons::Copy size={24} />
                                         </div>
 
@@ -168,6 +183,10 @@ pub fn Images() -> HtmlResult {
 
                                             &:hover {
                                                 background: var(--color-light-less);
+                                            }
+
+                                            &:active {
+                                                background: var(--color-light-most);
                                             }
                                         ")}>
                                             <icons::Delete size={24} />
