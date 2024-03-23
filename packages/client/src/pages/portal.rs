@@ -28,6 +28,19 @@ pub fn Portal() -> HtmlResult {
 
     Ok(html! {
         <>
+            <div class={css!("
+                position: fixed;
+                width: 100vw;
+                height: 100vh;
+                left: 0;
+                top: 0;
+
+                background: url('/bg.webp') center / cover no-repeat;
+                filter: blur(4px);
+                z-index: -1;
+                pointer-events: none;
+            ")} />
+
             {
                 if !file_names.is_empty() {
                     html! {

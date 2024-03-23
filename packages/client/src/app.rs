@@ -85,6 +85,8 @@ impl DeclType for App {
 
                 --icon-color: var(--color-light);
                 --shadow-half: 0 0 8px rgba(0, 0, 0, 0.5);
+
+                background: var(--color-dark-most);
             }
 
             button {
@@ -113,7 +115,9 @@ impl DeclType for App {
 
                 <Header />
 
-                <div class={stylist::css!("
+                // Don't use stylist's css! macro here, because it will cause a bug.
+                // SSR rendering will not catch the class declaration there.
+                <div style={"
                     position: relative;
                     min-height: calc(100vh - 96px - 192px);
                     width: 100%;
@@ -124,7 +128,7 @@ impl DeclType for App {
                     flex-direction: column;
                     align-items: center;
                     justify-content: center;
-                ")}>
+                "}>
                     {props.children.clone()}
                 </div>
 

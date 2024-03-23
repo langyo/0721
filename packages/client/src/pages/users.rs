@@ -28,7 +28,7 @@ pub fn Users() -> HtmlResult {
                 font-weight: bolder;
                 user-select: none;
             ")}>
-                {"Images"}
+                {"TODO - Users"}
             </h1>
         </div>
     })
