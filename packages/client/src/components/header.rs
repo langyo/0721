@@ -92,7 +92,7 @@ pub fn Header() -> HtmlResult {
                 </a>
 
                 <nav class={css!("
-                    margin-left: 16px;
+                    margin-left: 24px;
                     margin-right: auto;
 
                     display: flex;
@@ -102,7 +102,7 @@ pub fn Header() -> HtmlResult {
                     & > a {
                         height: 32px;
                         padding: 0 16px;
-                        margin: 8px;
+                        margin: 12px;
 
                         color: var(--color-light-most);
                         font-size: 20px;

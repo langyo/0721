@@ -28,7 +28,18 @@ pub fn Portal() -> HtmlResult {
     });
 
     Ok(html! {
-        <>
+        <div class={css!("
+            position: relative;
+            width: 100%;
+            margin-top: 96px;
+            margin-bottom: 64px;
+            padding: 64px;
+
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        ")}>
             <div class={css!("
                 position: fixed;
                 width: 100vw;
@@ -295,6 +306,6 @@ pub fn Portal() -> HtmlResult {
                     }
                 }
             }
-        </>
+        </div>
     })
 }

@@ -1,3 +1,7 @@
+mod circular_progress;
+
+pub use circular_progress::CircularProgress;
+
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 

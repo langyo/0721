@@ -1,8 +1,13 @@
+use chrono::NaiveDate;
+
 use stylist::css;
 use yew::prelude::*;
 
 use crate::{components::icons, functions::models::media::list, utils::copy_to_clipboard};
-use _database::types::config::{load_config, Config};
+use _database::{
+    models::media::Model,
+    types::config::{load_config, Config},
+};
 
 #[function_component]
 pub fn Images() -> HtmlResult {
@@ -26,13 +31,31 @@ pub fn Images() -> HtmlResult {
         |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 let image_list = image_list.clone();
-                let ret = list(Some(0), Some(30)).await.unwrap();
+                // TODO - Pagination.
+                let ret = list(Some(0), Some(100)).await.unwrap();
                 image_list.set(ret);
 
                 is_downloading.set(false);
             });
         }
     });
+
+    let image_list: Vec<(NaiveDate, Vec<Model>)> =
+        image_list.iter().fold(Vec::new(), |mut acc, item| {
+            // TODO - Parse UTC date to local date with timezone.
+            //        It may can be defined in the global config.
+            let date = item.created_at.date_naive();
+            if let Some(last) = acc.last_mut() {
+                if last.0 == date {
+                    last.1.push(item.clone());
+                } else {
+                    acc.push((date, vec![item.clone()]));
+                }
+            } else {
+                acc.push((date, vec![item.clone()]));
+            }
+            acc
+        });
 
     Ok(html! {
         <>
@@ -51,147 +74,152 @@ pub fn Images() -> HtmlResult {
                             align-items: center;
                             justify-content: center;
                         ")}>
-                            <div class={css!("
-                                @keyframes rotate {
-                                    from {
-                                        transform: rotate(0deg);
-                                    }
-                                    to {
-                                        transform: rotate(360deg);
-                                    }
-                                }
-
-                                width: 64px;
-                                height: 64px;
-
-                                border-radius: 50%;
-                                border: 2px solid transparent;
-                                border-top-color: var(--color-light-most);
-                                border-bottom-color: var(--color-light-most);
-
-                                animation: rotate 1s linear infinite;
-                            ")} />
+                            <icons::CircularProgress />
                         </div>
                     }
                 } else {
                     html! {
                         <div class={css!("
-                            width: 80%;
-                            margin: 32px;
-                            padding: 32px;
-
-                            background: var(--color-light-half);
-                            border-radius: 4px;
-                            color: var(--color-dark-most);
-                            font-size: 16px;
-                            font-weight: bolder;
+                            position: relative;
+                            width: 100%;
+                            margin-top: 96px;
+                            margin-bottom: 64px;
+                            padding: 64px;
 
                             display: flex;
-                            align-items: center;
-                            justify-content: center;
+                            flex-direction: column;
+                            align-items: flex-start;
+                            justify-content: flex-start;
                         ")}>
                             {
-                                image_list.iter().map(|item| html! {
-                                    <div
-                                        class={css!("
-                                            position: relative;
-                                            width: 128px;
-                                            height: 128px;
-                                            margin: 8px;
+                                image_list.iter().map(|items| html! {
+                                    <>
+                                        <span class={css!("
+                                            width: 100%;
+                                            margin: 16px 8px;
 
-                                            border-radius: 4px;
-                                            box-shadow: var(--shadow-half);
-
-                                            display: flex;
-                                            align-items: flex-end;
-                                            justify-content: center;
-
-                                            --image-filter: none;
-                                            --show: 0;
-
-                                            &:hover {
-                                                --image-filter: brightness(0.5) blur(4px);
-                                                --show: 1;
-                                            }
-                                        ")}
-                                    >
-                                        <img
-                                            class={css!("
-                                                position: absolute;
-                                                top: 0;
-                                                left: 0;
-                                                width: 100%;
-                                                height: 100%;
-
-                                                object-fit: cover;
-                                                border-radius: 4px;
-                                                filter: var(--image-filter);
-                                                user-select: none;
-                                            ")}
-                                            src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
-                                        />
-
-                                        <div
-                                            class={css!("
-                                                width: 64px;
-                                                height: 64px;
-                                                border-radius: 0 0 0 4px;
-
-                                                display: flex;
-                                                align-items: center;
-                                                justify-content: center;
-
-                                                user-select: none;
-                                                cursor: pointer;
-                                                opacity: var(--show);
-                                                z-index: 1;
-
-                                                &:hover {
-                                                    background: var(--color-light-less);
-                                                }
-
-                                                &:active {
-                                                    background: var(--color-light-most);
-                                                }
-                                            ")}
-                                            onclick={
-                                                let origin = gloo::utils::document().location().unwrap().origin().unwrap();
-                                                let media_entry_path = media_entry_path.clone();
-                                                let hash = item.hash.clone();
-                                                Callback::from(move |_| {
-                                                    copy_to_clipboard(format!("{}{}/{}", origin, media_entry_path, hash));
-                                                    gloo::dialogs::alert("Copied to clipboard!");
-                                                })
-                                            }
-                                        >
-                                            <icons::Copy size={24} />
-                                        </div>
+                                            font-size: 24px;
+                                            font-weight: bolder;
+                                            user-select: none;
+                                        ")}>
+                                            {items.0.format("%Y-%m-%d").to_string()}
+                                        </span>
 
                                         <div class={css!("
-                                            width: 64px;
-                                            height: 64px;
-                                            border-radius: 0 0 4px 0;
+                                            width: 100%;
+                                            margin: 32px 0;
 
                                             display: flex;
-                                            align-items: center;
-                                            justify-content: center;
-
-                                            user-select: none;
-                                            cursor: pointer;
-                                            opacity: var(--show);
-                                            z-index: 1;
-
-                                            &:hover {
-                                                background: var(--color-light-less);
-                                            }
-
-                                            &:active {
-                                                background: var(--color-light-most);
-                                            }
+                                            flex-wrap: wrap;
+                                            align-items: flex-start;
+                                            justify-content: flex-start;
                                         ")}>
-                                            <icons::Delete size={24} />
+                                            {
+                                                items.1.iter().map(|item| html! {
+                                                    <div
+                                                        class={css!("
+                                                            position: relative;
+                                                            width: 128px;
+                                                            height: 128px;
+                                                            margin: 8px;
+
+                                                            border-radius: 4px;
+                                                            box-shadow: var(--shadow-half);
+
+                                                            display: flex;
+                                                            align-items: flex-end;
+                                                            justify-content: center;
+
+                                                            --image-filter: none;
+                                                            --show: 0;
+
+                                                            &:hover {
+                                                                --image-filter: brightness(0.5) blur(4px);
+                                                                --show: 1;
+                                                            }
+                                                        ")}
+                                                    >
+                                                        <img
+                                                            class={css!("
+                                                                position: absolute;
+                                                                top: 0;
+                                                                left: 0;
+                                                                width: 100%;
+                                                                height: 100%;
+
+                                                                object-fit: cover;
+                                                                border-radius: 4px;
+                                                                filter: var(--image-filter);
+                                                                user-select: none;
+                                                            ")}
+                                                            src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
+                                                        />
+
+                                                        <div
+                                                            class={css!("
+                                                                width: 64px;
+                                                                height: 64px;
+                                                                border-radius: 0 0 0 4px;
+
+                                                                display: flex;
+                                                                align-items: center;
+                                                                justify-content: center;
+
+                                                                user-select: none;
+                                                                cursor: pointer;
+                                                                opacity: var(--show);
+                                                                z-index: 1;
+
+                                                                &:hover {
+                                                                    background: var(--color-light-less);
+                                                                }
+
+                                                                &:active {
+                                                                    background: var(--color-light-most);
+                                                                }
+                                                            ")}
+                                                            onclick={
+                                                                let origin = gloo::utils::document().location().unwrap().origin().unwrap();
+                                                                let media_entry_path = media_entry_path.clone();
+                                                                let hash = item.hash.clone();
+                                                                Callback::from(move |_| {
+                                                                    copy_to_clipboard(format!("{}{}/{}", origin, media_entry_path, hash));
+                                                                    gloo::dialogs::alert("Copied to clipboard!");
+                                                                })
+                                                            }
+                                                        >
+                                                            <icons::Copy size={24} />
+                                                        </div>
+
+                                                        <div class={css!("
+                                                            width: 64px;
+                                                            height: 64px;
+                                                            border-radius: 0 0 4px 0;
+
+                                                            display: flex;
+                                                            align-items: center;
+                                                            justify-content: center;
+
+                                                            user-select: none;
+                                                            cursor: pointer;
+                                                            opacity: var(--show);
+                                                            z-index: 1;
+
+                                                            &:hover {
+                                                                background: var(--color-light-less);
+                                                            }
+
+                                                            &:active {
+                                                                background: var(--color-light-most);
+                                                            }
+                                                        ")}>
+                                                            <icons::Delete size={24} />
+                                                        </div>
+                                                    </div>
+                                                }).collect::<Html>()
+                                            }
                                         </div>
-                                    </div>
+                                    </>
                                 }).collect::<Html>()
                             }
                         </div>

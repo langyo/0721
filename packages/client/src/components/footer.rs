@@ -19,7 +19,7 @@ pub fn Footer() -> HtmlResult {
 
     Ok(html! {
         <footer class={css!("
-            position: absolute;
+            position: fixed;
             width: 100%;
             height: 64px;
             left: 0;

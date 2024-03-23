@@ -115,22 +115,7 @@ impl DeclType for App {
 
                 <Header />
 
-                // Don't use stylist's css! macro here, because it will cause a bug.
-                // SSR rendering will not catch the class declaration there.
-                <div style={"
-                    position: relative;
-                    min-height: calc(100vh - 96px - 192px);
-                    width: 100%;
-                    margin-top: 96px;
-                    padding: 64px 0;
-
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                "}>
-                    {props.children.clone()}
-                </div>
+                {props.children.clone()}
 
                 <Footer />
             </GlobalStateProvider>
