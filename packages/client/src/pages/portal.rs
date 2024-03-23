@@ -3,6 +3,7 @@ use wasm_bindgen::{closure::Closure, JsCast as _};
 use yew::prelude::*;
 
 use crate::{
+    components::icons,
     functions::models::media::insert,
     utils::{global_state::GlobalStateContext, FileUploader},
 };
@@ -76,6 +77,10 @@ pub fn Portal() -> HtmlResult {
                                                         border-radius: 4px;
                                                         box-shadow: var(--shadow-half);
 
+                                                        display: flex;
+                                                        align-items: center;
+                                                        justify-content: center;
+
                                                         user-select: none;
                                                         cursor: pointer;
 
@@ -120,28 +125,14 @@ pub fn Portal() -> HtmlResult {
                                                         src={src}
                                                     />
 
-                                                    <div class={css!("
-                                                        position: absolute;
-                                                        top: 50%;
-                                                        left: 50%;
-                                                        width: 24px;
-                                                        height: 4px;
-
-                                                        background: var(--color-light);
-                                                        transform: translate(-50%, -50%) rotate(45deg);
-                                                        opacity: var(--show, 0);
-                                                    ")} />
-                                                    <div class={css!("
-                                                        position: absolute;
-                                                        top: 50%;
-                                                        left: 50%;
-                                                        width: 24px;
-                                                        height: 4px;
-
-                                                        background: var(--color-light);
-                                                        transform: translate(-50%, -50%) rotate(-45deg);
-                                                        opacity: var(--show, 0);
-                                                    ")} />
+                                                    <div
+                                                        class={css!("
+                                                            opacity: var(--show);
+                                                            z-index: 1;
+                                                        ")}
+                                                    >
+                                                        <icons::Delete />
+                                                    </div>
                                                 </div>
                                             }
                                         })
@@ -160,6 +151,10 @@ pub fn Portal() -> HtmlResult {
                                         border-radius: 4px;
                                         box-shadow: var(--shadow-half);
                                         background: var(--color-light-most);
+
+                                        display: flex;
+                                        align-items: center;
+                                        justify-content: center;
 
                                         cursor: pointer;
 
@@ -186,24 +181,7 @@ pub fn Portal() -> HtmlResult {
                                         })
                                     }
                                 >
-                                    <div class={css!("
-                                        position: absolute;
-                                        top: 50%;
-                                        left: 50%;
-                                        width: 24px;
-                                        height: 4px;
-                                        background: var(--color-dark);
-                                        transform: translate(-50%, -50%);
-                                    ")} />
-                                    <div class={css!("
-                                        position: absolute;
-                                        top: 50%;
-                                        left: 50%;
-                                        width: 4px;
-                                        height: 24px;
-                                        background: var(--color-dark);
-                                        transform: translate(-50%, -50%);
-                                    ")} />
+                                    <icons::Upload color={"var(--color-dark-most)"} />
                                 </button>
                             </div>
 

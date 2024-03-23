@@ -56,7 +56,6 @@ impl DeclType for App {
                 box-sizing: border-box;
                 transition: all 0.3s;
                 font-family: ENG-CONTENT, CHN-CONTENT;
-                color: var(--color-light);
             }
 
             :root {
@@ -87,6 +86,7 @@ impl DeclType for App {
                 --shadow-half: 0 0 8px rgba(0, 0, 0, 0.5);
 
                 background: var(--color-dark-most);
+                color: var(--color-light);
             }
 
             button {
