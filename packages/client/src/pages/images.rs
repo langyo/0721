@@ -1,7 +1,7 @@
 use stylist::css;
 use yew::prelude::*;
 
-use crate::functions::models::media::list;
+use crate::{components::icons, functions::models::media::list};
 use _database::types::config::{load_config, Config};
 
 #[function_component]
@@ -102,8 +102,9 @@ pub fn Images() -> HtmlResult {
                                             border-radius: 4px;
                                             box-shadow: var(--shadow-half);
 
-                                            user-select: none;
-                                            cursor: pointer;
+                                            display: flex;
+                                            align-items: flex-end;
+                                            justify-content: center;
 
                                             --image-filter: none;
                                             --show: 0;
@@ -113,10 +114,6 @@ pub fn Images() -> HtmlResult {
                                                 --show: 1;
                                             }
                                         ")}
-                                        onclick={
-                                            Callback::from(move |_| {
-                                            })
-                                        }
                                     >
                                         <img
                                             class={css!("
@@ -129,9 +126,52 @@ pub fn Images() -> HtmlResult {
                                                 object-fit: cover;
                                                 border-radius: 4px;
                                                 filter: var(--image-filter);
+                                                user-select: none;
                                             ")}
                                             src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
                                         />
+
+                                        <div class={css!("
+                                            width: 64px;
+                                            height: 64px;
+                                            border-radius: 0 0 0 4px;
+
+                                            display: flex;
+                                            align-items: center;
+                                            justify-content: center;
+
+                                            user-select: none;
+                                            cursor: pointer;
+                                            opacity: var(--show);
+                                            z-index: 1;
+
+                                            &:hover {
+                                                background: var(--color-light-less);
+                                            }
+                                        ")}>
+                                            <icons::Copy size={24} />
+                                        </div>
+
+                                        <div class={css!("
+                                            width: 64px;
+                                            height: 64px;
+                                            border-radius: 0 0 4px 0;
+
+                                            display: flex;
+                                            align-items: center;
+                                            justify-content: center;
+
+                                            user-select: none;
+                                            cursor: pointer;
+                                            opacity: var(--show);
+                                            z-index: 1;
+
+                                            &:hover {
+                                                background: var(--color-light-less);
+                                            }
+                                        ")}>
+                                            <icons::Delete size={24} />
+                                        </div>
                                     </div>
                                 }).collect::<Html>()
                             }

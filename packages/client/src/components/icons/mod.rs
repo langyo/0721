@@ -40,5 +40,6 @@ icon!(Close, "./close.svg");
 icon!(Plus, "./plus.svg");
 icon!(Refresh, "./refresh.svg");
 icon!(Delete, "./delete.svg");
+icon!(Copy, "./copy.svg");
 icon!(Upload, "./upload.svg");
 icon!(Download, "./download.svg");
