@@ -21,6 +21,7 @@ macro_rules! icon {
 
                         & > svg {
                             color: var(--icon-color);
+                            transition: all 0s;
                         }
                     ")}
                     style={format!("

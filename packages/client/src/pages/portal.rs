@@ -258,6 +258,17 @@ pub fn Portal() -> HtmlResult {
                                 color: var(--color-dark-most);
                                 font-size: 24px;
                                 font-weight: bolder;
+
+                                display: flex;
+                                flex-direction: column;
+                                align-items: center;
+                                justify-content: center;
+
+                                --icon-color-outside: var(--color-dark-most);
+
+                                &:hover {
+                                    --icon-color-outside: var(--color-light-most);
+                                }
                             ")}
                             onclick={
                                 let uploader = uploader.clone();
@@ -278,6 +289,7 @@ pub fn Portal() -> HtmlResult {
                                 })
                             }
                         >
+                            <icons::Upload size={48} color={"var(--icon-color-outside)"} />
                             { t.portal.upload }
                         </button>
                     }
