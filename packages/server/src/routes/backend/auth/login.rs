@@ -17,10 +17,10 @@ pub async fn login(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let ret = do_login(args.name.clone(), args.password_raw.clone())
         .await
-        .map_err(|e| {
+        .map_err(|err| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Cannot login: {}", e),
+                format!("Cannot login: {}", err),
             )
         })?;
 

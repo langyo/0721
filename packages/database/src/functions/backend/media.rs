@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use base64::prelude::*;
 use bytes::Bytes;
 use once_cell::sync::Lazy;
@@ -75,9 +75,7 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     );
     let file_path = MEDIA_DIR.clone().join(&file_name);
 
-    if file_path.exists() {
-        return Err(anyhow!("Image already exists: {}", hash));
-    }
+    ensure!(!file_path.exists(), "Image already exists: {}", hash);
 
     tokio::fs::write(&file_path, data.clone()).await?;
 

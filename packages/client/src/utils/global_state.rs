@@ -21,7 +21,7 @@ impl Reducible for GlobalState {
             token: match action {
                 GlobalStateAction::SetToken(token) => token,
             },
-            language: self.language.clone(),
+            language: self.language,
         }
         .into()
     }

@@ -6,7 +6,7 @@ pub use login::*;
 pub use refresh::*;
 pub use verify::*;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -70,13 +70,11 @@ pub async fn generate_token(name: String, user: Model) -> Result<(String, DateTi
             ))?,
     };
 
-    set(name, &user)
-        .await
-        .map_err(|err| anyhow!("Failed to update user: {}", err))?;
+    set(name, &user).await.context("Failed to update user")?;
 
     Ok((
         encode(&Header::default(), &claims, &JWT_SECRET.encoding)
-            .map_err(|err| anyhow!("Failed to encode token: {}", err))?,
+            .context("Failed to encode token")?,
         now,
     ))
 }

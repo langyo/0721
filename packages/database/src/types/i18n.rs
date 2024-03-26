@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +65,6 @@ impl Language {
             Language::ZhHant => include_str!("../../../../res/languages/zh_hant.toml"),
             Language::EnUs => include_str!("../../../../res/languages/en_us.toml"),
         };
-        toml::from_str(raw).map_err(|err| anyhow!("Failed to parse toml: {}", err))
+        toml::from_str(raw).context("Failed to parse toml")
     }
 }

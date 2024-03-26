@@ -18,7 +18,7 @@ where
         let language_raw = parts
             .headers
             .get(ACCEPT_LANGUAGE)
-            .map(|header| header.to_str().map(|str| Some(str)).unwrap_or(None))
+            .map(|header| header.to_str().map(Some).unwrap_or(None))
             .unwrap_or(None);
 
         if let Some(language_raw) = language_raw {
@@ -33,7 +33,7 @@ where
                 "ja" => Language::Ja,
                 "ko" => Language::Ko,
                 "it" => Language::It,
-                "en" | _ => Language::EnUs,
+                _ => Language::EnUs,
             };
             Ok(ExtractLanguageInfo(ret))
         } else {

@@ -13,10 +13,10 @@ use _database::functions::frontend::auth::verify as do_verify;
 pub async fn verify(
     bearer: TypedHeader<Authorization<Bearer>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    do_verify(bearer.token().to_string()).await.map_err(|e| {
+    do_verify(bearer.token().to_string()).await.map_err(|err| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Cannot verify: {}", e),
+            format!("Cannot verify: {}", err),
         )
     })?;
 

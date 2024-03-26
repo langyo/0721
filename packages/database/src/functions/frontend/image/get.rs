@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use bytes::Bytes;
 
 use image::ImageFormat;
@@ -12,12 +12,9 @@ pub async fn get_file(auth: AuthInfo, hash: impl ToString) -> Result<(String, By
 
     // Check permission
     if let Some(auth) = auth {
-        if auth.permission < item.permission {
-            return Err(anyhow!("No permission"));
-        }
-    } else if item.permission != Permission::Guest {
-        return Err(anyhow!("No permission"));
+        ensure!(auth.permission >= item.permission, "No permission");
     }
+    ensure!(item.permission == Permission::Guest, "No permission");
 
     let mime = ImageFormat::from_mime_type(&item.mime)
         .ok_or(anyhow!("Failed to get MIME type from image"))?;

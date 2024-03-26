@@ -33,15 +33,7 @@ impl Args {
 static WHITE_LIST: Lazy<Option<Vec<String>>> = Lazy::new(|| {
     let config = _database::types::config::load_config().unwrap();
     let white_list = config.router.limit_referrer_host.clone();
-    if let Some(white_list) = white_list {
-        if white_list.is_empty() {
-            None
-        } else {
-            Some(white_list)
-        }
-    } else {
-        None
-    }
+    white_list.filter(|white_list| !white_list.is_empty())
 });
 
 #[tracing::instrument]

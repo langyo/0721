@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 
 use bcrypt::{hash, verify as do_verify, DEFAULT_COST};
 
@@ -19,9 +19,10 @@ pub fn generate_hash(password_raw: impl ToString) -> Result<String> {
 pub async fn login(name: String, password_hash: String) -> Result<UserInfo> {
     let user = get(name.clone()).await?.ok_or(anyhow!("User not found"))?;
 
-    if !verify_hash(password_hash, user.password_hash.clone())? {
-        return Err(anyhow!("Wrong password"));
-    }
+    ensure!(
+        verify_hash(password_hash, user.password_hash.clone())?,
+        "Wrong password"
+    );
 
     let (token, updated_at) = generate_token(name.clone(), user.clone()).await?;
 

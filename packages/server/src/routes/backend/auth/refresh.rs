@@ -13,12 +13,14 @@ use _database::functions::frontend::auth::refresh as do_refresh;
 pub async fn refresh(
     bearer: TypedHeader<Authorization<Bearer>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let ret = do_refresh(bearer.token().to_string()).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Cannot refresh: {}", e),
-        )
-    })?;
+    let ret = do_refresh(bearer.token().to_string())
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Cannot refresh: {}", err),
+            )
+        })?;
 
     Ok(Json(ret))
 }

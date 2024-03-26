@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -53,16 +53,11 @@ pub static CONFIG: Lazy<Arc<Mutex<Config>>> = Lazy::new(|| {
 });
 
 pub fn load_config() -> Result<Config> {
-    Ok(CONFIG
-        .lock()
-        .map_err(|err| anyhow::anyhow!("Failed to lock config: {}", err))?
-        .clone())
+    Ok(CONFIG.lock().map_err(|err| anyhow!("{}", err))?.clone())
 }
 
 pub fn update_config(config: Config) -> Result<()> {
-    *CONFIG
-        .lock()
-        .map_err(|err| anyhow::anyhow!("Failed to lock config: {}", err))? = config.clone();
+    *CONFIG.lock().map_err(|err| anyhow!("{}", err))? = config.clone();
 
     let raw = toml::to_string(&config)?;
     std::fs::write("Config.toml", raw)?;

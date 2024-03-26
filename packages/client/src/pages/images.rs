@@ -24,7 +24,7 @@ pub fn Images() -> HtmlResult {
         .unwrap_or("/media".to_string());
 
     let is_downloading = use_state(|| true);
-    let image_list = use_state(|| Vec::new());
+    let image_list = use_state(Vec::new);
     use_effect_with((), {
         let is_downloading = is_downloading.clone();
         let image_list = image_list.clone();
