@@ -1,7 +1,7 @@
-use stylist::css;
+use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-#[function_component]
+#[styled_component]
 pub fn Users() -> HtmlResult {
     Ok(html! {
         <div class={css!("

@@ -1,6 +1,6 @@
 use chrono::NaiveDate;
 
-use stylist::css;
+use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
 use crate::{components::icons, functions::models::media::list, utils::copy_to_clipboard};
@@ -9,7 +9,7 @@ use _database::{
     types::config::{load_config, Config},
 };
 
-#[function_component]
+#[styled_component]
 pub fn Images() -> HtmlResult {
     let global_config = use_prepared_state!((), async move |_| -> Option<Config> {
         if let Ok(ret) = load_config() {

@@ -3,7 +3,7 @@ use wasm_bindgen::JsCast as _;
 use web_sys::HtmlInputElement;
 
 use gloo::storage::{LocalStorage, Storage as _};
-use stylist::css;
+use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -13,7 +13,7 @@ use crate::{
     utils::global_state::GlobalStateContext,
 };
 
-#[function_component]
+#[styled_component]
 pub fn Login() -> HtmlResult {
     let navigator = use_navigator().unwrap();
     let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
