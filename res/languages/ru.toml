@@ -8,6 +8,7 @@ users = "Пользователи"
 
 login = "Войти"
 logout = "Выйти"
+register = "Регистрация"
 
 username = "Имя пользователя"
 password = "Пароль"

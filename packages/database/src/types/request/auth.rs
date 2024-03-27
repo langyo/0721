@@ -10,3 +10,11 @@ pub struct LoginInfo {
 pub struct RefreshInfo {
     pub token: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegisterParams {
+    pub name: String,
+    pub password_raw: String,
+    pub email: String,
+    pub permission: String,
+}

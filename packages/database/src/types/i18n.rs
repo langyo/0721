@@ -23,6 +23,7 @@ pub mod config_item {
 
         pub login: String,
         pub logout: String,
+        pub register: String,
 
         pub username: String,
         pub password: String,

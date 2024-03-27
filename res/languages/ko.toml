@@ -8,6 +8,7 @@ users = "사용자"
 
 login = "로그인"
 logout = "로그아웃"
+register = "회원가입"
 
 username = "사용자 이름"
 password = "비밀번호"

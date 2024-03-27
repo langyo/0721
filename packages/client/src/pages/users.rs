@@ -54,13 +54,13 @@ pub fn Users() -> HtmlResult {
 
                             display: flex;
                             flex-direction: column;
-                            align-items: flex-start;
-                            justify-content: flex-start;
+                            align-items: center;
+                            justify-content: center;
                         ")}>
                             {
                                 user_list.iter().map(|(name, item)| html! {
                                     <div class={css!("
-                                        width: calc(100% - 16px * 2);
+                                        width: 80%;
                                         height: 64px;
                                         margin: 16px;
                                         padding: 16px;
@@ -68,6 +68,10 @@ pub fn Users() -> HtmlResult {
                                         display: flex;
                                         align-items: center;
                                         justify-content: space-between;
+
+                                        background: var(--color-light-less);
+                                        border-radius: 4px;
+                                        box-shadow: var(--shadow-half);
                                     ")}>
                                         <p>
                                             {name.clone()}
@@ -78,6 +82,28 @@ pub fn Users() -> HtmlResult {
                                     </div>
                                 }).collect::<Html>()
                             }
+
+                            <button
+                                class={css!("
+                                    width: 64px;
+                                    height: 64px;
+                                    margin: 16px;
+                                    padding: 16px;
+
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+
+                                    background: var(--color-light-less);
+                                    border-radius: 4px;
+                                    box-shadow: var(--shadow-half);
+                                ")}
+                                onclick={Callback::from(move |_| {
+                                    gloo::utils::window().location().set_href("/register").unwrap();
+                                })}
+                            >
+                                <icons::Plus />
+                            </button>
                         </div>
                     }
                 }

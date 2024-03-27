@@ -5,6 +5,7 @@ use strum::{Display, EnumIter, EnumString};
 #[derive(
     Clone, Debug, PartialEq, EnumIter, EnumString, Display, Deserialize, Serialize, Default,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum Permission {
     #[default]
     Guest,

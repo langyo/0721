@@ -8,6 +8,7 @@ users = "Users"
 
 login = "Login"
 logout = "Logout"
+register = "Register"
 
 username = "Username"
 password = "Password"

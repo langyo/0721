@@ -2,6 +2,7 @@ mod images;
 mod login;
 pub mod not_found;
 mod portal;
+mod register;
 mod users;
 
 use anyhow::Result;
@@ -26,6 +27,7 @@ pub async fn route() -> Result<Router> {
     let router = Router::new()
         .route("/", get(portal::query))
         .route("/login", get(login::query))
+        .route("/register", get(register::query))
         .route("/images", get(images::query))
         .route("/users", get(users::query));
 

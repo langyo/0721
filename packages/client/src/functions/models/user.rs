@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 
 use crate::utils::{get_auth_cache, get_host};
-use _database::models::user::Model;
+use _database::{models::user::Model, types::request::RegisterParams};
 
 pub async fn count() -> Result<usize> {
     let token = get_auth_cache()?;
@@ -37,10 +37,10 @@ pub async fn list() -> Result<HashMap<String, Model>> {
     }
 }
 
-pub async fn insert(data: Vec<u8>) -> Result<String> {
+pub async fn register(data: &RegisterParams) -> Result<String> {
     let token = get_auth_cache()?;
     let res = Client::new()
-        .put(format!("{}/api/user/insert", get_host()?))
+        .post(format!("{}/api/user/register", get_host()?))
         .json(&data)
         .bearer_auth(token.token)
         .send()
