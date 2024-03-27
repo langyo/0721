@@ -5,7 +5,7 @@ mod update;
 use anyhow::{Context, Result};
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{get, post},
+    routing::{delete, get, put},
     Router,
 };
 
@@ -39,9 +39,9 @@ pub async fn route() -> Result<Router> {
         .route("/list", get(list::list))
         .route(
             "/insert",
-            post(insert::insert).layer(DefaultBodyLimit::max(max_size as usize)),
+            put(insert::insert).layer(DefaultBodyLimit::max(max_size as usize)),
         )
-        .route("/delete/:id", post(update::delete));
+        .route("/delete/:id", delete(update::delete));
 
     Ok(router)
 }

@@ -86,6 +86,10 @@ impl DeclType for App {
                 --shadow-half: 0 0 8px rgba(0, 0, 0, 0.5);
 
                 background: var(--color-dark-most);
+                overflow-x: hidden;
+            }
+
+            h1, h2, h3, h4, h5, h6, p, a, span, div, input, button {
                 color: var(--color-light);
             }
 

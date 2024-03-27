@@ -42,7 +42,7 @@ pub async fn list(offset: Option<usize>, limit: Option<usize>) -> Result<Vec<Mod
 pub async fn insert(data: Vec<u8>) -> Result<String> {
     let token = get_auth_cache()?;
     let res = Client::new()
-        .post(format!("{}/api/media/insert", get_host()?))
+        .put(format!("{}/api/media/insert", get_host()?))
         .multipart(Form::new().part("file", Part::bytes(data)))
         .bearer_auth(token.token)
         .send()

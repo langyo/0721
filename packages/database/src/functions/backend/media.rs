@@ -54,8 +54,12 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     let hash = BASE64_URL_SAFE_NO_PAD.encode(&hash);
     let size = data.len() as u64;
 
+    // Check if the image is already uploaded
+    ensure!(!DB.contains_key(hash.as_str())?, "Image already uploaded");
+
     let data = if *IS_ENABLE_WEBP_AUTO_CONVERT {
         let image = image::load_from_memory(&data)?;
+        // TODO - Support animated webp from gif
         let encoder = webp::Encoder::from_image(&image)
             .map_err(|err| anyhow!("Failed to create webp encoder from image: {}", err))?;
         let data = encoder.encode(100.0);
@@ -73,11 +77,11 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
             mime.to_mime_type()
         ))?
     );
+
     let file_path = MEDIA_DIR.clone().join(&file_name);
-
-    ensure!(!file_path.exists(), "Image already exists: {}", hash);
-
-    tokio::fs::write(&file_path, data.clone()).await?;
+    if !file_path.exists() {
+        tokio::fs::write(&file_path, data.clone()).await?;
+    }
 
     let value = Model {
         uploader: uploader.clone(),
@@ -89,8 +93,6 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     };
     let raw = postcard::to_allocvec(&value)?;
     DB.insert(hash.as_str(), raw)?;
-
-    super::media_insert_log::insert(hash.clone()).await?;
 
     std::thread::spawn({
         let hash = hash.clone();

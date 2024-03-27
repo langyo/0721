@@ -40,7 +40,7 @@ pub async fn list() -> Result<HashMap<String, Model>> {
 pub async fn insert(data: Vec<u8>) -> Result<String> {
     let token = get_auth_cache()?;
     let res = Client::new()
-        .post(format!("{}/api/user/insert", get_host()?))
+        .put(format!("{}/api/user/insert", get_host()?))
         .json(&data)
         .bearer_auth(token.token)
         .send()

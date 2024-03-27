@@ -3,7 +3,11 @@ use chrono::{FixedOffset, NaiveDate};
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-use crate::{components::icons, functions::models::media::list, utils::copy_to_clipboard};
+use crate::{
+    components::icons,
+    functions::models::media::{delete, list},
+    utils::copy_to_clipboard,
+};
 use _database::{
     models::media::Model,
     types::config::{load_config, Config},
@@ -133,14 +137,15 @@ pub fn Images() -> HtmlResult {
                                                             box-shadow: var(--shadow-half);
 
                                                             display: flex;
-                                                            align-items: flex-end;
+                                                            flex-wrap: wrap;
+                                                            align-items: center;
                                                             justify-content: center;
 
                                                             --image-filter: none;
                                                             --show: 0;
 
                                                             &:hover {
-                                                                --image-filter: brightness(0.5) blur(4px);
+                                                                --image-filter: brightness(0.2);
                                                                 --show: 1;
                                                             }
                                                         ")}
@@ -160,6 +165,34 @@ pub fn Images() -> HtmlResult {
                                                             ")}
                                                             src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
                                                         />
+
+                                                        <span class={css!("
+                                                            width: 128px;
+                                                            height: 64px;
+
+                                                            display: flex;
+                                                            flex-direction: column;
+                                                            align-items: center;
+                                                            justify-content: center;
+
+                                                            opacity: var(--show);
+                                                            z-index: 1;
+                                                        ")}>
+                                                            <p class={css!("
+                                                                line-height: 24px;
+                                                                font-size: 16px;
+                                                                font-weight: bolder;
+                                                            ")}>
+                                                                {item.uploader.clone()}
+                                                            </p>
+                                                            <p class={css!("
+                                                                line-height: 16px;
+                                                                font-size: 12px;
+                                                                user-select: none;
+                                                            ")}>
+                                                                {item.mime.clone()}
+                                                            </p>
+                                                        </span>
 
                                                         <div
                                                             class={css!("
@@ -197,28 +230,43 @@ pub fn Images() -> HtmlResult {
                                                             <icons::Copy size={24} />
                                                         </div>
 
-                                                        <div class={css!("
-                                                            width: 64px;
-                                                            height: 64px;
-                                                            border-radius: 0 0 4px 0;
+                                                        <div
+                                                            class={css!("
+                                                                width: 64px;
+                                                                height: 64px;
+                                                                border-radius: 0 0 4px 0;
 
-                                                            display: flex;
-                                                            align-items: center;
-                                                            justify-content: center;
+                                                                display: flex;
+                                                                align-items: center;
+                                                                justify-content: center;
 
-                                                            user-select: none;
-                                                            cursor: pointer;
-                                                            opacity: var(--show);
-                                                            z-index: 1;
+                                                                user-select: none;
+                                                                cursor: pointer;
+                                                                opacity: var(--show);
+                                                                z-index: 1;
 
-                                                            &:hover {
-                                                                background: var(--color-light-less);
+                                                                &:hover {
+                                                                    background: var(--color-light-less);
+                                                                }
+
+                                                                &:active {
+                                                                    background: var(--color-light-most);
+                                                                }
+                                                            ")}
+                                                            onclick={
+                                                                let hash = item.hash.clone();
+                                                                Callback::from(move |_| {
+                                                                    let hash = hash.to_owned();
+                                                                    wasm_bindgen_futures::spawn_local(async move {
+                                                                        if let Ok(_) = delete(hash.to_owned()).await {
+                                                                            gloo::dialogs::alert("Deleted!");
+                                                                        } else {
+                                                                            gloo::dialogs::alert("Failed to delete!");
+                                                                        }
+                                                                    });
+                                                                })
                                                             }
-
-                                                            &:active {
-                                                                background: var(--color-light-most);
-                                                            }
-                                                        ")}>
+                                                        >
                                                             <icons::Delete size={24} />
                                                         </div>
                                                     </div>
