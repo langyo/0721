@@ -1,17 +1,16 @@
+use std::collections::HashMap;
+
 use anyhow::{anyhow, Result};
 
-use reqwest::{
-    multipart::{Form, Part},
-    Client,
-};
+use reqwest::Client;
 
 use crate::utils::{get_auth_cache, get_host};
-use _database::{models::media::Model, types::request::PageArgs};
+use _database::models::user::Model;
 
 pub async fn count() -> Result<usize> {
     let token = get_auth_cache()?;
     let res = Client::new()
-        .get(format!("{}/api/media/count", get_host()?))
+        .get(format!("{}/api/user/count", get_host()?))
         .bearer_auth(token.token)
         .send()
         .await?;
@@ -23,11 +22,10 @@ pub async fn count() -> Result<usize> {
     }
 }
 
-pub async fn list(offset: Option<usize>, limit: Option<usize>) -> Result<Vec<Model>> {
+pub async fn list() -> Result<HashMap<String, Model>> {
     let token = get_auth_cache()?;
     let res = Client::new()
-        .get(format!("{}/api/media/list", get_host()?))
-        .query(&PageArgs { offset, limit })
+        .get(format!("{}/api/user/list", get_host()?))
         .bearer_auth(token.token)
         .send()
         .await?;
@@ -42,8 +40,24 @@ pub async fn list(offset: Option<usize>, limit: Option<usize>) -> Result<Vec<Mod
 pub async fn insert(data: Vec<u8>) -> Result<String> {
     let token = get_auth_cache()?;
     let res = Client::new()
-        .post(format!("{}/api/media/insert", get_host()?))
-        .multipart(Form::new().part("file", Part::bytes(data)))
+        .post(format!("{}/api/user/insert", get_host()?))
+        .json(&data)
+        .bearer_auth(token.token)
+        .send()
+        .await?;
+
+    if res.status().is_success() {
+        Ok(res.text().await?)
+    } else {
+        Err(anyhow!("{} - {}", res.status(), res.text().await?))
+    }
+}
+
+pub async fn update(id: String, data: Model) -> Result<String> {
+    let token = get_auth_cache()?;
+    let res = Client::new()
+        .post(format!("{}/api/user/update/{}", get_host()?, id))
+        .json(&data)
         .bearer_auth(token.token)
         .send()
         .await?;
@@ -58,7 +72,7 @@ pub async fn insert(data: Vec<u8>) -> Result<String> {
 pub async fn delete(id: String) -> Result<()> {
     let token = get_auth_cache()?;
     let res = Client::new()
-        .delete(format!("{}/api/media/delete/{}", get_host()?, id))
+        .delete(format!("{}/api/user/delete/{}", get_host()?, id))
         .bearer_auth(token.token)
         .send()
         .await?;

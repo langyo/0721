@@ -1,5 +1,6 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 
 use crate::models::user::*;
 
@@ -16,14 +17,17 @@ pub async fn count() -> Result<usize> {
     Ok(DB.len())
 }
 
-pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {
+pub async fn list() -> Result<HashMap<String, Model>> {
     let ret = DB
         .iter()
-        .skip(offset)
-        .take(limit)
         .map(|r| r.unwrap())
-        .map(|r| postcard::from_bytes(r.1.to_vec().as_slice()).unwrap())
-        .collect::<Vec<_>>();
+        .map(|(key, value)| {
+            (
+                String::from_utf8(key.to_vec()).unwrap(),
+                postcard::from_bytes(value.to_vec().as_slice()).unwrap(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
 
     Ok(ret)
 }

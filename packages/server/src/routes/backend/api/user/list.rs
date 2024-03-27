@@ -1,15 +1,9 @@
 use anyhow::Result;
 
-use axum::{
-    extract::{Json, Query},
-    response::IntoResponse,
-};
+use axum::{extract::Json, response::IntoResponse};
 use hyper::StatusCode;
 
-use _database::{
-    functions::backend::user::{count as do_count, list as do_list},
-    types::request::PageArgs,
-};
+use _database::functions::backend::user::{count as do_count, list as do_list};
 
 #[tracing::instrument]
 pub async fn count() -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -20,8 +14,8 @@ pub async fn count() -> Result<impl IntoResponse, (StatusCode, String)> {
 }
 
 #[tracing::instrument]
-pub async fn list(args: Query<PageArgs>) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let ret = do_list(args.offset.unwrap_or(0), args.limit.unwrap_or(10))
+pub async fn list() -> Result<impl IntoResponse, (StatusCode, String)> {
+    let ret = do_list()
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(Json(ret))
