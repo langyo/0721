@@ -166,18 +166,31 @@ pub fn Images() -> HtmlResult {
                                                             src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
                                                         />
 
-                                                        <span class={css!("
-                                                            width: 128px;
-                                                            height: 64px;
+                                                        <span
+                                                            class={css!("
+                                                                width: 128px;
+                                                                height: 64px;
 
-                                                            display: flex;
-                                                            flex-direction: column;
-                                                            align-items: center;
-                                                            justify-content: center;
+                                                                display: flex;
+                                                                flex-direction: column;
+                                                                align-items: center;
+                                                                justify-content: center;
 
-                                                            opacity: var(--show);
-                                                            z-index: 1;
-                                                        ")}>
+                                                                opacity: var(--show);
+                                                                z-index: 1;
+                                                                user-select: none;
+                                                                cursor: pointer;
+                                                            ")}
+                                                            onclick={Callback::from({
+                                                                let origin = gloo::utils::document().location().unwrap().origin().unwrap();
+                                                                let media_entry_path = media_entry_path.clone();
+                                                                let hash = item.hash.clone();
+                                                                move |_| {
+                                                                    let url = format!("{}{}/{}", origin, media_entry_path, hash);
+                                                                    gloo::utils::window().open_with_url_and_target(&url, "_blank").unwrap();
+                                                                }
+                                                            })}
+                                                        >
                                                             <p class={css!("
                                                                 line-height: 24px;
                                                                 font-size: 16px;
@@ -188,7 +201,6 @@ pub fn Images() -> HtmlResult {
                                                             <p class={css!("
                                                                 line-height: 16px;
                                                                 font-size: 12px;
-                                                                user-select: none;
                                                             ")}>
                                                                 {item.mime.clone()}
                                                             </p>
