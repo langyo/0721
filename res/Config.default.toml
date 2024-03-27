@@ -4,6 +4,7 @@ footer-banner = [
     { text = "© 0721 project", url = "https://github.com/langyo/0721" },
 ]
 language = "zh_hans"
+timezone = +8
 
 [router]
 media-entry-path = "/media"

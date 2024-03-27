@@ -22,6 +22,7 @@ pub mod config_item {
         pub title_suffix: String,
         pub footer_banner: Vec<FooterBannerItem>,
         pub language: String,
+        pub timezone: i32,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

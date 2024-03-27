@@ -260,6 +260,7 @@ pub fn Portal() -> HtmlResult {
                                 width: 80%;
                                 max-width: 256px;
                                 height: 128px;
+                                padding: 16px 0;
 
                                 border: 4px dashed var(--color-dark-half);
                                 border-radius: 4px;
@@ -273,7 +274,7 @@ pub fn Portal() -> HtmlResult {
                                 display: flex;
                                 flex-direction: column;
                                 align-items: center;
-                                justify-content: center;
+                                justify-content: space-between;
 
                                 --icon-color-outside: var(--color-dark-most);
 

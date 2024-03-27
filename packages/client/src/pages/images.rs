@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{FixedOffset, NaiveDate};
 
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
@@ -40,11 +40,17 @@ pub fn Images() -> HtmlResult {
         }
     });
 
+    let offset = (*global_config)
+        .clone()
+        .map(|config| config.portal.timezone)
+        .unwrap_or(0);
     let image_list: Vec<(NaiveDate, Vec<Model>)> =
         image_list.iter().fold(Vec::new(), |mut acc, item| {
-            // TODO - Parse UTC date to local date with timezone.
-            //        It may can be defined in the global config.
-            let date = item.created_at.date_naive();
+            let date = item.created_at.clone();
+            // Parse UTC date to local date with time zone what be defined in the global config.
+            let date = date.with_timezone(&FixedOffset::east_opt(offset * 3600).unwrap());
+            let date = date.date_naive();
+
             if let Some(last) = acc.last_mut() {
                 if last.0 == date {
                     last.1.push(item.clone());
