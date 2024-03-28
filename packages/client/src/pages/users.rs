@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-use crate::{components::icons, functions::models::user::list};
+use crate::{
+    components::icons,
+    functions::models::user::{delete, list},
+};
 
 #[styled_component]
 pub fn Users() -> HtmlResult {
@@ -96,34 +99,57 @@ pub fn Users() -> HtmlResult {
                                             align-items: center;
                                             justify-content: center;
                                         ")}>
-                                            <button class={css!("
-                                                width: 32px;
-                                                height: 32px;
-                                                margin: 4px;
+                                            <button
+                                                class={css!("
+                                                    width: 32px;
+                                                    height: 32px;
+                                                    margin: 4px;
 
-                                                display: flex;
-                                                align-items: center;
-                                                justify-content: center;
+                                                    display: flex;
+                                                    align-items: center;
+                                                    justify-content: center;
 
-                                                background: var(--color-light-less);
-                                                border-radius: 4px;
-                                                box-shadow: var(--shadow-half);
-                                            ")}>
+                                                    background: var(--color-light-less);
+                                                    border-radius: 4px;
+                                                    box-shadow: var(--shadow-half);
+                                                ")}
+                                                onclick={
+                                                    let name = name.clone();
+                                                    Callback::from(move |_| {
+                                                        gloo::utils::window().location().set_href(&format!("/register?name={}", name)).unwrap();
+                                                    })
+                                                }
+                                            >
                                                 <icons::AccountEdit size={16} />
                                             </button>
-                                            <button class={css!("
-                                                width: 32px;
-                                                height: 32px;
-                                                margin: 4px;
+                                            <button
+                                                class={css!("
+                                                    width: 32px;
+                                                    height: 32px;
+                                                    margin: 4px;
 
-                                                display: flex;
-                                                align-items: center;
-                                                justify-content: center;
+                                                    display: flex;
+                                                    align-items: center;
+                                                    justify-content: center;
 
-                                                background: var(--color-light-less);
-                                                border-radius: 4px;
-                                                box-shadow: var(--shadow-half);
-                                            ")}>
+                                                    background: var(--color-light-less);
+                                                    border-radius: 4px;
+                                                    box-shadow: var(--shadow-half);
+                                                ")}
+                                                onclick={
+                                                    let name = name.clone();
+                                                    Callback::from(move |_| {
+                                                        let name = name.clone();
+                                                        wasm_bindgen_futures::spawn_local(async move {
+                                                            if delete(name).await.is_ok() {
+                                                                gloo::utils::window().location().reload().unwrap();
+                                                            } else {
+                                                                gloo::dialogs::alert("Failed to delete user.");
+                                                            }
+                                                        });
+                                                    })
+                                                }
+                                            >
                                                 <icons::Delete size={16} />
                                             </button>
                                         </span>
