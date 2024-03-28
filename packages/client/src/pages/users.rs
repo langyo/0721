@@ -50,7 +50,7 @@ pub fn Users() -> HtmlResult {
                             width: 100%;
                             margin-top: 96px;
                             margin-bottom: 64px;
-                            padding: 64px;
+                            padding: 16px;
 
                             display: flex;
                             flex-direction: column;
@@ -62,7 +62,7 @@ pub fn Users() -> HtmlResult {
                                     <div class={css!("
                                         width: 80%;
                                         height: 64px;
-                                        margin: 16px;
+                                        margin: 4px 16px;
                                         padding: 16px;
 
                                         display: flex;
@@ -73,12 +73,60 @@ pub fn Users() -> HtmlResult {
                                         border-radius: 4px;
                                         box-shadow: var(--shadow-half);
                                     ")}>
-                                        <p>
-                                            {name.clone()}
-                                        </p>
-                                        <p>
-                                            {item.email.clone()}
-                                        </p>
+                                        <span class={css!("
+                                            display: flex;
+                                            flex-direction: column;
+                                            align-items: flex-start;
+                                            justify-content: center;
+
+                                            font-size: 16px;
+                                            user-select: none;
+                                        ")}>
+                                            <p class={css!("
+                                                font-weight: bolder;
+                                            ")}>
+                                                {name.clone()}
+                                            </p>
+                                            <p>
+                                                {item.email.clone()}
+                                            </p>
+                                        </span>
+                                        <span class={css!("
+                                            display: flex;
+                                            align-items: center;
+                                            justify-content: center;
+                                        ")}>
+                                            <button class={css!("
+                                                width: 32px;
+                                                height: 32px;
+                                                margin: 4px;
+
+                                                display: flex;
+                                                align-items: center;
+                                                justify-content: center;
+
+                                                background: var(--color-light-less);
+                                                border-radius: 4px;
+                                                box-shadow: var(--shadow-half);
+                                            ")}>
+                                                <icons::AccountEdit size={16} />
+                                            </button>
+                                            <button class={css!("
+                                                width: 32px;
+                                                height: 32px;
+                                                margin: 4px;
+
+                                                display: flex;
+                                                align-items: center;
+                                                justify-content: center;
+
+                                                background: var(--color-light-less);
+                                                border-radius: 4px;
+                                                box-shadow: var(--shadow-half);
+                                            ")}>
+                                                <icons::Delete size={16} />
+                                            </button>
+                                        </span>
                                     </div>
                                 }).collect::<Html>()
                             }
@@ -87,7 +135,7 @@ pub fn Users() -> HtmlResult {
                                 class={css!("
                                     width: 64px;
                                     height: 64px;
-                                    margin: 16px;
+                                    margin: 4px 16px;
                                     padding: 16px;
 
                                     display: flex;

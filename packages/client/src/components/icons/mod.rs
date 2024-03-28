@@ -48,3 +48,4 @@ icon!(Delete, "./delete.svg");
 icon!(Copy, "./copy.svg");
 icon!(Upload, "./upload.svg");
 icon!(Download, "./download.svg");
+icon!(AccountEdit, "./account_edit.svg");
