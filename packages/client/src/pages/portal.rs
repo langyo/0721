@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use stylist::yew::styled_component;
 use wasm_bindgen::{closure::Closure, JsCast as _};
 use yew::prelude::*;
@@ -5,11 +7,32 @@ use yew::prelude::*;
 use crate::{
     components::icons,
     functions::models::media::insert,
-    utils::{global_state::GlobalStateContext, FileUploader},
+    utils::{copy_to_clipboard, global_state::GlobalStateContext, FileUploader},
 };
+use _database::types::config::{load_config, Config};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UploadStatus {
+    Ready,
+    Uploading,
+    Success(String),
+    Fail,
+}
 
 #[styled_component]
 pub fn Portal() -> HtmlResult {
+    let global_config = use_prepared_state!((), async move |_| -> Option<Config> {
+        if let Ok(ret) = load_config() {
+            return Some(ret);
+        }
+        None
+    })?
+    .unwrap();
+    let media_entry_path = (*global_config)
+        .clone()
+        .map(|config| config.router.media_entry_path)
+        .unwrap_or("/media".to_string());
+
     let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
 
     let t = global_state.language.to_config().unwrap();
@@ -17,6 +40,7 @@ pub fn Portal() -> HtmlResult {
     let uploader = use_state(|| None);
     let file_blobs = use_state(Vec::new);
     let file_names: UseStateHandle<Vec<String>> = use_state(Vec::new);
+    let upload_status: UseStateHandle<Vec<UploadStatus>> = use_state(Vec::new);
 
     use_effect_with((), {
         let uploader = uploader.clone();
@@ -73,9 +97,10 @@ pub fn Portal() -> HtmlResult {
                                 justify-content: center;
                             ")}>
                                 {
-                                    file_blobs.iter().enumerate().zip(file_names.iter())
-                                        .map(|((index, blob), name)| {
+                                    file_blobs.iter().enumerate().zip(file_names.iter()).zip(upload_status.iter())
+                                        .map(|(((index, blob), name), status)| {
                                             let src = web_sys::Url::create_object_url_with_blob(blob).unwrap();
+                                            let status = status.clone();
 
                                             html! {
                                                 <div
@@ -97,26 +122,43 @@ pub fn Portal() -> HtmlResult {
 
                                                         --image-filter: none;
                                                         --show: 0;
+                                                        --not-show: 1;
 
                                                         &:hover {
                                                             --image-filter: brightness(0.5) blur(4px);
                                                             --show: 1;
+                                                            --not-show: 0;
                                                         }
                                                     ")}
                                                     onclick={
                                                         let file_blobs = file_blobs.clone();
                                                         let file_names = file_names.clone();
+                                                        let status = status.clone();
+                                                        let media_entry_path = media_entry_path.clone();
+
                                                         Callback::from(move |_| {
-                                                            file_blobs.set(
-                                                                file_blobs.iter().enumerate().filter_map(
-                                                                    |(i, b)| if i == index { None } else { Some(b.clone()) }
-                                                                ).collect()
-                                                            );
-                                                            file_names.set(
-                                                                file_names.iter().enumerate().filter_map(
-                                                                    |(i, n)| if i == index { None } else { Some(n.clone()) }
-                                                                ).collect()
-                                                            );
+                                                            match status.to_owned() {
+                                                                UploadStatus::Success(hash) => {
+                                                                    let origin = gloo::utils::document().location().unwrap().origin().unwrap();
+                                                                    let media_entry_path = media_entry_path.clone();
+                                                                    copy_to_clipboard(format!("{}{}/{}", origin, media_entry_path, hash));
+
+                                                                    gloo::dialogs::alert(&format!("Copied: {}", hash));
+                                                                },
+                                                                UploadStatus::Uploading => {},
+                                                                _ => {
+                                                                    file_blobs.set(
+                                                                        file_blobs.iter().enumerate().filter_map(
+                                                                            |(i, b)| if i == index { None } else { Some(b.clone()) }
+                                                                        ).collect()
+                                                                    );
+                                                                    file_names.set(
+                                                                        file_names.iter().enumerate().filter_map(
+                                                                            |(i, n)| if i == index { None } else { Some(n.clone()) }
+                                                                        ).collect()
+                                                                    );
+                                                                },
+                                                            }
                                                         })
                                                     }
                                                 >
@@ -142,7 +184,61 @@ pub fn Portal() -> HtmlResult {
                                                             z-index: 1;
                                                         ")}
                                                     >
-                                                        <icons::Delete />
+                                                        {
+                                                            match status {
+                                                                UploadStatus::Success(_) => html! {
+                                                                    <icons::Copy />
+                                                                },
+                                                                UploadStatus::Uploading => html! {},
+                                                                _ => html! {
+                                                                    <icons::Delete />
+                                                                },
+                                                            }
+                                                        }
+                                                    </div>
+
+                                                    <div
+                                                        class={classes!(css!("
+                                                            position: absolute;
+                                                            width: 100%;
+                                                            height: 100%;
+                                                            top: 0;
+                                                            left: 0;
+
+                                                            background: var(--color-dark-most);
+                                                            border-radius: 4px;
+
+                                                            display: flex;
+                                                            align-items: center;
+                                                            justify-content: center;
+
+                                                            z-index: 1;
+                                                            pointer-events: none;
+                                                        "), {
+                                                            match status {
+                                                                UploadStatus::Ready => css!("
+                                                                    opacity: 0;
+                                                                "),
+                                                                _ => css!("
+                                                                    opacity: var(--not-show);
+                                                                "),
+                                                            }
+                                                        })}
+                                                    >
+                                                        {
+                                                            match status {
+                                                                UploadStatus::Success(_info) => html! {
+                                                                    <icons::Check color={"var(--color-light-most)"} />
+                                                                },
+                                                                UploadStatus::Uploading => html! {
+                                                                    <icons::CircularProgress color={"var(--color-light-most)"} />
+                                                                },
+                                                                UploadStatus::Fail => html! {
+                                                                    <icons::Close color={"var(--color-light-most)"} />
+                                                                },
+                                                                _ => html! {},
+                                                            }
+                                                        }
                                                     </div>
                                                 </div>
                                             }
@@ -185,8 +281,8 @@ pub fn Portal() -> HtmlResult {
 
                                             if let Some(uploader) = uploader.as_ref() {
                                                 uploader.upload(move |blobs, names| {
-                                                    file_blobs.set((*file_blobs).clone().into_iter().chain(blobs).collect());
-                                                    file_names.set((*file_names).clone().into_iter().chain(names).collect());
+                                                    file_blobs.set(blobs);
+                                                    file_names.set(names);
                                                 });
                                             }
                                         })
@@ -207,17 +303,33 @@ pub fn Portal() -> HtmlResult {
                                 ")}
                                 onclick={
                                     let file_blobs = file_blobs.clone();
+                                    let upload_status = upload_status.clone();
 
                                     Callback::from(move |_| {
                                         let file_blobs = file_blobs.to_owned();
+                                        let upload_status = upload_status.to_owned();
+
+                                        let len = file_blobs.len();
+                                        let init_status = (0..len).map(|_| UploadStatus::Uploading).collect::<Vec<_>>();
+                                        upload_status.set(init_status.clone());
+
                                         wasm_bindgen_futures::spawn_local(async move {
-                                            for blob in (*file_blobs).clone().iter() {
+                                            let status = Rc::new(RefCell::new(init_status));
+
+                                            for (index, blob) in (*file_blobs).clone().iter().enumerate() {
+                                                let upload_status = upload_status.clone();
                                                 let reader = web_sys::FileReader::new().unwrap();
+                                                let status = status.clone();
+
                                                 let cb = Closure::wrap({
                                                     let reader = reader.to_owned();
+                                                    let upload_status = upload_status.to_owned();
+                                                    let status = status.to_owned();
 
                                                     Box::new(move |_: web_sys::Event| {
                                                         let reader = reader.to_owned();
+                                                        let upload_status = upload_status.to_owned();
+                                                        let status = status.to_owned();
 
                                                         wasm_bindgen_futures::spawn_local(async move {
                                                             let data = reader.result().unwrap();
@@ -226,10 +338,14 @@ pub fn Portal() -> HtmlResult {
 
                                                             match insert(data).await {
                                                                 Ok(info) => {
-                                                                    gloo::dialogs::alert(&format!("Success: {:?}", info));
+                                                                    log::info!("{:?}", info);
+                                                                    status.borrow_mut()[index] = UploadStatus::Success(info);
+                                                                    upload_status.set((*status.borrow()).clone());
                                                                 }
                                                                 Err(err) => {
-                                                                    gloo::dialogs::alert(&format!("Fail: {:?}", err));
+                                                                    log::error!("{:?}", err);
+                                                                    status.borrow_mut()[index] = UploadStatus::Fail;
+                                                                    upload_status.set((*status.borrow()).clone());
                                                                 }
                                                             }
                                                         });
@@ -286,16 +402,20 @@ pub fn Portal() -> HtmlResult {
                                 let uploader = uploader.clone();
                                 let file_blobs = file_blobs.clone();
                                 let file_names = file_names.clone();
+                                let upload_status = upload_status.clone();
 
                                 Callback::from(move |_| {
                                     let uploader = uploader.to_owned();
                                     let file_blobs = file_blobs.to_owned();
                                     let file_names = file_names.to_owned();
+                                    let upload_status = upload_status.to_owned();
 
                                     if let Some(uploader) = uploader.as_ref() {
                                         uploader.upload(move |blobs, names| {
+                                            let len = blobs.len();
                                             file_blobs.set(blobs);
                                             file_names.set(names);
+                                            upload_status.set((0..len).map(|_| UploadStatus::Ready).collect());
                                         });
                                     }
                                 })
