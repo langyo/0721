@@ -16,6 +16,8 @@ email = "E-Mail"
 
 [portal]
 upload = "Hochladen"
-progress = "Fortschritt"
 download = "Herunterladen"
 delete = "Löschen"
+
+progress = "Fortschritt"
+fail = "Fehler"

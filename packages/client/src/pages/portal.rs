@@ -371,21 +371,26 @@ pub fn Portal() -> HtmlResult {
 
                                         wasm_bindgen_futures::spawn_local(async move {
                                             let status = Rc::new(RefCell::new(init_status));
+                                            const MAX_TASK_LIMIT: usize = 4;
+                                            let tasks_count = Rc::new(RefCell::new(0));
 
                                             for (index, blob) in (*file_blobs).clone().iter().enumerate() {
                                                 let upload_status = upload_status.clone();
                                                 let reader = web_sys::FileReader::new().unwrap();
                                                 let status = status.clone();
+                                                let tasks_count = tasks_count.clone();
 
                                                 let cb = Closure::wrap({
                                                     let reader = reader.to_owned();
                                                     let upload_status = upload_status.to_owned();
                                                     let status = status.to_owned();
+                                                    let tasks_count = tasks_count.clone();
 
                                                     Box::new(move |_: web_sys::Event| {
                                                         let reader = reader.to_owned();
                                                         let upload_status = upload_status.to_owned();
                                                         let status = status.to_owned();
+                                                        let tasks_count = tasks_count.to_owned();
 
                                                         wasm_bindgen_futures::spawn_local(async move {
                                                             let data = reader.result().unwrap();
@@ -404,9 +409,21 @@ pub fn Portal() -> HtmlResult {
                                                                     upload_status.set((*status.borrow()).clone());
                                                                 }
                                                             }
+
+                                                            *tasks_count.borrow_mut() -= 1;
                                                         });
                                                     }) as Box<dyn FnMut(_)>
                                                 });
+
+                                                loop {
+                                                    if *tasks_count.borrow() < MAX_TASK_LIMIT {
+                                                        *tasks_count.borrow_mut() += 1;
+                                                        break;
+                                                    }
+
+                                                    // Wait 100ms
+                                                    gloo::timers::future::TimeoutFuture::new(100).await;
+                                                }
 
                                                 reader
                                                     .add_event_listener_with_callback(
@@ -445,7 +462,7 @@ pub fn Portal() -> HtmlResult {
                                                 <icons::CircularProgress size={12} color={"var(--color-light-most)"} />
 
                                                 {format!(
-                                                    "{} {} / {}",
+                                                    "{} {} / {}{}",
                                                     t.portal.progress,
                                                     upload_status.iter().filter(|status|
                                                         match status {
@@ -453,7 +470,20 @@ pub fn Portal() -> HtmlResult {
                                                             _ => true
                                                         }
                                                     ).count(),
-                                                    upload_status.len()
+                                                    upload_status.len(),
+                                                    {
+                                                        let count = upload_status.iter().filter(|status|
+                                                            match status {
+                                                                UploadStatus::Fail => true,
+                                                                _ => false
+                                                            }
+                                                        ).count();
+                                                        if count > 0 {
+                                                            format!(" ({} {})", count, t.portal.fail)
+                                                        } else {
+                                                            "".to_string()
+                                                        }
+                                                    }
                                                 )}
                                             </div>
                                         }

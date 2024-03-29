@@ -16,6 +16,8 @@ email = "Электронная почта"
 
 [portal]
 upload = "Загрузить"
-progress = "Прогресс"
 download = "Скачать"
 delete = "Удалить"
+
+progress = "Прогресс"
+fail = "Ошибка"

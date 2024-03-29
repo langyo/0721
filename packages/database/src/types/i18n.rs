@@ -34,9 +34,11 @@ pub mod config_item {
     #[serde(rename_all = "kebab-case")]
     pub struct Portal {
         pub upload: String,
-        pub progress: String,
         pub download: String,
         pub delete: String,
+
+        pub progress: String,
+        pub fail: String,
     }
 }
 

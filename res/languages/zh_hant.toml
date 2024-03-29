@@ -16,6 +16,8 @@ email = "郵箱"
 
 [portal]
 upload = "上傳"
-progress = "進度"
 download = "下載"
 delete = "刪除"
+
+progress = "進度"
+fail = "失敗"
