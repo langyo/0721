@@ -16,5 +16,6 @@ email = "이메일"
 
 [portal]
 upload = "업로드"
+progress = "진행"
 download = "다운로드"
 delete = "삭제"

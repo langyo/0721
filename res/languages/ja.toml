@@ -16,5 +16,6 @@ email = "メールアドレス"
 
 [portal]
 upload = "アップロード"
+progress = "進行中"
 download = "ダウンロード"
 delete = "削除"

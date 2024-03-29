@@ -16,5 +16,6 @@ email = "Email"
 
 [portal]
 upload = "Upload"
+progress = "Progress"
 download = "Download"
 delete = "Delete"

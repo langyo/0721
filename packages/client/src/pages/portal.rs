@@ -97,7 +97,7 @@ pub fn Portal() -> HtmlResult {
                                 justify-content: center;
                             ")}>
                                 {
-                                    file_blobs.iter().enumerate().zip(file_names.iter()).zip(upload_status.iter())
+                                    file_blobs.iter().take(6).enumerate().zip(file_names.iter()).zip(upload_status.iter())
                                         .map(|(((index, blob), name), status)| {
                                             let src = web_sys::Url::create_object_url_with_blob(blob).unwrap();
                                             let status = status.clone();
@@ -247,12 +247,9 @@ pub fn Portal() -> HtmlResult {
                                 }
 
                                 <button
-                                    class={css!("
+                                    class={classes!(css!("
                                         position: relative;
-                                        width: 48px;
-                                        height: 48px;
                                         margin: 8px;
-                                        margin-left: calc(8px + (128px - 48px) / 2);
 
                                         border: none;
                                         border-radius: 4px;
@@ -263,12 +260,46 @@ pub fn Portal() -> HtmlResult {
                                         align-items: center;
                                         justify-content: center;
 
+                                        font-size: 24px;
+                                        font-weight: bolder;
+                                        color: var(--color-dark-most);
+
+                                        user-select: none;
                                         cursor: pointer;
 
                                         &:hover {
                                             background: var(--color-light);
+                                            color: var(--color-dark);
                                         }
-                                    ")}
+                                    "), {
+                                        if file_blobs.len() > 6 {
+                                            css!("
+                                                width: 96px;
+                                                height: 96px;
+                                                margin-left: calc(8px + (128px - 96px) / 2);
+                                            ")
+                                        } else {
+                                            css!("
+                                                width: 64px;
+                                                height: 64px;
+                                                margin-left: calc(8px + (128px - 64px) / 2);
+                                            ")
+                                        }
+                                    }, {
+                                        if upload_status.iter().all(|status|
+                                            match status {
+                                                UploadStatus::Uploading => false,
+                                                _ => true
+                                            }
+                                        ) {
+                                            css!("")
+                                        } else {
+                                            css!("
+                                                background: var(--color-dark-less);
+                                                pointer-events: none;
+                                            ")
+                                        }
+                                    })}
                                     onclick={
                                         let uploader = uploader.clone();
                                         let file_blobs = file_blobs.clone();
@@ -288,19 +319,44 @@ pub fn Portal() -> HtmlResult {
                                         })
                                     }
                                 >
-                                    <icons::Upload color={"var(--color-dark-most)"} />
+                                    {
+                                        if file_blobs.len() > 6 {
+                                            html! {
+                                                {format!("+{}", file_blobs.len() - 6)}
+                                            }
+                                        } else {
+                                            html! {
+                                                <icons::Upload color={"var(--color-dark-most)"} />
+                                            }
+                                        }
+                                    }
                                 </button>
                             </div>
 
                             <button
-                                class={css!("
+                                class={classes!(css!("
                                     width: 80%;
                                     max-width: 256px;
                                     height: 48px;
 
                                     font-size: 16px;
                                     font-weight: bolder;
-                                ")}
+                                "), {
+                                    if upload_status.iter().all(|status|
+                                        match status {
+                                            UploadStatus::Uploading => false,
+                                            _ => true
+                                        }
+                                    ) {
+                                        css!("")
+                                    } else {
+                                        css!("
+                                            background: var(--color-dark-most);
+                                            color: var(--color-light-most);
+                                            pointer-events: none;
+                                        ")
+                                    }
+                                })}
                                 onclick={
                                     let file_blobs = file_blobs.clone();
                                     let upload_status = upload_status.clone();
@@ -365,7 +421,44 @@ pub fn Portal() -> HtmlResult {
                                     })
                                 }
                             >
-                                { t.portal.upload }
+                                {
+                                    if upload_status.iter().all(|status|
+                                        match status {
+                                            UploadStatus::Uploading => false,
+                                            _ => true
+                                        }
+                                    ) {
+                                        html! {
+                                            {t.portal.upload}
+                                        }
+                                    } else {
+                                        html! {
+                                            <div class={css!("
+                                                width: 100%;
+                                                height: 100%;
+                                                padding: 0 16px;
+
+                                                display: flex;
+                                                align-items: center;
+                                                justify-content: space-between;
+                                            ")}>
+                                                <icons::CircularProgress size={12} color={"var(--color-light-most)"} />
+
+                                                {format!(
+                                                    "{} {} / {}",
+                                                    t.portal.progress,
+                                                    upload_status.iter().filter(|status|
+                                                        match status {
+                                                            UploadStatus::Uploading => false,
+                                                            _ => true
+                                                        }
+                                                    ).count(),
+                                                    upload_status.len()
+                                                )}
+                                            </div>
+                                        }
+                                    }
+                                }
                             </button>
                         </>
                     }
