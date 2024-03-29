@@ -104,7 +104,7 @@ pub fn Portal() -> HtmlResult {
 
                                             html! {
                                                 <div
-                                                    class={css!("
+                                                    class={classes!(css!("
                                                         position: relative;
                                                         width: 128px;
                                                         height: 128px;
@@ -129,7 +129,13 @@ pub fn Portal() -> HtmlResult {
                                                             --show: 1;
                                                             --not-show: 0;
                                                         }
-                                                    ")}
+                                                    "), {
+                                                        if status == UploadStatus::Uploading {
+                                                            css!("pointer-events: none;")
+                                                        } else {
+                                                            css!("")
+                                                        }
+                                                    })}
                                                     onclick={
                                                         let file_blobs = file_blobs.clone();
                                                         let file_names = file_names.clone();
@@ -359,14 +365,29 @@ pub fn Portal() -> HtmlResult {
                                 })}
                                 onclick={
                                     let file_blobs = file_blobs.clone();
+                                    let file_names = file_names.clone();
                                     let upload_status = upload_status.clone();
 
                                     Callback::from(move |_| {
                                         let file_blobs = file_blobs.to_owned();
+                                        let file_names = file_names.to_owned();
                                         let upload_status = upload_status.to_owned();
 
-                                        let len = file_blobs.len();
-                                        let init_status = (0..len).map(|_| UploadStatus::Uploading).collect::<Vec<_>>();
+                                        // Clean the pictures that has been uploaded successfully
+                                        let (file_blobs_raw, (file_names_raw, upload_status_raw)): (Vec<_>, (Vec<_>, Vec<_>)) =
+                                            file_blobs.iter().zip(file_names.iter()).zip(upload_status.iter())
+                                                .filter_map(|((blob, name), status)| {
+                                                    match status {
+                                                        UploadStatus::Success(_) => None,
+                                                        _ => Some((blob.clone(), (name.clone(), status.clone())))
+                                                    }
+                                                })
+                                                .unzip();
+
+                                        file_blobs.set(file_blobs_raw.clone());
+                                        file_names.set(file_names_raw);
+
+                                        let init_status = upload_status_raw.iter().map(|_| UploadStatus::Uploading).collect::<Vec<_>>();
                                         upload_status.set(init_status.clone());
 
                                         wasm_bindgen_futures::spawn_local(async move {
@@ -374,7 +395,7 @@ pub fn Portal() -> HtmlResult {
                                             const MAX_TASK_LIMIT: usize = 4;
                                             let tasks_count = Rc::new(RefCell::new(0));
 
-                                            for (index, blob) in (*file_blobs).clone().iter().enumerate() {
+                                            for (index, blob) in file_blobs_raw.to_owned().iter().enumerate() {
                                                 let upload_status = upload_status.clone();
                                                 let reader = web_sys::FileReader::new().unwrap();
                                                 let status = status.clone();
@@ -446,7 +467,23 @@ pub fn Portal() -> HtmlResult {
                                         }
                                     ) {
                                         html! {
-                                            {t.portal.upload}
+                                            {format!(
+                                                "{}{}",
+                                                t.portal.upload,
+                                                {
+                                                    let count = upload_status.iter().filter(|status|
+                                                        match status {
+                                                            UploadStatus::Fail => true,
+                                                            _ => false
+                                                        }
+                                                    ).count();
+                                                    if count > 0 {
+                                                        format!(" ({} {})", count, t.portal.fail)
+                                                    } else {
+                                                        "".to_string()
+                                                    }
+                                                }
+                                            )}
                                         }
                                     } else {
                                         html! {
