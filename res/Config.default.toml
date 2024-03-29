@@ -15,3 +15,5 @@ limit-referrer-host = []
 # Allow to use "KiB", "MiB" as unit, or pure number string as bytes
 image-size-limit = "8MiB"
 webp-auto-convert = true
+# If it's true, the uploaded image will keep the original file's name
+use-source-file-name = false

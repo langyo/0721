@@ -27,6 +27,10 @@ pub static IS_ENABLE_WEBP_AUTO_CONVERT: Lazy<bool> = Lazy::new(|| {
     let config = load_config().unwrap();
     config.upload.webp_auto_convert
 });
+pub static IS_USE_SOURCE_FILE_NAME: Lazy<bool> = Lazy::new(|| {
+    let config = load_config().unwrap();
+    config.upload.use_source_file_name
+});
 
 pub async fn count() -> Result<usize> {
     Ok(DB.len())
@@ -48,14 +52,24 @@ pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {
     Ok(ret)
 }
 
-pub async fn set(uploader: String, data: Bytes) -> Result<String> {
+pub async fn set(uploader: String, data: Bytes, file_name_raw: Option<String>) -> Result<String> {
     let now = Utc::now();
     let hash = Sha3_256::digest(&data).to_vec();
     let hash = BASE64_URL_SAFE_NO_PAD.encode(&hash);
     let size = data.len() as u64;
 
+    let db_key = if *IS_USE_SOURCE_FILE_NAME {
+        if let Some(file_name) = file_name_raw {
+            file_name
+        } else {
+            hash.clone()
+        }
+    } else {
+        hash.clone()
+    };
+
     // Check if the image is already uploaded
-    ensure!(!DB.contains_key(hash.as_str())?, "Image already uploaded");
+    ensure!(!DB.contains_key(db_key.as_str())?, "Image already uploaded");
 
     let data = if *IS_ENABLE_WEBP_AUTO_CONVERT {
         let image = image::load_from_memory(&data)?;
@@ -67,18 +81,18 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
     } else {
         data
     };
-
     let mime = image::guess_format(&data)?;
-    let file_name = format!(
-        "{}.{}",
-        hash,
-        mime.extensions_str().first().ok_or(anyhow!(
-            "Failed to get extension from MIME type: {}",
-            mime.to_mime_type()
-        ))?
-    );
 
-    let file_path = MEDIA_DIR.clone().join(&file_name);
+    let file_path = MEDIA_DIR.clone().join(&format!("{}.{}", db_key, {
+        if *IS_ENABLE_WEBP_AUTO_CONVERT {
+            "webp"
+        } else {
+            mime.extensions_str().first().ok_or(anyhow!(
+                "Failed to get extension from MIME type: {}",
+                mime.to_mime_type()
+            ))?
+        }
+    }));
     if !file_path.exists() {
         tokio::fs::write(&file_path, data.clone()).await?;
     }
@@ -87,27 +101,30 @@ pub async fn set(uploader: String, data: Bytes) -> Result<String> {
         uploader: uploader.clone(),
         permission: Permission::Guest,
         created_at: now,
+
+        name: db_key.clone(),
         hash: hash.clone(),
         size,
         mime: mime.to_mime_type().to_string(),
     };
     let raw = postcard::to_allocvec(&value)?;
-    DB.insert(hash.as_str(), raw)?;
+    DB.insert(db_key.as_str(), raw)?;
 
     std::thread::spawn({
+        let db_key = db_key.clone();
         let hash = hash.clone();
         move || {
             generate_thumbnail(&hash, data)
                 .context(anyhow!(
                     "Failed to generate thumbnail for image: {} (hash: {})",
-                    file_name,
+                    db_key,
                     hash
                 ))
                 .unwrap();
         }
     });
 
-    Ok(hash)
+    Ok(db_key)
 }
 
 pub fn generate_thumbnail(hash: impl ToString, data: Bytes) -> Result<Bytes> {

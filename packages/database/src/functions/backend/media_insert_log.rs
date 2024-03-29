@@ -35,8 +35,8 @@ pub async fn list(offset: usize, limit: usize) -> Result<Vec<(DateTime<Utc>, Str
     Ok(ret)
 }
 
-pub async fn insert(hash: impl ToString, date: DateTime<Utc>) -> Result<()> {
-    DB.insert(date.to_rfc3339(), hash.to_string().as_str())?;
+pub async fn insert(key: impl ToString, date: DateTime<Utc>) -> Result<()> {
+    DB.insert(date.to_rfc3339(), key.to_string().as_str())?;
 
     Ok(())
 }

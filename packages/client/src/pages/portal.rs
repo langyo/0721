@@ -385,7 +385,7 @@ pub fn Portal() -> HtmlResult {
                                                 .unzip();
 
                                         file_blobs.set(file_blobs_raw.clone());
-                                        file_names.set(file_names_raw);
+                                        file_names.set(file_names_raw.clone());
 
                                         let init_status = upload_status_raw.iter().map(|_| UploadStatus::Uploading).collect::<Vec<_>>();
                                         upload_status.set(init_status.clone());
@@ -395,7 +395,9 @@ pub fn Portal() -> HtmlResult {
                                             const MAX_TASK_LIMIT: usize = 4;
                                             let tasks_count = Rc::new(RefCell::new(0));
 
-                                            for (index, blob) in file_blobs_raw.to_owned().iter().enumerate() {
+                                            for (index, (blob, name)) in file_blobs_raw.to_owned().iter().zip(
+                                                file_names_raw.to_owned().iter()
+                                            ).enumerate() {
                                                 let upload_status = upload_status.clone();
                                                 let reader = web_sys::FileReader::new().unwrap();
                                                 let status = status.clone();
@@ -405,20 +407,24 @@ pub fn Portal() -> HtmlResult {
                                                     let reader = reader.to_owned();
                                                     let upload_status = upload_status.to_owned();
                                                     let status = status.to_owned();
+
                                                     let tasks_count = tasks_count.clone();
+                                                    let name = name.clone();
 
                                                     Box::new(move |_: web_sys::Event| {
                                                         let reader = reader.to_owned();
                                                         let upload_status = upload_status.to_owned();
                                                         let status = status.to_owned();
+
                                                         let tasks_count = tasks_count.to_owned();
+                                                        let name = name.to_owned();
 
                                                         wasm_bindgen_futures::spawn_local(async move {
                                                             let data = reader.result().unwrap();
                                                             let data = js_sys::Uint8Array::new(&data).to_vec();
                                                             log::warn!("{:?}", data.len());
 
-                                                            match insert(data).await {
+                                                            match insert(data, name).await {
                                                                 Ok(info) => {
                                                                     log::info!("{:?}", info);
                                                                     status.borrow_mut()[index] = UploadStatus::Success(info);

@@ -163,7 +163,7 @@ pub fn Images() -> HtmlResult {
                                                                 filter: var(--image-filter);
                                                                 user-select: none;
                                                             ")}
-                                                            src={format!("{}/{}?thumbnail=true", media_entry_path, item.hash)}
+                                                            src={format!("{}/{}?thumbnail=true", media_entry_path, item.name)}
                                                         />
 
                                                         <span
@@ -184,9 +184,9 @@ pub fn Images() -> HtmlResult {
                                                             onclick={Callback::from({
                                                                 let origin = gloo::utils::document().location().unwrap().origin().unwrap();
                                                                 let media_entry_path = media_entry_path.clone();
-                                                                let hash = item.hash.clone();
+                                                                let name = item.name.clone();
                                                                 move |_| {
-                                                                    let url = format!("{}{}/{}", origin, media_entry_path, hash);
+                                                                    let url = format!("{}{}/{}", origin, media_entry_path, name);
                                                                     gloo::utils::window().open_with_url_and_target(&url, "_blank").unwrap();
                                                                 }
                                                             })}
@@ -232,9 +232,9 @@ pub fn Images() -> HtmlResult {
                                                             onclick={
                                                                 let origin = gloo::utils::document().location().unwrap().origin().unwrap();
                                                                 let media_entry_path = media_entry_path.clone();
-                                                                let hash = item.hash.clone();
+                                                                let name = item.name.clone();
                                                                 Callback::from(move |_| {
-                                                                    copy_to_clipboard(format!("{}{}/{}", origin, media_entry_path, hash));
+                                                                    copy_to_clipboard(format!("{}{}/{}", origin, media_entry_path, name));
                                                                     gloo::dialogs::alert("Copied to clipboard!");
                                                                 })
                                                             }
@@ -266,11 +266,11 @@ pub fn Images() -> HtmlResult {
                                                                 }
                                                             ")}
                                                             onclick={
-                                                                let hash = item.hash.clone();
+                                                                let name = item.name.clone();
                                                                 Callback::from(move |_| {
-                                                                    let hash = hash.to_owned();
+                                                                    let name = name.to_owned();
                                                                     wasm_bindgen_futures::spawn_local(async move {
-                                                                        if let Ok(_) = delete(hash.to_owned()).await {
+                                                                        if let Ok(_) = delete(name.to_owned()).await {
                                                                             gloo::dialogs::alert("Deleted!");
                                                                         } else {
                                                                             gloo::dialogs::alert("Failed to delete!");

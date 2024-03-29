@@ -44,6 +44,7 @@ pub mod config_item {
     pub struct Upload {
         pub image_size_limit: String,
         pub webp_auto_convert: bool,
+        pub use_source_file_name: bool,
     }
 }
 

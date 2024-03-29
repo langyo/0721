@@ -1,6 +1,10 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
-use axum::{extract::Multipart, response::IntoResponse};
+use axum::{
+    extract::{Multipart, Query},
+    response::IntoResponse,
+};
 use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
@@ -9,9 +13,15 @@ use _database::functions::backend::{
     media_insert_log::insert as do_insert_log,
 };
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NameArgs {
+    pub name: Option<String>,
+}
+
 #[tracing::instrument]
 pub async fn insert(
     ExtractAuthInfo(info): ExtractAuthInfo,
+    Query(args): Query<NameArgs>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     if let Some(info) = info {
@@ -25,10 +35,11 @@ pub async fn insert(
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
 
-        let ret = do_insert(info.name, data)
+        let db_key = do_insert(info.name, data, args.name)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        let item = do_select(&ret)
+        log::debug!("do_insert db_key: {:?}", db_key);
+        let item = do_select(&db_key)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
             .ok_or((
@@ -36,11 +47,11 @@ pub async fn insert(
                 "No item after insert".to_string(),
             ))?;
 
-        do_insert_log(&ret, item.created_at)
+        do_insert_log(&db_key, item.created_at)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
 
-        Ok(ret)
+        Ok(db_key)
     } else {
         Err((StatusCode::FORBIDDEN, "No permission".to_string()))
     }

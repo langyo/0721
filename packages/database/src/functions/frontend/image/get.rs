@@ -7,8 +7,8 @@ use crate::{
     functions::backend::media::*, models::user::Permission, types::response::AuthInfo, MEDIA_DIR,
 };
 
-pub async fn get_file(auth: AuthInfo, hash: impl ToString) -> Result<(String, Bytes)> {
-    let item = get(hash).await?.ok_or(anyhow!("Image not found"))?;
+pub async fn get_file(auth: AuthInfo, db_key: impl ToString) -> Result<(String, Bytes)> {
+    let item = get(db_key).await?.ok_or(anyhow!("Image not found"))?;
 
     // Check permission
     if let Some(auth) = auth {
@@ -21,7 +21,7 @@ pub async fn get_file(auth: AuthInfo, hash: impl ToString) -> Result<(String, By
     let path = MEDIA_DIR.clone();
     let path = path.join(format!(
         "{}.{}",
-        item.hash,
+        item.name,
         mime.extensions_str().first().ok_or(anyhow!(
             "Failed to get extension from MIME type: {}",
             mime.to_mime_type()

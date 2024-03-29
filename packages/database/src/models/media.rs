@@ -9,6 +9,7 @@ pub struct Model {
     pub permission: Permission,
     pub created_at: DateTime<Utc>,
 
+    pub name: String,
     pub hash: String,
     pub size: u64,
     pub mime: String,

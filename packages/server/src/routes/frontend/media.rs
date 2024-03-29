@@ -39,7 +39,7 @@ static WHITE_LIST: Lazy<Option<Vec<String>>> = Lazy::new(|| {
 #[tracing::instrument]
 pub async fn download_media(
     headers: HeaderMap,
-    Path(hash): Path<String>,
+    Path(db_key): Path<String>,
     ExtractAuthInfo(auth): ExtractAuthInfo,
     Query(args): Query<Args>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -67,7 +67,7 @@ pub async fn download_media(
 
     // Read the image file.
 
-    let (mime, file) = get_file(auth, &hash)
+    let (mime, file) = get_file(auth, &db_key)
         .await
         .map_err(|err| (StatusCode::NOT_FOUND, err.to_string()))?;
 
@@ -82,12 +82,12 @@ pub async fn download_media(
         // Try to read cache file.
 
         let mut path = MEDIA_CACHE_DIR.clone();
-        path.push(&format!("{}.webp", hash));
+        path.push(&format!("{}.webp", db_key));
 
         if let Ok(file_raw) = tokio::fs::read(path).await {
             Bytes::from(file_raw)
         } else {
-            generate_thumbnail(hash, file)
+            generate_thumbnail(db_key, file)
                 .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
         }
     } else {
