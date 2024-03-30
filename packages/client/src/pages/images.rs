@@ -50,7 +50,7 @@ pub fn Images() -> HtmlResult {
         .unwrap_or(0);
     let image_list: Vec<(NaiveDate, Vec<Model>)> =
         image_list.iter().fold(Vec::new(), |mut acc, item| {
-            let date = item.created_at.clone();
+            let date = item.created_at;
             // Parse UTC date to local date with time zone what be defined in the global config.
             let date = date.with_timezone(&FixedOffset::east_opt(offset * 3600).unwrap());
             let date = date.date_naive();
@@ -270,7 +270,7 @@ pub fn Images() -> HtmlResult {
                                                                 Callback::from(move |_| {
                                                                     let name = name.to_owned();
                                                                     wasm_bindgen_futures::spawn_local(async move {
-                                                                        if let Ok(_) = delete(name.to_owned()).await {
+                                                                        if delete(name.to_owned()).await.is_ok() {
                                                                             gloo::dialogs::alert("Deleted!");
                                                                         } else {
                                                                             gloo::dialogs::alert("Failed to delete!");

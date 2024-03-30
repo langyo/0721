@@ -105,7 +105,7 @@ pub fn ConfigPage() -> HtmlResult {
                             t.config.router.limit_referrer_host.clone(),
                             {
                                 if let Some(val) = &global_config.router.limit_referrer_host {
-                                    if val.len() > 0 {
+                                    if !val.is_empty() {
                                         return Ok(val.iter().map(|item| html! {
                                             <a
                                                 class={css!("

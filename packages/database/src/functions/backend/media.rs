@@ -83,7 +83,7 @@ pub async fn set(uploader: String, data: Bytes, file_name_raw: Option<String>) -
     };
     let mime = image::guess_format(&data)?;
 
-    let file_path = MEDIA_DIR.clone().join(&format!("{}.{}", db_key, {
+    let file_path = MEDIA_DIR.clone().join(format!("{}.{}", db_key, {
         if *IS_ENABLE_WEBP_AUTO_CONVERT {
             "webp"
         } else {

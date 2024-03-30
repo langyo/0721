@@ -293,10 +293,7 @@ pub fn Portal() -> HtmlResult {
                                         }
                                     }, {
                                         if upload_status.iter().all(|status|
-                                            match status {
-                                                UploadStatus::Uploading => false,
-                                                _ => true
-                                            }
+                                            !matches!(status, UploadStatus::Uploading)
                                         ) {
                                             css!("")
                                         } else {
@@ -349,10 +346,7 @@ pub fn Portal() -> HtmlResult {
                                     font-weight: bolder;
                                 "), {
                                     if upload_status.iter().all(|status|
-                                        match status {
-                                            UploadStatus::Uploading => false,
-                                            _ => true
-                                        }
+                                        !matches!(status, UploadStatus::Uploading)
                                     ) {
                                         css!("")
                                     } else {
@@ -467,10 +461,7 @@ pub fn Portal() -> HtmlResult {
                             >
                                 {
                                     if upload_status.iter().all(|status|
-                                        match status {
-                                            UploadStatus::Uploading => false,
-                                            _ => true
-                                        }
+                                        !matches!(status, UploadStatus::Uploading)
                                     ) {
                                         html! {
                                             {format!(
@@ -478,10 +469,7 @@ pub fn Portal() -> HtmlResult {
                                                 t.portal.upload,
                                                 {
                                                     let count = upload_status.iter().filter(|status|
-                                                        match status {
-                                                            UploadStatus::Fail => true,
-                                                            _ => false
-                                                        }
+                                                        matches!(status, UploadStatus::Fail)
                                                     ).count();
                                                     if count > 0 {
                                                         format!(" ({} {})", count, t.portal.fail)
@@ -508,18 +496,12 @@ pub fn Portal() -> HtmlResult {
                                                     "{} {} / {}{}",
                                                     t.portal.progress,
                                                     upload_status.iter().filter(|status|
-                                                        match status {
-                                                            UploadStatus::Uploading => false,
-                                                            _ => true
-                                                        }
+                                                        !matches!(status, UploadStatus::Uploading)
                                                     ).count(),
                                                     upload_status.len(),
                                                     {
                                                         let count = upload_status.iter().filter(|status|
-                                                            match status {
-                                                                UploadStatus::Fail => true,
-                                                                _ => false
-                                                            }
+                                                            matches!(status, UploadStatus::Fail)
                                                         ).count();
                                                         if count > 0 {
                                                             format!(" ({} {})", count, t.portal.fail)

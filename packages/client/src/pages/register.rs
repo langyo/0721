@@ -177,14 +177,14 @@ pub fn Register() -> HtmlResult {
 
                             wasm_bindgen_futures::spawn_local(async move {
                                 match register(&RegisterParams {
-                                    name: name,
+                                    name,
                                     password_raw,
-                                    email: email,
+                                    email,
                                     permission: "user".to_string(),
                                 }).await {
                                     Ok(_) => {
                                         info!("Register success");
-                                        gloo::dialogs::alert(&format!("Register success"));
+                                        gloo::dialogs::alert("Register success");
                                     }
                                     Err(err) => {
                                         error!("Register failed: {:?}", err);
