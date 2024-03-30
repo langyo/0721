@@ -1,14 +1,7 @@
-use wasm_bindgen::JsCast as _;
-use web_sys::HtmlInputElement;
-
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-use crate::{
-    components::icons,
-    functions::models::config::{get as get_config, set as set_config},
-    utils::global_state::GlobalStateContext,
-};
+use crate::utils::global_state::GlobalStateContext;
 use _database::types::config::{load_config, Config as Model};
 
 #[styled_component]
@@ -41,7 +34,6 @@ pub fn ConfigPage() -> HtmlResult {
         ")}>
             <div class={css!("
                 width: 80%;
-                height: 64px;
                 margin: 16px;
                 padding: 0 32px;
 
@@ -57,22 +49,131 @@ pub fn ConfigPage() -> HtmlResult {
                 {
                     [
                         (
-                            global_config.portal.title_suffix.clone(),
                             t.config.portal.title_suffix.clone(),
-                            Callback::from(move |e: InputEvent| {
-                                let target = e.target();
-                                let input = target.and_then(|target| target.dyn_into::<HtmlInputElement>().ok());
-
-                                if let Some(input) = input {
-                                    log::warn!("{}", input.value());
-                                }
-                            }),
+                            html! {
+                                {global_config.portal.title_suffix.clone()}
+                            }
                         ),
-                    ].iter().map(|(value, name, callback)| html! {
+                        (
+                            t.config.portal.footer_banner.clone(),
+                            html! {
+                                global_config.portal.footer_banner.iter().map(|item| html! {
+                                    <a
+                                        class={css!("
+                                            width: 100%;
+                                            height: 32px;
+                                            padding: 0 16px;
+
+                                            font-size: 16px;
+                                            line-height: 32px;
+                                            text-align: center;
+                                            user-select: none;
+                                        ")}
+                                        href={item.url.clone().unwrap_or_default()}
+                                        target="_blank"
+                                    >
+                                        {item.text.clone()}
+                                    </a>
+                                }).collect::<Html>()
+                            }
+                        ),
+                        (
+                            t.config.portal.language.clone(),
+                            html! {
+                                {
+                                    global_config.portal.language.clone()
+                                }
+                            },
+                        ),
+                        (
+                            t.config.portal.timezone.clone(),
+                            html! {
+                                {
+                                    global_config.portal.timezone.to_string()
+                                }
+                            },
+                        ),
+                        (
+                            t.config.router.media_entry_path.clone(),
+                            html! {
+                                {
+                                    global_config.router.media_entry_path.clone()
+                                }
+                            },
+                        ),
+                        (
+                            t.config.router.limit_referrer_host.clone(),
+                            {
+                                if let Some(val) = &global_config.router.limit_referrer_host {
+                                    if val.len() > 0 {
+                                        return Ok(val.iter().map(|item| html! {
+                                            <a
+                                                class={css!("
+                                                    width: 100%;
+                                                    height: 32px;
+                                                    padding: 0 16px;
+
+                                                    font-size: 16px;
+                                                    line-height: 32px;
+                                                    text-align: center;
+                                                    user-select: none;
+                                                ")}
+                                                href={item.clone()}
+                                                target="_blank"
+                                            >
+                                                {item.clone()}
+                                            </a>
+                                        }).collect::<Html>());
+                                    }
+                                }
+                                html! {
+                                    <p class={css!("
+                                        width: 100%;
+                                        height: 32px;
+
+                                        font-size: 16px;
+                                        line-height: 32px;
+                                        text-align: center;
+                                        font-style: italic;
+                                        user-select: none;
+                                    ")}>
+                                        {"None"}
+                                    </p>
+                                }
+                            }
+                        ),
+                        (
+                            t.config.upload.image_size_limit.clone(),
+                            html! {
+                                {
+                                    global_config.upload.image_size_limit.clone()
+                                }
+                            },
+                        ),
+                        (
+                            t.config.upload.webp_auto_convert.clone(),
+                            html! {
+                                if global_config.upload.webp_auto_convert {
+                                    {"true"}
+                                } else {
+                                    {"false"}
+                                }
+                            },
+                        ),
+                        (
+                            t.config.upload.use_source_file_name.clone(),
+                            html! {
+                                if global_config.upload.use_source_file_name {
+                                    {"true"}
+                                } else {
+                                    {"false"}
+                                }
+                            },
+                        ),
+                    ].iter().map(|(name, value)| html! {
                         <div class={css!("
                             width: 100%;
-                            height: 64px;
-                            margin: 16px 0;
+                            min-height: 64px;
 
                             display: flex;
                             align-items: center;
@@ -89,10 +190,10 @@ pub fn ConfigPage() -> HtmlResult {
                             ")}>
                                 {name.to_string()}
                             </span>
-                            <input
+                            <span
                                 class={css!("
                                     width: 80%;
-                                    height: 32px;
+                                    min-height: 32px;
                                     padding: 0 16px;
 
                                     border: none;
@@ -102,14 +203,18 @@ pub fn ConfigPage() -> HtmlResult {
                                     line-height: 32px;
                                     user-select: none;
 
+                                    display: flex;
+                                    flex-direction: column;
+                                    align-items: center;
+                                    justify-content: center;
+
                                     background: var(--color-dark-less);
                                     border-radius: 4px;
                                     box-shadow: var(--shadow-half);
                                 ")}
-                                type={"text"}
-                                value={value.clone()}
-                                oninput={callback.clone()}
-                            />
+                            >
+                                {value.clone()}
+                            </span>
                         </div>
                     }).collect::<Html>()
                 }
