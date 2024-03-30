@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use wasm_bindgen::JsCast as _;
 use web_sys::HtmlInputElement;
 
@@ -8,6 +7,7 @@ use yew::prelude::*;
 use crate::{
     components::icons,
     functions::models::config::{get as get_config, set as set_config},
+    utils::global_state::GlobalStateContext,
 };
 use _database::types::config::{load_config, Config as Model};
 
@@ -21,6 +21,10 @@ pub fn ConfigPage() -> HtmlResult {
     })?
     .unwrap();
     let global_config = use_state(|| (*global_config).clone().unwrap_or_default());
+
+    let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
+
+    let t = global_state.language.to_config().unwrap();
 
     Ok(html! {
         <div class={css!("
@@ -54,7 +58,7 @@ pub fn ConfigPage() -> HtmlResult {
                     [
                         (
                             global_config.portal.title_suffix.clone(),
-                            "Title Suffix",
+                            t.config.portal.title_suffix.clone(),
                             Callback::from(move |e: InputEvent| {
                                 let target = e.target();
                                 let input = target.and_then(|target| target.dyn_into::<HtmlInputElement>().ok());

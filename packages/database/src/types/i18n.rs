@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub header: config_item::Header,
     pub portal: config_item::Portal,
+    pub config: config_item::Config,
 }
 
 pub mod config_item {
@@ -40,6 +41,42 @@ pub mod config_item {
 
         pub progress: String,
         pub fail: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct Config {
+        pub portal: config::Portal,
+        pub router: config::Router,
+        pub upload: config::Upload,
+    }
+
+    pub mod config {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+        #[serde(rename_all = "kebab-case")]
+        pub struct Portal {
+            pub title_suffix: String,
+            pub footer_banner: String,
+            pub language: String,
+            pub timezone: String,
+        }
+
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+        #[serde(rename_all = "kebab-case")]
+        pub struct Router {
+            pub media_entry_path: String,
+            pub limit_referrer_host: String,
+        }
+
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+        #[serde(rename_all = "kebab-case")]
+        pub struct Upload {
+            pub image_size_limit: String,
+            pub webp_auto_convert: String,
+            pub use_source_file_name: String,
+        }
     }
 }
 

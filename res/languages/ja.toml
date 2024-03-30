@@ -22,3 +22,18 @@ delete = "削除"
 
 progress = "進行中"
 fail = "失敗"
+
+[config.portal]
+title-suffix = "サイトタイトル"
+footer-banner = "フッターバナー"
+language = "言語"
+timezone = "タイムゾーン"
+
+[config.router]
+media-entry-path = "メディアルーターエントリ"
+limit-referrer-host = "リファラーホストのホワイトリスト"
+
+[config.upload]
+image-size-limit = "画像サイズ制限"
+webp-auto-convert = "WebP形式に自動変換するかどうか"
+use-source-file-name = "元のファイル名を使用するかどうか"

@@ -22,3 +22,18 @@ delete = "Löschen"
 
 progress = "Fortschritt"
 fail = "Fehler"
+
+[config.portal]
+title-suffix = "Seitentitel"
+footer-banner = "Fußzeilentext"
+language = "Bevorzugte Sprache"
+timezone = "Zeitzone"
+
+[config.router]
+media-entry-path = "Medien-Routeneinstieg"
+limit-referrer-host = "Referrer-Host-Whitelist"
+
+[config.upload]
+image-size-limit = "Bildgrößenbeschränkung"
+webp-auto-convert = "Automatische Konvertierung in WebP-Format"
+use-source-file-name = "Verwenden Sie den Quelldateinamen"

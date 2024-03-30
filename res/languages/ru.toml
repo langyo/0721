@@ -22,3 +22,18 @@ delete = "Удалить"
 
 progress = "Прогресс"
 fail = "Ошибка"
+
+[config.portal]
+title-suffix = "Заголовок сайта"
+footer-banner = "Текст подвала"
+language = "Предпочтительный язык"
+timezone = "Часовой пояс"
+
+[config.router]
+media-entry-path = "Медиа-путь маршрутизатора"
+limit-referrer-host = "Белый список источников"
+
+[config.upload]
+image-size-limit = "Лимит размера изображения"
+webp-auto-convert = "Автоматическое преобразование в формат WebP"
+use-source-file-name = "Использовать исходное имя файла"

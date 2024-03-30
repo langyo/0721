@@ -22,3 +22,18 @@ delete = "删除"
 
 progress = "进度"
 fail = "失败"
+
+[config.portal]
+title-suffix = "站点标题"
+footer-banner = "页脚文本"
+language = "首选语言"
+timezone = "时区"
+
+[config.router]
+media-entry-path = "媒体路由入口"
+limit-referrer-host = "来源域名白名单"
+
+[config.upload]
+image-size-limit = "图片大小限制"
+webp-auto-convert = "是否自动转换为 WebP 格式"
+use-source-file-name = "是否使用源文件名"

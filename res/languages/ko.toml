@@ -22,3 +22,18 @@ delete = "삭제"
 
 progress = "진행"
 fail = "실패"
+
+[config.portal]
+title-suffix = "사이트 제목"
+footer-banner = "푸터 배너"
+language = "기본 언어"
+timezone = "시간대"
+
+[config.router]
+media-entry-path = "미디어 라우터 경로"
+limit-referrer-host = "리퍼러 호스트 제한"
+
+[config.upload]
+image-size-limit = "이미지 크기 제한"
+webp-auto-convert = "WebP 자동 변환 여부"
+use-source-file-name = "원본 파일 이름 사용 여부"

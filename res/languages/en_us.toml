@@ -22,3 +22,18 @@ delete = "Delete"
 
 progress = "Progress"
 fail = "Fail"
+
+[config.portal]
+title-suffix = "Site Title"
+footer-banner = "Footer Banner"
+language = "Preferred Language"
+timezone = "Timezone"
+
+[config.router]
+media-entry-path = "Media Entry Path"
+limit-referrer-host = "Limit Referrer Host"
+
+[config.upload]
+image-size-limit = "Image Size Limit"
+webp-auto-convert = "Auto Convert to WebP"
+use-source-file-name = "Use Source File Name"
