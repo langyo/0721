@@ -30,6 +30,9 @@ pub mod config_item {
         pub username: String,
         pub password: String,
         pub email: String,
+
+        pub user: String,
+        pub manager: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

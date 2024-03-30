@@ -15,6 +15,9 @@ username = "Nom d'utilisateur"
 password = "Mot de passe"
 email = "Courriel"
 
+user = "Utilisateur"
+manager = "Gestionnaire"
+
 [portal]
 upload = "Téléverser"
 download = "Télécharger"

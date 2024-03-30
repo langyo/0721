@@ -17,11 +17,7 @@ impl UserInfo {
     }
 
     pub fn is_admin(&self) -> bool {
-        self.permission == Permission::Manager || self.is_root()
-    }
-
-    pub fn is_root(&self) -> bool {
-        self.permission == Permission::Root
+        self.permission == Permission::Manager
     }
 }
 

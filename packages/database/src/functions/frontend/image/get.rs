@@ -3,18 +3,17 @@ use bytes::Bytes;
 
 use image::ImageFormat;
 
-use crate::{
-    functions::backend::media::*, models::user::Permission, types::response::AuthInfo, MEDIA_DIR,
-};
+use crate::{functions::backend::media::*, types::response::AuthInfo, MEDIA_DIR};
 
 pub async fn get_file(auth: AuthInfo, db_key: impl ToString) -> Result<(String, Bytes)> {
     let item = get(db_key).await?.ok_or(anyhow!("Image not found"))?;
 
     // Check permission
-    if let Some(auth) = auth {
-        ensure!(auth.permission >= item.permission, "No permission");
+    if let Some(item_permission) = item.permission {
+        if let Some(auth) = auth {
+            ensure!(auth.permission >= item_permission, "No permission");
+        }
     }
-    ensure!(item.permission == Permission::Guest, "No permission");
 
     let mime = ImageFormat::from_mime_type(&item.mime)
         .ok_or(anyhow!("Failed to get MIME type from image"))?;

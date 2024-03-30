@@ -23,7 +23,7 @@ pub async fn init() -> Result<()> {
         let profile = Model {
             updated_at: Utc::now(),
             password_hash: generate_hash("admin")?,
-            permission: Permission::Root,
+            permission: Permission::Manager,
             email: "admin@localhost".to_string(),
         };
         set("admin", &profile).await?;

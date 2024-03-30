@@ -1,4 +1,5 @@
 use log::{error, info};
+use strum::IntoEnumIterator as _;
 use wasm_bindgen::JsCast as _;
 use web_sys::HtmlInputElement;
 
@@ -6,7 +7,7 @@ use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
 use crate::{functions::models::user::register, utils::global_state::GlobalStateContext};
-use _database::types::request::RegisterParams;
+use _database::{models::user::Permission, types::request::RegisterParams};
 
 #[styled_component]
 pub fn Register() -> HtmlResult {
@@ -17,6 +18,30 @@ pub fn Register() -> HtmlResult {
     let name_raw = use_state(|| "".to_string());
     let password_raw = use_state(|| "".to_string());
     let email_raw = use_state(|| "".to_string());
+    let permission_raw = use_state(|| Permission::User);
+    use_effect_with((), {
+        let name_raw = name_raw.clone();
+        let password_raw = password_raw.clone();
+        let email_raw = email_raw.clone();
+        let permission_raw = permission_raw.clone();
+
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                // Get the query params from the URL
+                let url =
+                    url::Url::parse(&gloo::utils::window().location().href().unwrap()).unwrap();
+                let name = url
+                    .query_pairs()
+                    .find(|(key, _)| key == "name")
+                    .map(|(_, value)| value.to_string());
+
+                if let Some(name) = name {
+                    name_raw.set(name);
+                    // TODO - Get the user's info from the server
+                }
+            });
+        }
+    });
 
     #[rustfmt::skip]
     let input_style = css!("
@@ -135,6 +160,73 @@ pub fn Register() -> HtmlResult {
                         })
                     }}
                 />
+                <div class={css!("
+                    width: 80%;
+                    height: 48px;
+                    margin-top: 16px;
+                    padding: 0 16px;
+
+                    border-radius: 4px;
+                    background: var(--color-light-less);
+                    box-shadow: var(--shadow-half);
+
+                    display: flex;
+                    justify-content: space-around;
+                    align-items: center;
+                ")}>
+                    {Permission::iter().map(|permission| {
+                        let permission_raw = permission_raw.clone();
+                        let permission_str = match &permission {
+                            Permission::User => t.header.user.clone(),
+                            Permission::Manager => t.header.manager.clone(),
+                        };
+
+                        let class = css!("
+                            width: 40%;
+                            height: 40px;
+
+                            color: var(--color-dark-most);
+                            font-size: 16px;
+                            line-height: 40px;
+                            text-align: center;
+
+                            border-radius: 4px;
+                            cursor: pointer;
+                            transition: all 0.3s;
+
+                            &:hover {
+                                background: var(--color-light);
+                            }
+
+                            &:active {
+                                filter: brightness(0.8);
+                            }
+                        ");
+
+                        html! {
+                            <div
+                                class={classes!(
+                                    class.clone(),
+                                    if permission == *permission_raw {
+                                        css!("
+                                            background: var(--color-light-most);
+                                        ")
+                                    } else {
+                                        css!("")
+                                    }
+                                )}
+                                onclick={{
+                                    let permission_raw = permission_raw.to_owned();
+                                    Callback::from(move |_| {
+                                        permission_raw.set(permission.to_owned());
+                                    })
+                                }}
+                            >
+                                {permission_str}
+                            </div>
+                        }
+                    }).collect::<Html>()}
+                </div>
 
                 <button
                     class={css!("

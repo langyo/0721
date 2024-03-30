@@ -15,6 +15,9 @@ username = "Nome utente"
 password = "Parola d'ordine"
 email = "E-mail"
 
+user = "Utente"
+manager = "Gestore"
+
 [portal]
 upload = "Carica"
 download = "Scarica"

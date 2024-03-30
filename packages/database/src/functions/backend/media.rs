@@ -8,10 +8,8 @@ use image::EncodableLayout as _;
 use sha3::{Digest as _, Sha3_256};
 
 use crate::{
-    functions::backend::media_insert_log::list as list_log,
-    models::{media::*, user::Permission},
-    types::config::load_config,
-    MEDIA_CACHE_DIR, MEDIA_DIR,
+    functions::backend::media_insert_log::list as list_log, models::media::*,
+    types::config::load_config, MEDIA_CACHE_DIR, MEDIA_DIR,
 };
 
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
@@ -99,7 +97,7 @@ pub async fn set(uploader: String, data: Bytes, file_name_raw: Option<String>) -
 
     let value = Model {
         uploader: uploader.clone(),
-        permission: Permission::Guest,
+        permission: None,
         created_at: now,
 
         name: db_key.clone(),

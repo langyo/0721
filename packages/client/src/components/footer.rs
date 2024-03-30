@@ -21,12 +21,11 @@ pub fn Footer() -> HtmlResult {
         <footer class={css!("
             position: fixed;
             width: 100%;
-            height: 64px;
+            min-height: 64px;
             left: 0;
             bottom: 0;
 
             background: var(--color-background-header);
-            padding: 24px;
             box-shadow: var(--shadow-half);
 
             display: flex;

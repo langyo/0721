@@ -15,6 +15,9 @@ username = "Имя пользователя"
 password = "Пароль"
 email = "Электронная почта"
 
+user = "Пользователь"
+manager = "Менеджер"
+
 [portal]
 upload = "Загрузить"
 download = "Скачать"

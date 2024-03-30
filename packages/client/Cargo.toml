@@ -44,6 +44,7 @@ reqwest = { version = "^0.12", features = [
     "multipart",
 ] }
 percent-encoding = "^2"
+url = "^2"
 
 stylist = { version = "^0.13", features = [
     "yew_integration",

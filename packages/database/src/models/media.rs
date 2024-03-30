@@ -6,7 +6,7 @@ use super::user::Permission;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Model {
     pub uploader: String,
-    pub permission: Permission,
+    pub permission: Option<Permission>,
     pub created_at: DateTime<Utc>,
 
     pub name: String,

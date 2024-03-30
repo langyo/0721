@@ -15,6 +15,9 @@ username = "用戶名"
 password = "密碼"
 email = "郵箱"
 
+user = "用戶"
+manager = "管理員"
+
 [portal]
 upload = "上傳"
 download = "下載"
