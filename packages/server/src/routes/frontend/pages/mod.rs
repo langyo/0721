@@ -1,3 +1,4 @@
+mod config;
 mod images;
 mod login;
 pub mod not_found;
@@ -29,7 +30,8 @@ pub async fn route() -> Result<Router> {
         .route("/login", get(login::query))
         .route("/register", get(register::query))
         .route("/images", get(images::query))
-        .route("/users", get(users::query));
+        .route("/users", get(users::query))
+        .route("/config", get(config::query));
 
     Ok(router)
 }

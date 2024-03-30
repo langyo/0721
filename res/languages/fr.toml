@@ -5,6 +5,7 @@ loading = "Chargement"
 portal = "Portail"
 images = "Images"
 users = "Utilisateurs"
+config = "Configuration"
 
 login = "Connexion"
 logout = "Déconnexion"

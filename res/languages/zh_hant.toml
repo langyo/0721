@@ -5,6 +5,7 @@ loading = "加載中"
 portal = "門戶"
 images = "圖片"
 users = "用戶"
+config = "配置"
 
 login = "登錄"
 logout = "登出"

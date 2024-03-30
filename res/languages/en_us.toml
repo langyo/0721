@@ -5,6 +5,7 @@ loading = "Loading"
 portal = "Portal"
 images = "Images"
 users = "Users"
+config = "Config"
 
 login = "Login"
 logout = "Logout"

@@ -1,4 +1,3 @@
-use _database::types::request::RegisterParams;
 use log::{error, info};
 use wasm_bindgen::JsCast as _;
 use web_sys::HtmlInputElement;
@@ -7,6 +6,7 @@ use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
 use crate::{functions::models::user::register, utils::global_state::GlobalStateContext};
+use _database::types::request::RegisterParams;
 
 #[styled_component]
 pub fn Register() -> HtmlResult {

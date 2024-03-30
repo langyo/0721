@@ -20,6 +20,7 @@ pub mod config_item {
         pub portal: String,
         pub images: String,
         pub users: String,
+        pub config: String,
 
         pub login: String,
         pub logout: String,

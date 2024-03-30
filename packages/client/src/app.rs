@@ -22,6 +22,9 @@ pub enum Routes {
     #[at("/users")]
     #[component(Users)]
     Users,
+    #[at("/config")]
+    #[component(ConfigPage)]
+    Config,
 
     #[at("/login")]
     #[component(Login)]

@@ -123,6 +123,9 @@ pub fn Header() -> HtmlResult {
                     <a href={"/users"}>
                         {t.header.users}
                     </a>
+                    <a href={"/config"}>
+                        {t.header.config}
+                    </a>
                 </nav>
 
                 <aside class={css!("

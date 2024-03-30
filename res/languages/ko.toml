@@ -5,6 +5,7 @@ loading = "로딩 중..."
 portal = "포털"
 images = "이미지"
 users = "사용자"
+config = "설정"
 
 login = "로그인"
 logout = "로그아웃"

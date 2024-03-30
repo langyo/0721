@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::CONFIG_DIR;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
     pub portal: config_item::Portal,
@@ -16,7 +16,7 @@ pub struct Config {
 pub mod config_item {
     use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
     #[serde(rename_all = "kebab-case")]
     pub struct Portal {
         pub title_suffix: String,
@@ -25,21 +25,21 @@ pub mod config_item {
         pub timezone: i32,
     }
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
     #[serde(rename_all = "kebab-case")]
     pub struct FooterBannerItem {
         pub text: String,
         pub url: Option<String>,
     }
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
     #[serde(rename_all = "kebab-case")]
     pub struct Router {
         pub media_entry_path: String,
         pub limit_referrer_host: Option<Vec<String>>,
     }
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
     #[serde(rename_all = "kebab-case")]
     pub struct Upload {
         pub image_size_limit: String,

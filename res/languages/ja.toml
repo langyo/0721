@@ -5,6 +5,7 @@ loading = "読み込み中"
 portal = "ポータル"
 images = "画像"
 users = "ユーザー"
+config = "設定"
 
 login = "ログイン"
 logout = "ログアウト"
