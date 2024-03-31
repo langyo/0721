@@ -21,7 +21,7 @@ struct Keys {
 }
 
 static JWT_SECRET: Lazy<Keys> = Lazy::new(|| {
-    let str = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    let str = std::env::var("JWT_SECRET").unwrap_or(uuid::Uuid::new_v4().to_string());
     Keys {
         encoding: EncodingKey::from_secret(str.as_bytes()),
         decoding: DecodingKey::from_secret(str.as_bytes()),
