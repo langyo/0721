@@ -13,7 +13,6 @@ pub async fn route() -> Result<Router> {
         .route("/count", get(list::count))
         .route("/list", get(list::list))
         .route("/register", post(insert::register))
-        .route("/update/:id", post(update::update))
         .route("/delete/:id", delete(update::delete));
 
     Ok(router)

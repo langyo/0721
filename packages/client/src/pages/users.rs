@@ -156,29 +156,6 @@ pub fn Users() -> HtmlResult {
                                                 onclick={
                                                     let name = name.clone();
                                                     Callback::from(move |_| {
-                                                        gloo::utils::window().location().set_href(&format!("/register?name={}", name)).unwrap();
-                                                    })
-                                                }
-                                            >
-                                                <icons::AccountEdit size={16} />
-                                            </button>
-                                            <button
-                                                class={css!("
-                                                    width: 32px;
-                                                    height: 32px;
-                                                    margin: 4px;
-
-                                                    display: flex;
-                                                    align-items: center;
-                                                    justify-content: center;
-
-                                                    background: var(--color-light-less);
-                                                    border-radius: 4px;
-                                                    box-shadow: var(--shadow-half);
-                                                ")}
-                                                onclick={
-                                                    let name = name.clone();
-                                                    Callback::from(move |_| {
                                                         let name = name.clone();
                                                         wasm_bindgen_futures::spawn_local(async move {
                                                             if delete(name).await.is_ok() {

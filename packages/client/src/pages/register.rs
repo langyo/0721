@@ -19,29 +19,6 @@ pub fn Register() -> HtmlResult {
     let password_raw = use_state(|| "".to_string());
     let email_raw = use_state(|| "".to_string());
     let permission_raw = use_state(|| Permission::User);
-    use_effect_with((), {
-        let name_raw = name_raw.clone();
-        let password_raw = password_raw.clone();
-        let email_raw = email_raw.clone();
-        let permission_raw = permission_raw.clone();
-
-        move |_| {
-            wasm_bindgen_futures::spawn_local(async move {
-                // Get the query params from the URL
-                let url =
-                    url::Url::parse(&gloo::utils::window().location().href().unwrap()).unwrap();
-                let name = url
-                    .query_pairs()
-                    .find(|(key, _)| key == "name")
-                    .map(|(_, value)| value.to_string());
-
-                if let Some(name) = name {
-                    name_raw.set(name);
-                    // TODO - Get the user's info from the server
-                }
-            });
-        }
-    });
 
     #[rustfmt::skip]
     let input_style = css!("
@@ -261,18 +238,20 @@ pub fn Register() -> HtmlResult {
                         let name_raw = name_raw.clone();
                         let password_raw = password_raw.clone();
                         let email_raw = email_raw.clone();
+                        let permission_raw = permission_raw.clone();
 
                         Callback::from(move |_| {
                             let name = (*name_raw).clone();
                             let password_raw = (*password_raw).clone();
                             let email = (*email_raw).clone();
+                            let permission = permission_raw.to_string();
 
                             wasm_bindgen_futures::spawn_local(async move {
                                 match register(&RegisterParams {
                                     name,
                                     password_raw,
                                     email,
-                                    permission: "user".to_string(),
+                                    permission,
                                 }).await {
                                     Ok(_) => {
                                         info!("Register success");
