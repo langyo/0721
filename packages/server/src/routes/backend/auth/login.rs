@@ -14,8 +14,8 @@ use hyper::{HeaderMap, StatusCode};
 
 use _database::{functions::frontend::auth::login as do_login, types::request::LoginInfo};
 
-static LOGIN_LOG: Lazy<Arc<Mutex<Vec<(SocketAddr, DateTime<Utc>)>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
+type LogItem = (SocketAddr, DateTime<Utc>);
+static LOGIN_LOG: Lazy<Arc<Mutex<Vec<LogItem>>>> = Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
 
 #[tracing::instrument]
 pub async fn login(

@@ -38,7 +38,7 @@ pub async fn login(name: String, password_hash: String) -> Result<UserInfo> {
 mod test {
     #[test]
     fn generate_hash() {
-        let hash = super::generate_hash(format!("admin")).unwrap();
+        let hash = super::generate_hash("admin".to_string()).unwrap();
         println!("{}", hash);
     }
 }
