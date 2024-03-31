@@ -19,7 +19,7 @@ pub static WEBSITE_RES_DIR: Lazy<PathBuf> = Lazy::new(|| {
 pub static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut path = std::env::var("ROOT_DIR")
         .ok()
-        .map(|dir| Path::new(&dir).to_path_buf())
+        .map(|dir| Path::new(&dir).to_path_buf().join("cache"))
         .unwrap_or(std::env::current_dir().unwrap().join("cache"));
     // If directory does not exist, create it
     if !path.exists() {
@@ -38,7 +38,7 @@ pub static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| {
 pub static MEDIA_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut path = std::env::var("ROOT_DIR")
         .ok()
-        .map(|dir| Path::new(&dir).to_path_buf())
+        .map(|dir| Path::new(&dir).to_path_buf().join("cache"))
         .unwrap_or(std::env::current_dir().unwrap().join("cache"));
     path.push("media");
 
@@ -51,7 +51,7 @@ pub static MEDIA_DIR: Lazy<PathBuf> = Lazy::new(|| {
 pub static MEDIA_CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut path = std::env::var("ROOT_DIR")
         .ok()
-        .map(|dir| Path::new(&dir).to_path_buf())
+        .map(|dir| Path::new(&dir).to_path_buf().join("cache"))
         .unwrap_or(std::env::current_dir().unwrap().join("cache"));
     path.push("media-cache");
 
@@ -64,7 +64,7 @@ pub static MEDIA_CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
 pub static DATABASE_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut path = std::env::var("ROOT_DIR")
         .ok()
-        .map(|dir| Path::new(&dir).to_path_buf())
+        .map(|dir| Path::new(&dir).to_path_buf().join("cache"))
         .unwrap_or(std::env::current_dir().unwrap().join("cache"));
     path.push("database");
 
@@ -77,7 +77,7 @@ pub static DATABASE_DIR: Lazy<PathBuf> = Lazy::new(|| {
 pub static LOG_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut path = std::env::var("ROOT_DIR")
         .ok()
-        .map(|dir| Path::new(&dir).to_path_buf())
+        .map(|dir| Path::new(&dir).to_path_buf().join("cache"))
         .unwrap_or(std::env::current_dir().unwrap().join("cache"));
     path.push("log");
 
