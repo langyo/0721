@@ -1,0 +1,26 @@
+name: Format
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/clippy.yml'
+      - 'packages/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  push:
+    branches: [master]
+
+jobs:
+  format:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rustfmt
+
+      - name: Run fmt
+        run: cargo +nightly fmt --all -- --check --unstable-features
