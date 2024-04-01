@@ -36,6 +36,7 @@ postcard = { workspace = true }
 
 image = { workspace = true }
 webp = { workspace = true }
+webp-animation = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "^1", features = ["rt", "macros"] }

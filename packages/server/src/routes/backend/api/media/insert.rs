@@ -38,7 +38,6 @@ pub async fn insert(
         let db_key = do_insert(info.name, data, args.name)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        log::debug!("do_insert db_key: {:?}", db_key);
         let item = do_select(&db_key)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?

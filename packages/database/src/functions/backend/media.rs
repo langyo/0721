@@ -4,7 +4,7 @@ use bytes::Bytes;
 use once_cell::sync::Lazy;
 
 use chrono::Utc;
-use image::EncodableLayout as _;
+use image::{EncodableLayout as _, GenericImageView, ImageFormat};
 use sha3::{Digest as _, Sha3_256};
 
 use crate::{
@@ -70,12 +70,38 @@ pub async fn set(uploader: String, data: Bytes, file_name_raw: Option<String>) -
     ensure!(!DB.contains_key(db_key.as_str())?, "Image already uploaded");
 
     let data = if *IS_ENABLE_WEBP_AUTO_CONVERT {
+        use image::{codecs::gif::GifDecoder, AnimationDecoder};
+
         let image = image::load_from_memory(&data)?;
-        // TODO - Support animated webp from gif
-        let encoder = webp::Encoder::from_image(&image)
-            .map_err(|err| anyhow!("Failed to create webp encoder from image: {}", err))?;
-        let data = encoder.encode(100.0);
-        data.to_vec().into()
+        let mime = image::guess_format(&data)?;
+
+        match mime {
+            ImageFormat::WebP => data,
+            ImageFormat::Gif => {
+                let dimensions = image.dimensions();
+                let decoder = GifDecoder::new(std::io::Cursor::new(data))?;
+                let frames = decoder.into_frames().collect_frames()?;
+
+                let mut encoder = webp_animation::Encoder::new(dimensions)?;
+                let mut delay_count = 0.;
+                for frame in frames.iter() {
+                    let delay = frame.delay().numer_denom_ms();
+                    let delay = delay.0 as f32 / delay.1 as f32;
+                    let frame = frame.buffer();
+                    encoder.add_frame(frame, delay_count as i32)?;
+                    delay_count += delay;
+                }
+
+                let data = encoder.finalize(delay_count as i32)?;
+                data.to_vec().into()
+            }
+            _ => {
+                let encoder = webp::Encoder::from_image(&image)
+                    .map_err(|err| anyhow!("Failed to create webp encoder from image: {}", err))?;
+                let data = encoder.encode(100.0);
+                data.to_vec().into()
+            }
+        }
     } else {
         data
     };
