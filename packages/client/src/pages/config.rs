@@ -49,6 +49,12 @@ pub fn ConfigPage() -> HtmlResult {
                 {
                     [
                         (
+                            t.config.portal.engine_version.clone(),
+                            html! {
+                                {env!("CARGO_PKG_VERSION")}
+                            }
+                        ),
+                        (
                             t.config.portal.title_suffix.clone(),
                             html! {
                                 {global_config.portal.title_suffix.clone()}

@@ -31,6 +31,7 @@ total-count = "總數"
 load-more = "加載更多"
 
 [config.portal]
+engine-version = "引擎版本"
 title-suffix = "網站標題"
 footer-banner = "頁腳文本"
 language = "首選語言"

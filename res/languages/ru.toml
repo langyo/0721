@@ -31,6 +31,7 @@ total-count = "Всего изображений"
 load-more = "Загрузить еще"
 
 [config.portal]
+engine-version = "Версия движка"
 title-suffix = "Заголовок сайта"
 footer-banner = "Текст подвала"
 language = "Предпочтительный язык"
