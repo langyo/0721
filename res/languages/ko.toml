@@ -31,6 +31,7 @@ total-count = "총 이미지 수"
 load-more = "더 보기"
 
 [config.portal]
+engine-version = "엔진 버전"
 title-suffix = "사이트 제목"
 footer-banner = "푸터 배너"
 language = "기본 언어"

@@ -31,6 +31,7 @@ total-count = "Gesamtzahl"
 load-more = "Mehr laden"
 
 [config.portal]
+engine-version = "Motorversion"
 title-suffix = "Seitentitel"
 footer-banner = "Fußzeilentext"
 language = "Bevorzugte Sprache"

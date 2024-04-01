@@ -68,6 +68,7 @@ pub mod config_item {
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "kebab-case")]
         pub struct Portal {
+            pub engine_version: String,
             pub title_suffix: String,
             pub footer_banner: String,
             pub language: String,
