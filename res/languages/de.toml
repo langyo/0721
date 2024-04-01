@@ -26,6 +26,10 @@ delete = "Löschen"
 progress = "Fortschritt"
 fail = "Fehler"
 
+[images]
+total-count = "Gesamtzahl"
+load-more = "Mehr laden"
+
 [config.portal]
 title-suffix = "Seitentitel"
 footer-banner = "Fußzeilentext"

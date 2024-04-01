@@ -26,6 +26,10 @@ delete = "Удалить"
 progress = "Прогресс"
 fail = "Ошибка"
 
+[images]
+total-count = "Всего изображений"
+load-more = "Загрузить еще"
+
 [config.portal]
 title-suffix = "Заголовок сайта"
 footer-banner = "Текст подвала"

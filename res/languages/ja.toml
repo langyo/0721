@@ -26,6 +26,10 @@ delete = "削除"
 progress = "進行中"
 fail = "失敗"
 
+[images]
+total-count = "合計数"
+load-more = "さらに読み込む"
+
 [config.portal]
 title-suffix = "サイトタイトル"
 footer-banner = "フッターバナー"
