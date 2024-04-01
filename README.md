@@ -34,6 +34,12 @@ docker run -d -p 8080:80 -v image-cache:/home/cache ghcr.io/langyo/0721:latest
 > ```
 >
 > Then you can edit the `Config.toml` in the `/home` directory by using `vi`.
+>
+> After that, you can restart the container to apply the new configuration:
+>
+> ```bash
+> docker restart <container_id>
+> ```
 
 ```toml
 [portal]
