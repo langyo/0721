@@ -26,6 +26,10 @@ delete = "刪除"
 progress = "進度"
 fail = "失敗"
 
+[images]
+total-count = "總數"
+load-more = "加載更多"
+
 [config.portal]
 title-suffix = "網站標題"
 footer-banner = "頁腳文本"

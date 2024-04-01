@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub header: config_item::Header,
     pub portal: config_item::Portal,
+    pub images: config_item::Images,
     pub config: config_item::Config,
 }
 
@@ -44,6 +45,13 @@ pub mod config_item {
 
         pub progress: String,
         pub fail: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub struct Images {
+        pub total_count: String,
+        pub load_more: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
