@@ -5,14 +5,13 @@ use yew_router::prelude::*;
 
 use crate::{
     app::Routes,
-    functions::api::auth::refresh,
+    functions::api::auth::{refresh, verify},
     utils::global_state::{GlobalStateAction, GlobalStateContext},
 };
 use _database::types::config::{load_config, Config};
 
 #[styled_component]
 pub fn Header() -> HtmlResult {
-    let route = use_route::<Routes>().unwrap();
     let navigator = use_navigator().unwrap();
     let global_state = use_context::<GlobalStateContext>().expect("Global state not found");
 
@@ -30,21 +29,15 @@ pub fn Header() -> HtmlResult {
         .unwrap_or("Ciallo～(∠·ω< )⌒★".to_string());
 
     use_effect_with((), {
-        let route = route.clone();
-        let navigator = navigator.clone();
         let global_state = global_state.clone();
         move |_| {
             wasm_bindgen_futures::spawn_local(async move {
-                match refresh().await {
-                    Ok(info) => {
-                        global_state.dispatch(GlobalStateAction::SetToken(Some(info)));
-                    }
-                    Err(_) => {
-                        if route != Routes::Login {
-                            navigator.push(&Routes::Login);
-                            gloo::utils::window().location().reload().unwrap();
-                        }
-                    }
+                if let Ok(info) = verify().await {
+                    global_state.dispatch(GlobalStateAction::SetToken(Some(info)));
+                } else if let Ok(info) = refresh().await {
+                    global_state.dispatch(GlobalStateAction::SetToken(Some(info)));
+                } else {
+                    global_state.dispatch(GlobalStateAction::SetToken(None));
                 }
             });
             || {}
