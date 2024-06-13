@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
     sled::open({
         let mut path = (*crate::DATABASE_DIR).clone();
-        path.push("media-insert-log.db");
+        path.push("media-insert-log");
         path
     })
     .unwrap()
