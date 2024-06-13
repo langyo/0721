@@ -15,7 +15,7 @@ use crate::{
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
     sled::open({
         let mut path = (*crate::DATABASE_DIR).clone();
-        path.push("media.db");
+        path.push("media");
         path
     })
     .unwrap()
