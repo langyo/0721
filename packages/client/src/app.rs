@@ -1,3 +1,4 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use hikari_boot::{DeclType, DeriveApplication, DeriveRoutes, RoutesOutsideProps};
@@ -54,7 +55,7 @@ impl DeclType for App {
     type AppStates = AppStates;
 
     #[allow(non_upper_case_globals)]
-    fn decl_render_outside(props: &RoutesOutsideProps<Self::AppStates>) -> yew::Html {
+    fn decl_render_outside(props: &RoutesOutsideProps<Self::AppStates>) -> yew::HtmlResult {
         let theme_raw = r#"
             * {
                 margin: 0;
@@ -117,7 +118,7 @@ impl DeclType for App {
             }
         "#;
 
-        yew::html! {
+        Ok(yew::html! {
             <GlobalStateProvider language={props.states.language}>
                 <style>
                     {theme_raw}
@@ -129,20 +130,20 @@ impl DeclType for App {
 
                 <Footer />
             </GlobalStateProvider>
-        }
+        })
     }
 
     fn render_to_string_outside(
         style_raw: String,
         html_raw: String,
         state: Self::AppStates,
-    ) -> String {
+    ) -> Result<String> {
         let title = state.title.clone();
         let title_suffix = state.config.portal.title_suffix.clone();
 
         let state_raw = ::serde_json::to_string(&state).unwrap();
 
-        format!("
+        Ok(format!("
             <!DOCTYPE html>
             <html>
                 <head>
@@ -158,6 +159,6 @@ impl DeclType for App {
                     <script>(async () => {{await wasm_vendor_entry('/client.wasm');(await (new wasm_vendor_entry.WebHandle())).start();}})()</script>
                 </body>
             </html>
-        ")
+        "))
     }
 }
