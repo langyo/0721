@@ -21,7 +21,7 @@ pub async fn html_render(uri: String, states: AppStates) -> Result<(HeaderMap, S
         hyper::header::HeaderValue::from_static("text/html; charset=utf-8"),
     );
 
-    Ok((headers, App::render_to_string(uri, states).await))
+    Ok((headers, App::render_to_string(uri, states).await?))
 }
 
 pub async fn route() -> Result<Router> {
