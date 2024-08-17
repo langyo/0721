@@ -22,11 +22,7 @@ pub struct Args {
 
 impl Args {
     pub fn is_some(self) -> bool {
-        if let Some(flag) = self.thumbnail {
-            flag
-        } else {
-            false
-        }
+        self.thumbnail.unwrap_or_default()
     }
 }
 
