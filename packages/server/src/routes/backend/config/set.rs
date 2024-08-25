@@ -4,7 +4,7 @@ use log::info;
 use axum::{extract::Json, response::IntoResponse};
 use hyper::StatusCode;
 
-use _database::types::config::{update_config, Config as VO};
+use _types::config::{update_config, Config as VO};
 
 #[tracing::instrument]
 pub async fn set(Json(vo): Json<VO>) -> Result<impl IntoResponse, (StatusCode, String)> {

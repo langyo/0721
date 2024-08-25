@@ -7,7 +7,7 @@ use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
 use crate::{functions::models::user::register, utils::global_state::GlobalStateContext};
-use _database::{models::user::Permission, types::request::RegisterParams};
+use _types::request::{Permission, RegisterParams};
 
 #[styled_component]
 pub fn Register() -> HtmlResult {

@@ -1,9 +1,6 @@
 use anyhow::Result;
 
-use axum::{
-    extract::{Json, Path},
-    response::IntoResponse,
-};
+use axum::{extract::Path, response::IntoResponse};
 use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
@@ -39,5 +36,5 @@ pub async fn delete(
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
 
-    Ok(Json(()))
+    Ok(())
 }

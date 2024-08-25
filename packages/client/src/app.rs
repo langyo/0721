@@ -10,7 +10,7 @@ use crate::{
     pages::*,
     utils::global_state::GlobalStateProvider,
 };
-use _database::types::{config::Config, i18n::Language, response::AuthInfo};
+use _types::{config::Config, i18n::Language, response::AuthInfo};
 
 #[derive(PartialEq, Clone, Debug, DeriveRoutes, Routable)]
 pub enum Routes {

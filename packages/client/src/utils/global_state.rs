@@ -1,6 +1,6 @@
 use yew::prelude::*;
 
-use _database::types::{i18n::Language, response::UserInfo};
+use _types::{i18n::Language, response::UserInfo};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct GlobalState {

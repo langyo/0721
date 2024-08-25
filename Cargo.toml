@@ -72,3 +72,7 @@ sled = "^0.34"
 image = { version = "^0.25", features = ["gif", "jpeg", "png", "webp"] }
 webp = "^0.3"
 webp-animation = "^0.9"
+
+[patch.crates-io]
+stylist = { git = "https://github.com/langyo/stylist-rs.git", branch = "wasi-support" }
+sea-orm = { git = "https://github.com/langyo/sea-orm.git", branch = "async-proxy-conn" }

@@ -3,7 +3,8 @@ use anyhow::{anyhow, ensure, Context, Result};
 use jsonwebtoken::{decode, Validation};
 
 use super::{generate_token, Claims, JWT_SECRET};
-use crate::{functions::backend::user::*, types::response::UserInfo};
+use crate::functions::backend::user::*;
+use _types::response::UserInfo;
 
 pub async fn refresh(token: String) -> Result<UserInfo> {
     let token = decode::<Claims>(&token, &JWT_SECRET.decoding, &Validation::default())

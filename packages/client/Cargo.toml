@@ -8,6 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 _database = { path = "../database" }
+_types = { path = "../types" }
 
 hikari-boot = { workspace = true }
 

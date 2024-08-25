@@ -1,10 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod functions;
 pub mod models;
-pub mod types;
-
-mod consts;
-pub use consts::*;
 
 use anyhow::Result;
 
@@ -15,8 +11,9 @@ pub async fn init() -> Result<()> {
 
     use crate::{
         functions::{backend::user::*, frontend::auth::generate_hash},
-        models::user::{Model, Permission},
+        models::user::Model,
     };
+    use _types::request::Permission;
 
     // If the user table is empty, create a default user
     if count().await? == 0 {

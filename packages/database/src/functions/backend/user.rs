@@ -3,10 +3,11 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 use crate::models::user::*;
+use _types::consts::DATABASE_DIR;
 
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
     sled::open({
-        let mut path = (*crate::DATABASE_DIR).clone();
+        let mut path = (*DATABASE_DIR).clone();
         path.push("user");
         path
     })

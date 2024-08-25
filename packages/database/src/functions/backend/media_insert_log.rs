@@ -3,9 +3,11 @@ use once_cell::sync::Lazy;
 
 use chrono::{DateTime, Utc};
 
+use _types::consts::DATABASE_DIR;
+
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
     sled::open({
-        let mut path = (*crate::DATABASE_DIR).clone();
+        let mut path = (*DATABASE_DIR).clone();
         path.push("media-insert-log");
         path
     })

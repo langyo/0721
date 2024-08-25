@@ -1,7 +1,7 @@
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-use _database::types::config::{load_config, Config};
+use _types::config::{load_config, Config};
 
 #[styled_component]
 pub fn Footer() -> HtmlResult {

@@ -3,7 +3,8 @@ use anyhow::{anyhow, ensure, Context, Result};
 use jsonwebtoken::{decode, Validation};
 
 use super::{Claims, JWT_SECRET};
-use crate::{functions::backend::user::*, types::response::UserInfo};
+use crate::functions::backend::user::*;
+use _types::response::UserInfo;
 
 pub async fn verify(token: String) -> Result<UserInfo> {
     let token_raw = token.clone();

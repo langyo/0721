@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+_types = { path = "../types" }
+
 tairitsu-database = { workspace = true }
 
 anyhow = { workspace = true }

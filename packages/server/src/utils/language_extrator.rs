@@ -3,7 +3,7 @@ use anyhow::Result;
 use axum::{extract::FromRequestParts, http::request::Parts, response::Response};
 use hyper::header::ACCEPT_LANGUAGE;
 
-use _database::types::i18n::Language;
+use _types::i18n::Language;
 
 pub struct ExtractLanguageInfo(pub Language);
 

@@ -4,7 +4,7 @@ use gloo::storage::{LocalStorage, Storage as _};
 use reqwest::Client;
 
 use crate::utils::get_host;
-use _database::types::response::UserInfo;
+use _types::response::UserInfo;
 
 pub async fn refresh() -> Result<UserInfo> {
     match LocalStorage::get::<UserInfo>("auth") {

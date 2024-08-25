@@ -6,7 +6,8 @@ use reqwest::{
 };
 
 use crate::utils::{get_auth_cache, get_host};
-use _database::{models::media::Model, types::request::PageArgs};
+use _database::models::media::Model;
+use _types::request::PageArgs;
 
 pub async fn count() -> Result<usize> {
     let token = get_auth_cache()?;

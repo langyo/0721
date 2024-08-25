@@ -11,7 +11,8 @@ use axum_extra::{
 };
 use hyper::StatusCode;
 
-use _database::{functions::frontend::auth::verify, types::response::AuthInfo};
+use _database::functions::frontend::auth::verify;
+use _types::response::AuthInfo;
 
 pub struct ExtractAuthInfo(pub AuthInfo);
 

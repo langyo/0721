@@ -8,7 +8,7 @@ use crate::{
     functions::api::auth::{refresh, verify},
     utils::global_state::{GlobalStateAction, GlobalStateContext},
 };
-use _database::types::config::{load_config, Config};
+use _types::config::{load_config, Config};
 
 #[styled_component]
 pub fn Header() -> HtmlResult {

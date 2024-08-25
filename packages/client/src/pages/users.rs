@@ -8,7 +8,7 @@ use crate::{
     functions::models::user::{delete, list},
     utils::global_state::GlobalStateContext,
 };
-use _database::models::user::Permission;
+use _types::request::Permission;
 
 #[styled_component]
 pub fn Users() -> HtmlResult {

@@ -7,14 +7,15 @@ use chrono::Utc;
 use image::{EncodableLayout as _, GenericImageView, ImageFormat};
 use sha3::{Digest as _, Sha3_256};
 
-use crate::{
-    functions::backend::media_insert_log::list as list_log, models::media::*,
-    types::config::load_config, MEDIA_CACHE_DIR, MEDIA_DIR,
+use crate::{functions::backend::media_insert_log::list as list_log, models::media::*};
+use _types::{
+    config::load_config,
+    consts::{DATABASE_DIR, MEDIA_CACHE_DIR, MEDIA_DIR},
 };
 
 pub static DB: Lazy<sled::Db> = Lazy::new(|| {
     sled::open({
-        let mut path = (*crate::DATABASE_DIR).clone();
+        let mut path = (*DATABASE_DIR).clone();
         path.push("media");
         path
     })
