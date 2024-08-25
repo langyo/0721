@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-tairitsu-utils = { workspace = true }
+tairitsu-database = { workspace = true }
 
 anyhow = { workspace = true }
 async-trait = { workspace = true }

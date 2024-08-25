@@ -10,7 +10,6 @@ crate-type = ["cdylib", "rlib"]
 _database = { path = "../database" }
 
 hikari-boot = { workspace = true }
-tairitsu-utils = { workspace = true }
 
 anyhow = { workspace = true }
 async-trait = { workspace = true }
