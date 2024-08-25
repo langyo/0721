@@ -3,7 +3,7 @@ use anyhow::Result;
 use axum::{routing::get_service, Router};
 use tower_http::services::ServeFile;
 
-use _database::{WASM_DIR, WEBSITE_RES_DIR};
+use _types::consts::{WASM_DIR, WEBSITE_RES_DIR};
 
 pub async fn route() -> Result<Router> {
     let router = Router::new()

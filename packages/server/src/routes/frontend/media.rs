@@ -10,10 +10,8 @@ use axum::{
 use hyper::{HeaderMap, StatusCode};
 
 use crate::utils::ExtractAuthInfo;
-use _database::{
-    functions::{backend::media::generate_thumbnail, frontend::image::get_file},
-    MEDIA_CACHE_DIR,
-};
+use _database::functions::{backend::media::generate_thumbnail, frontend::image::get_file};
+use _types::consts::MEDIA_CACHE_DIR;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Args {
@@ -27,7 +25,7 @@ impl Args {
 }
 
 static WHITE_LIST: Lazy<Option<Vec<String>>> = Lazy::new(|| {
-    let config = _database::types::config::load_config().unwrap();
+    let config = _types::config::load_config().unwrap();
     let white_list = config.router.limit_referrer_host.clone();
     white_list.filter(|white_list| !white_list.is_empty())
 });

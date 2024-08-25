@@ -9,7 +9,7 @@ use crate::{
     functions::models::media::insert,
     utils::{copy_to_clipboard, global_state::GlobalStateContext, FileUploader},
 };
-use _database::types::config::{load_config, Config};
+use _types::config::{load_config, Config};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UploadStatus {

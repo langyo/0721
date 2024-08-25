@@ -5,7 +5,8 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 
 use crate::utils::{get_auth_cache, get_host};
-use _database::{models::user::Model, types::request::RegisterParams};
+use _database::models::user::Model;
+use _types::request::RegisterParams;
 
 pub async fn count() -> Result<usize> {
     let token = get_auth_cache()?;

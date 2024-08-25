@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::models::user::Permission;
+use crate::request::Permission;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserInfo {

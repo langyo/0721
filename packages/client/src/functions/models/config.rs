@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 
 use crate::utils::{get_auth_cache, get_host};
-use _database::types::config::Config as Model;
+use _types::config::Config as Model;
 
 pub async fn get() -> Result<Model> {
     let token = get_auth_cache()?;

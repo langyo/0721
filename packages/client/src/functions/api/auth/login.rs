@@ -4,7 +4,7 @@ use gloo::storage::{LocalStorage, Storage as _};
 use reqwest::Client;
 
 use crate::utils::get_host;
-use _database::types::{request::LoginInfo, response::UserInfo};
+use _types::{request::LoginInfo, response::UserInfo};
 
 pub async fn login(name: String, password_raw: String) -> Result<UserInfo> {
     let res = Client::new()

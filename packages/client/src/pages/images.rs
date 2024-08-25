@@ -8,10 +8,8 @@ use crate::{
     functions::models::media::{count, delete, list},
     utils::{copy_to_clipboard, global_state::GlobalStateContext},
 };
-use _database::{
-    models::media::Model,
-    types::config::{load_config, Config},
-};
+use _database::models::media::Model;
+use _types::config::{load_config, Config};
 
 #[styled_component]
 pub fn Images() -> HtmlResult {

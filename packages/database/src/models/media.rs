@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::user::Permission;
+use _types::request::Permission;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Model {

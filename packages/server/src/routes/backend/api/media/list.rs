@@ -6,10 +6,8 @@ use axum::{
 };
 use hyper::StatusCode;
 
-use _database::{
-    functions::backend::media::{count as do_count, list as do_list},
-    types::request::PageArgs,
-};
+use _database::functions::backend::media::{count as do_count, list as do_list};
+use _types::request::PageArgs;
 
 #[tracing::instrument]
 pub async fn count() -> Result<impl IntoResponse, (StatusCode, String)> {

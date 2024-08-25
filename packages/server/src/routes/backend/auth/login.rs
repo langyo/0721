@@ -12,7 +12,8 @@ use axum::{
 };
 use hyper::{HeaderMap, StatusCode};
 
-use _database::{functions::frontend::auth::login as do_login, types::request::LoginInfo};
+use _database::functions::frontend::auth::login as do_login;
+use _types::request::LoginInfo;
 
 type LogItem = (SocketAddr, DateTime<Utc>);
 static LOGIN_LOG: Lazy<Arc<Mutex<Vec<LogItem>>>> = Lazy::new(|| Arc::new(Mutex::new(Vec::new())));

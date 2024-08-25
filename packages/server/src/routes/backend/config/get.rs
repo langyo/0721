@@ -3,7 +3,7 @@ use anyhow::Result;
 use axum::{extract::Json, response::IntoResponse};
 use hyper::StatusCode;
 
-use _database::types::config::load_config;
+use _types::config::load_config;
 
 #[tracing::instrument]
 pub async fn get() -> Result<impl IntoResponse, (StatusCode, String)> {

@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use axum::{routing::get, Router};
 
-use _database::types::config::load_config;
+use _types::config::load_config;
 
 pub async fn route() -> Result<Router> {
     let config = load_config()?;

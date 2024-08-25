@@ -3,7 +3,9 @@ use bytes::Bytes;
 
 use image::ImageFormat;
 
-use crate::{functions::backend::media::*, types::response::AuthInfo, MEDIA_DIR};
+use crate::functions::backend::media::*;
+use _types::consts::MEDIA_DIR;
+use _types::response::AuthInfo;
 
 pub async fn get_file(auth: AuthInfo, db_key: impl ToString) -> Result<(String, Bytes)> {
     let item = get(db_key).await?.ok_or(anyhow!("Image not found"))?;

@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 _client = { path = "../client" }
 _database = { path = "../database" }
+_types = { path = "../types" }
 
 hikari-boot = { workspace = true }
 

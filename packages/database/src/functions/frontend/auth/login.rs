@@ -3,7 +3,8 @@ use anyhow::{anyhow, ensure, Result};
 use bcrypt::{hash, verify as do_verify, DEFAULT_COST};
 
 use super::generate_token;
-use crate::{functions::backend::user::*, types::response::UserInfo};
+use crate::functions::backend::user::*;
+use _types::response::UserInfo;
 
 pub fn verify_hash(input_raw: impl ToString, storage_hash: impl ToString) -> Result<bool> {
     Ok(do_verify(

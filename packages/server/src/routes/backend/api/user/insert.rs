@@ -12,9 +12,9 @@ use _database::{
         backend::user::{get as do_select, set as do_insert},
         frontend::auth::generate_hash,
     },
-    models::user::{Model as DTO, Permission},
-    types::request::RegisterParams,
+    models::user::Model as DTO,
 };
+use _types::request::{Permission, RegisterParams};
 
 #[tracing::instrument]
 pub async fn register(
