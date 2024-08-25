@@ -18,7 +18,7 @@ edition = "2021"
 
 [workspace.dependencies]
 hikari-boot = { git = "https://github.com/celestia-island/hikari" }
-tairitsu-utils = { git = "https://github.com/celestia-island/tairitsu" }
+tairitsu-database = { git = "https://github.com/celestia-island/tairitsu" }
 
 anyhow = "^1"
 async-trait = "^0.1"
