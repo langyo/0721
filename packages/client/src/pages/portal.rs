@@ -4,9 +4,9 @@ use stylist::yew::styled_component;
 use wasm_bindgen::{closure::Closure, JsCast as _};
 use yew::prelude::*;
 
-use crate::{
-    components::icons,
-    functions::models::media::insert,
+use crate::components::icons;
+use _functions::{
+    models::media::insert,
     utils::{copy_to_clipboard, global_state::GlobalStateContext, FileUploader},
 };
 use _types::config::{load_config, Config};

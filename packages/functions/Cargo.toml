@@ -1,5 +1,5 @@
 [package]
-name = "_client"
+name = "_functions"
 version.workspace = true
 edition.workspace = true
 
@@ -7,10 +7,7 @@ edition.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-_functions = { path = "../functions" }
 _types = { path = "../types" }
-
-hikari-boot = { workspace = true }
 
 anyhow = { workspace = true }
 async-trait = { workspace = true }

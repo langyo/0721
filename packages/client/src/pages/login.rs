@@ -7,9 +7,9 @@ use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 use yew_router::prelude::*;
 
-use crate::{
-    app::Routes,
-    functions::api::auth::{login, verify},
+use crate::app::Routes;
+use _functions::{
+    api::auth::{login, verify},
     utils::global_state::GlobalStateContext,
 };
 

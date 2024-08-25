@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use jsonwebtoken::{encode, DecodingKey, EncodingKey, Header};
 
-use crate::{functions::backend::user::*, models::user::Model};
+use crate::functions::backend::user::*;
+use _types::models::user::Model;
 
 struct Keys {
     encoding: EncodingKey,

@@ -6,7 +6,7 @@ use web_sys::HtmlInputElement;
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-use crate::{functions::models::user::register, utils::global_state::GlobalStateContext};
+use _functions::{models::user::register, utils::global_state::GlobalStateContext};
 use _types::request::{Permission, RegisterParams};
 
 #[styled_component]
