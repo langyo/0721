@@ -1,7 +1,7 @@
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-use crate::utils::global_state::GlobalStateContext;
+use _functions::utils::global_state::GlobalStateContext;
 use _types::config::{load_config, Config as Model};
 
 #[styled_component]

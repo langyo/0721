@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-use crate::{
-    components::{icons, GlobalSkeleton},
-    functions::models::user::{delete, list},
+use crate::components::{icons, GlobalSkeleton};
+use _functions::{
+    models::user::{delete, list},
     utils::global_state::GlobalStateContext,
 };
 use _types::request::Permission;

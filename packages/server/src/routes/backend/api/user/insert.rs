@@ -7,14 +7,14 @@ use chrono::Utc;
 use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
-use _database::{
-    functions::{
-        backend::user::{get as do_select, set as do_insert},
-        frontend::auth::generate_hash,
-    },
-    models::user::Model as DTO,
+use _database::functions::{
+    backend::user::{get as do_select, set as do_insert},
+    frontend::auth::generate_hash,
 };
-use _types::request::{Permission, RegisterParams};
+use _types::{
+    models::user::Model as DTO,
+    request::{Permission, RegisterParams},
+};
 
 #[tracing::instrument]
 pub async fn register(

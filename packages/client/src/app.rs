@@ -8,8 +8,8 @@ use yew_router::prelude::*;
 use crate::{
     components::{Footer, Header},
     pages::*,
-    utils::global_state::GlobalStateProvider,
 };
+use _functions::utils::global_state::GlobalStateProvider;
 use _types::{config::Config, i18n::Language, response::AuthInfo};
 
 #[derive(PartialEq, Clone, Debug, DeriveRoutes, Routable)]

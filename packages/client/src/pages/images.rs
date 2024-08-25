@@ -3,13 +3,15 @@ use chrono::{FixedOffset, NaiveDate};
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
-use crate::{
-    components::{icons, GlobalSkeleton},
-    functions::models::media::{count, delete, list},
+use crate::components::{icons, GlobalSkeleton};
+use _functions::{
+    models::media::{count, delete, list},
     utils::{copy_to_clipboard, global_state::GlobalStateContext},
 };
-use _database::models::media::Model;
-use _types::config::{load_config, Config};
+use _types::{
+    config::{load_config, Config},
+    models::media::Model,
+};
 
 #[styled_component]
 pub fn Images() -> HtmlResult {
