@@ -21,4 +21,4 @@ strum = { workspace = true }
 uuid = { workspace = true }
 log = { workspace = true }
 
-yuuka = "^0.1"
+yuuka = "^0.3"
