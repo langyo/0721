@@ -1,32 +1,23 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use strum::EnumIter;
 
-use crate::request::Permission;
+use sea_orm::entity::prelude::*;
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+#[sea_orm(table_name = "users")]
 pub struct Model {
-    pub updated_at: DateTime<Utc>,
-    pub permission: Permission,
-    pub password_hash: String,
-    pub email: String,
-}
+    #[sea_orm(primary_key)]
+    pub id: i64,
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct User {
     pub name: String,
-    pub updated_at: DateTime<Utc>,
-    pub permission: Permission,
+    pub permission: String,
+
     pub password_hash: String,
     pub email: String,
+    pub extra_profile: Option<String>,
 }
 
-impl From<User> for Model {
-    fn from(user: User) -> Self {
-        Self {
-            updated_at: user.updated_at,
-            permission: user.permission,
-            password_hash: user.password_hash,
-            email: user.email,
-        }
-    }
-}
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+pub enum Relation {}
+
+impl ActiveModelBehavior for ActiveModel {}

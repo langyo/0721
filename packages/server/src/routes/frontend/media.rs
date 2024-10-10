@@ -4,13 +4,16 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
 use hyper::{HeaderMap, StatusCode};
 
 use crate::utils::ExtractAuthInfo;
-use _database::functions::{backend::media::generate_thumbnail, frontend::image::get_file};
+use _database::{
+    functions::{backend::media::generate_thumbnail, frontend::image::get_file},
+    RouteEnv,
+};
 use _types::consts::MEDIA_CACHE_DIR;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -30,11 +33,12 @@ static WHITE_LIST: Lazy<Option<Vec<String>>> = Lazy::new(|| {
     white_list.filter(|white_list| !white_list.is_empty())
 });
 
-#[tracing::instrument]
+#[tracing::instrument(skip_all, parent = None)]
 pub async fn download_media(
     headers: HeaderMap,
     Path(db_key): Path<String>,
     ExtractAuthInfo(auth): ExtractAuthInfo,
+    State(env): State<RouteEnv>,
     Query(args): Query<Args>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // Check the referer header that the domain is allowed in the global config.
@@ -61,7 +65,7 @@ pub async fn download_media(
 
     // Read the image file.
 
-    let (mime, file) = get_file(auth, &db_key)
+    let (mime, file) = get_file(env.clone(), auth, &db_key)
         .await
         .map_err(|err| (StatusCode::NOT_FOUND, err.to_string()))?;
 

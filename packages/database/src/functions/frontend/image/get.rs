@@ -4,11 +4,18 @@ use bytes::Bytes;
 use image::ImageFormat;
 
 use crate::functions::backend::media::*;
+use crate::init::RouteEnv;
 use _types::consts::MEDIA_DIR;
 use _types::response::AuthInfo;
 
-pub async fn get_file(auth: AuthInfo, db_key: impl ToString) -> Result<(String, Bytes)> {
-    let item = get(db_key).await?.ok_or(anyhow!("Image not found"))?;
+pub async fn get_file(
+    env: RouteEnv,
+    auth: AuthInfo,
+    db_key: impl ToString,
+) -> Result<(String, Bytes)> {
+    let item = get(env.clone(), db_key.to_string())
+        .await?
+        .ok_or(anyhow!("Image not found"))?;
 
     // Check permission
     if let Some(item_permission) = item.permission {

@@ -6,7 +6,7 @@ use hyper::StatusCode;
 
 use _types::config::{update_config, Config as VO};
 
-#[tracing::instrument]
+#[tracing::instrument(skip_all, parent = None)]
 pub async fn set(Json(vo): Json<VO>) -> Result<impl IntoResponse, (StatusCode, String)> {
     update_config(vo).map_err(|err| {
         (

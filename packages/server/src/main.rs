@@ -4,31 +4,12 @@ mod utils;
 use anyhow::Result;
 use log::info;
 use std::net::SocketAddr;
-use tracing::Span;
 
-use axum::{body::Body, http::Request, serve};
+use axum::serve;
 use tokio::net::TcpListener;
-use tower_http::{compression::CompressionLayer, trace::TraceLayer};
-use yew::platform::Runtime;
 
 use crate::routes::route;
-use _database::init;
-
-#[derive(Clone, Default)]
-struct Executor {
-    inner: Runtime,
-}
-
-impl<F> hyper::rt::Executor<F> for Executor
-where
-    F: std::future::Future + Send + 'static,
-{
-    fn execute(&self, fut: F) {
-        self.inner.spawn_pinned(move || async move {
-            fut.await;
-        });
-    }
-}
+use _database::{init, InitRouteEnvParams, RouteEnv};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -56,26 +37,11 @@ async fn main() -> Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(80);
+    let env = RouteEnv::new(InitRouteEnvParams::Native).await?;
+    init(env.clone()).await?;
 
-    init().await?;
-
-    let router = route()
+    let router = route(env.clone())
         .await?
-        .layer(
-            TraceLayer::new_for_http().on_request(|req: &Request<Body>, _span: &Span| {
-                let addr = req
-                    .headers()
-                    .get("X-Real-IP")
-                    .and_then(|ip| ip.to_str().ok());
-                info!(
-                    "[{}] {} {}",
-                    addr.unwrap_or("unknown"),
-                    req.method(),
-                    req.uri(),
-                );
-            }),
-        )
-        .layer(CompressionLayer::new())
         .into_make_service_with_connect_info::<SocketAddr>();
 
     info!("Site will run on port {port}");

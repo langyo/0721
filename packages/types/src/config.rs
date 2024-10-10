@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use yuuka::derive_struct;
 
-use crate::consts::CONFIG_DIR;
+use crate::consts::CACHE_DIR;
 
 derive_struct!(pub Config {
     portal: {
@@ -28,7 +28,7 @@ derive_struct!(pub Config {
 });
 
 pub static CONFIG: Lazy<Arc<Mutex<Config>>> = Lazy::new(|| {
-    let raw = std::fs::read_to_string(CONFIG_DIR.clone()).unwrap();
+    let raw = std::fs::read_to_string(CACHE_DIR.clone()).unwrap();
     let ret: Config = toml::from_str(raw.as_str()).unwrap();
     Arc::new(Mutex::new(ret))
 });

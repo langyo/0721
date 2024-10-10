@@ -244,14 +244,14 @@ pub fn Register() -> HtmlResult {
                             let name = (*name_raw).clone();
                             let password_raw = (*password_raw).clone();
                             let email = (*email_raw).clone();
-                            let permission = permission_raw.to_string();
+                            let permission = (*permission_raw).clone();
 
                             wasm_bindgen_futures::spawn_local(async move {
                                 match register(&RegisterParams {
-                                    name,
-                                    password_raw,
+                                    name: Some(name),
+                                    password_raw: Some(password_raw),
                                     email,
-                                    permission,
+                                    permission: Some(permission),
                                 }).await {
                                     Ok(_) => {
                                         info!("Register success");

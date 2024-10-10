@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use jsonwebtoken::{encode, DecodingKey, EncodingKey, Header};
 
-use crate::functions::backend::user::*;
+use crate::init::RouteEnv;
 use _types::models::user::Model;
+use tairitsu_database::prelude::*;
 
 struct Keys {
     encoding: EncodingKey,
@@ -31,7 +32,7 @@ static JWT_SECRET: Lazy<Keys> = Lazy::new(|| {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Claims {
-    name: String,
+    email: String,
     #[serde(with = "jwt_numeric_date")]
     iat: DateTime<Utc>,
     #[serde(with = "jwt_numeric_date")]
@@ -60,10 +61,10 @@ mod jwt_numeric_date {
     }
 }
 
-pub async fn generate_token(name: String, user: Model) -> Result<(String, DateTime<Utc>)> {
+pub async fn generate_token(env: RouteEnv, user: Model) -> Result<(String, DateTime<Utc>)> {
     let now = chrono::Utc::now();
     let claims = Claims {
-        name: name.clone(),
+        email: user.email.clone(),
         iat: now,
         exp: now
             + chrono::Duration::try_days(15).ok_or(anyhow!(
@@ -71,7 +72,11 @@ pub async fn generate_token(name: String, user: Model) -> Result<(String, DateTi
             ))?,
     };
 
-    set(name, &user).await.context("Failed to update user")?;
+    env.kv
+        .token_expired
+        .set(user.email.clone(), claims.exp.timestamp().to_string())
+        .await
+        .context("Failed to set token expired time")?;
 
     Ok((
         encode(&Header::default(), &claims, &JWT_SECRET.encoding)

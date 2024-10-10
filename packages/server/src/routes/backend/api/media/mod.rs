@@ -9,9 +9,10 @@ use axum::{
     Router,
 };
 
+use _database::RouteEnv;
 use _types::config::load_config;
 
-pub async fn route() -> Result<Router> {
+pub async fn route(env: RouteEnv) -> Result<Router> {
     let config = load_config()?;
     let max_size = config.upload.image_size_limit;
     // Parse the suffix that may be "MiB", "KiB" or none (Bytes).
@@ -41,7 +42,8 @@ pub async fn route() -> Result<Router> {
             "/insert",
             put(insert::insert).layer(DefaultBodyLimit::max(max_size as usize)),
         )
-        .route("/delete/:id", delete(update::delete));
+        .route("/delete/:id", delete(update::delete))
+        .with_state(env);
 
     Ok(router)
 }

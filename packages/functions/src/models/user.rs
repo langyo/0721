@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 
 use crate::utils::{get_auth_cache, get_host};
-use _types::{models::user::Model, request::RegisterParams};
+use _types::{request::RegisterParams, response::UserBasicInfo};
 
 pub async fn count() -> Result<usize> {
     let token = get_auth_cache()?;
@@ -22,7 +22,7 @@ pub async fn count() -> Result<usize> {
     }
 }
 
-pub async fn list() -> Result<HashMap<String, Model>> {
+pub async fn list() -> Result<HashMap<String, UserBasicInfo>> {
     let token = get_auth_cache()?;
     let res = Client::new()
         .get(format!("{}/api/user/list", get_host()?))
@@ -53,7 +53,7 @@ pub async fn register(data: &RegisterParams) -> Result<String> {
     }
 }
 
-pub async fn update(id: String, data: Model) -> Result<String> {
+pub async fn update(id: String, data: RegisterParams) -> Result<String> {
     let token = get_auth_cache()?;
     let res = Client::new()
         .post(format!("{}/api/user/update/{}", get_host()?, id))

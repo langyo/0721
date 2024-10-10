@@ -9,11 +9,17 @@ use axum::{
     Router,
 };
 
-pub async fn route() -> Result<Router> {
+use _database::RouteEnv;
+
+pub async fn route(env: RouteEnv) -> Result<Router> {
     let router = Router::new()
         .route("/", get(get::get))
         .route("/", put(set::set))
-        .layer(middleware::from_fn(super::auth_middleware));
+        .layer(middleware::from_fn_with_state(
+            env.clone(),
+            super::auth_middleware,
+        ))
+        .with_state(env);
 
     Ok(router)
 }

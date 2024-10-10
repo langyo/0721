@@ -3,31 +3,32 @@ use anyhow::Result;
 use axum::{
     extract::FromRequestParts,
     http::request::Parts,
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use axum_extra::{
     headers::{authorization::Bearer, Authorization},
     TypedHeader,
 };
-use hyper::StatusCode;
 
+use crate::RouteEnv;
 use _database::functions::frontend::auth::verify;
 use _types::response::AuthInfo;
 
 pub struct ExtractAuthInfo(pub AuthInfo);
 
 #[async_trait::async_trait]
-impl<S> FromRequestParts<S> for ExtractAuthInfo
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<RouteEnv> for ExtractAuthInfo {
     type Rejection = Response;
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        match TypedHeader::<Authorization<Bearer>>::from_request_parts(parts, state).await {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        env: &RouteEnv,
+    ) -> Result<Self, Self::Rejection> {
+        match TypedHeader::<Authorization<Bearer>>::from_request_parts(parts, env).await {
             Ok(bearer) => {
                 let token = bearer.token().to_string();
-                let info = verify(token).await.map_err(|err| {
+                let info = verify(env.clone(), token).await.map_err(|err| {
                     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
                 })?;
 

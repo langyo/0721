@@ -7,21 +7,21 @@ use std::{
 };
 
 use axum::{
-    extract::{ConnectInfo, Json},
+    extract::{ConnectInfo, Json, State},
     response::IntoResponse,
 };
-use hyper::{HeaderMap, StatusCode};
+use hyper::StatusCode;
 
-use _database::functions::frontend::auth::login as do_login;
+use _database::{functions::frontend::auth::login as do_login, RouteEnv};
 use _types::request::LoginInfo;
 
 type LogItem = (SocketAddr, DateTime<Utc>);
 static LOGIN_LOG: Lazy<Arc<Mutex<Vec<LogItem>>>> = Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
 
-#[tracing::instrument]
+#[tracing::instrument(skip_all, parent = None, fields(ip = %real_ip, name = %args.name))]
 pub async fn login(
-    headers: HeaderMap,
     ConnectInfo(real_ip): ConnectInfo<SocketAddr>,
+    State(env): State<RouteEnv>,
     args: Json<LoginInfo>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // Write the login log
@@ -67,7 +67,7 @@ pub async fn login(
         ));
     }
 
-    let ret = do_login(args.name.clone(), args.password_raw.clone())
+    let ret = do_login(env.clone(), args.name.clone(), args.password_raw.clone())
         .await
         .map_err(|err| {
             (

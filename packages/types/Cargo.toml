@@ -22,3 +22,4 @@ uuid = { workspace = true }
 log = { workspace = true }
 
 yuuka = "^0.3"
+sea-orm = { workspace = true }
