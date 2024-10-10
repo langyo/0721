@@ -2,58 +2,61 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use yuuka::derive_struct;
 
-derive_struct!(pub Config {
-    header: {
-        welcome: String,
-        loading: String,
+derive_struct!(
+    #[serde(rename_all = "kebab-case")]
+    pub Config {
+        header: {
+            welcome: String,
+            loading: String,
 
-        portal: String,
-        images: String,
-        users: String,
-        config: String,
+            portal: String,
+            images: String,
+            users: String,
+            config: String,
 
-        login: String,
-        logout: String,
-        register: String,
+            login: String,
+            logout: String,
+            register: String,
 
-        username: String,
-        password: String,
-        email: String,
+            username: String,
+            password: String,
+            email: String,
 
-        user: String,
-        manager: String,
-    },
-    portal: {
-        upload: String,
-        download: String,
-        delete: String,
-
-        progress: String,
-        fail: String,
-    },
-    images: {
-        total_count: String,
-        load_more: String,
-    },
-    config: {
+            user: String,
+            manager: String,
+        },
         portal: {
-            engine_version: String,
-            language: String,
-            timezone: String,
-            title_suffix: String,
-            footer_banner: String,
+            upload: String,
+            download: String,
+            delete: String,
+
+            progress: String,
+            fail: String,
         },
-        router: {
-            media_entry_path: String,
-            limit_referrer_host: String,
+        images: {
+            total_count: String,
+            load_more: String,
         },
-        upload: {
-            image_size_limit: String,
-            webp_auto_convert: String,
-            use_source_file_name: String,
+        config: {
+            portal: {
+                engine_version: String,
+                language: String,
+                timezone: String,
+                title_suffix: String,
+                footer_banner: String,
+            },
+            router: {
+                media_entry_path: String,
+                limit_referrer_host: String,
+            },
+            upload: {
+                image_size_limit: String,
+                webp_auto_convert: String,
+                use_source_file_name: String,
+            },
         },
-    },
-});
+    }
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
