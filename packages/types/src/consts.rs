@@ -1,4 +1,6 @@
 use once_cell::sync::Lazy;
+#[cfg(not(debug_assertions))]
+use std::path::Path;
 use std::path::PathBuf;
 
 pub static WASM_DIR: Lazy<PathBuf> = Lazy::new(|| {

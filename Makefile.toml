@@ -14,8 +14,8 @@ exec cargo clippy --all-targets --all-features -- -D warnings
 script = '''
 #!@duckscript
 
-exec cargo build --target wasm32-unknown-unknown --package _client
-exec wasm-bindgen --out-dir ./target/wasm32-html --out-name client --target no-modules --no-typescript --no-modules-global wasm_vendor_entry ./target/wasm32-unknown-unknown/debug/_client.wasm
+exec cargo build --target wasm32-unknown-unknown --package _client --release
+exec wasm-bindgen --out-dir ./target/wasm32-html --out-name client --target no-modules --no-typescript --no-modules-global wasm_vendor_entry ./target/wasm32-unknown-unknown/release/_client.wasm
 
 set_env PORT 8080
 set_env JWT_SECRET "ciallo@0721"
