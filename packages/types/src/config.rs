@@ -6,26 +6,29 @@ use yuuka::derive_struct;
 
 use crate::consts::CACHE_DIR;
 
-derive_struct!(pub Config {
-    portal: {
-        title_suffix: String,
-        footer_banner: [{
-            text: String,
-            url: Option<String>,
-        }],
-        language: String,
-        timezone: i32,
-    },
-    router: {
-        media_entry_path: String,
-        limit_referrer_host: Option<Vec<String>>,
-    },
-    upload: {
-        image_size_limit: String,
-        webp_auto_convert: bool,
-        use_source_file_name: bool,
+derive_struct!(
+    #[serde(rename_all = "kebab-case")]
+    pub Config {
+        portal: {
+            title_suffix: String,
+            footer_banner: [{
+                text: String,
+                url: Option<String>,
+            }],
+            language: String,
+            timezone: i32,
+        },
+        router: {
+            media_entry_path: String,
+            limit_referrer_host: Option<Vec<String>>,
+        },
+        upload: {
+            image_size_limit: String,
+            webp_auto_convert: bool,
+            use_source_file_name: bool,
+        }
     }
-});
+);
 
 pub static CONFIG: Lazy<Arc<Mutex<Config>>> = Lazy::new(|| {
     let raw = std::fs::read_to_string(CACHE_DIR.clone()).unwrap();
