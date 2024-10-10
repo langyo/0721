@@ -7,21 +7,13 @@ use chrono::Utc;
 use image::{EncodableLayout as _, GenericImageView, ImageFormat};
 use sha3::{Digest as _, Sha3_256};
 
-use crate::functions::backend::media_insert_log::list as list_log;
+use crate::init::RouteEnv;
 use _types::{
     config::load_config,
-    consts::{DATABASE_DIR, MEDIA_CACHE_DIR, MEDIA_DIR},
+    consts::{MEDIA_CACHE_DIR, MEDIA_DIR},
     models::media::*,
 };
-
-pub static DB: Lazy<sled::Db> = Lazy::new(|| {
-    sled::open({
-        let mut path = (*DATABASE_DIR).clone();
-        path.push("media");
-        path
-    })
-    .unwrap()
-});
+use tairitsu_database::prelude::*;
 
 pub static IS_ENABLE_WEBP_AUTO_CONVERT: Lazy<bool> = Lazy::new(|| {
     let config = load_config().unwrap();
@@ -32,27 +24,52 @@ pub static IS_USE_SOURCE_FILE_NAME: Lazy<bool> = Lazy::new(|| {
     config.upload.use_source_file_name
 });
 
-pub async fn count() -> Result<usize> {
-    Ok(DB.len())
+pub const GLOBAL_CONFIG_MEDIA_COUNT_KEY: &str = "media_count";
+
+pub async fn get(env: RouteEnv, id: String) -> Result<Option<Model>> {
+    if let Some(ret) = env.kv.images.get(id).await? {
+        Ok(serde_json::from_str(&ret)?)
+    } else {
+        Ok(None)
+    }
 }
 
-pub async fn list(offset: usize, limit: usize) -> Result<Vec<Model>> {
-    let ret = list_log(offset, limit)
+pub async fn count(env: RouteEnv) -> Result<u64> {
+    let count = env
+        .kv
+        .global_config
+        .get(GLOBAL_CONFIG_MEDIA_COUNT_KEY.to_string())
+        .await?
+        .map(|x| x.parse::<u64>().unwrap_or(0))
+        .unwrap_or(0);
+
+    Ok(count)
+}
+
+pub async fn list(env: RouteEnv, offset: usize, limit: usize) -> Result<Vec<Model>> {
+    let ret = env
+        .kv
+        .images
+        .list_by_prefix("".to_string(), Some(limit), Some(offset.to_string()))
         .await?
         .into_iter()
-        .map(|(_time, hash)| {
-            let raw = DB
-                .get(hash.clone())?
-                .ok_or(anyhow!("Image not found: {}", hash))?;
-            let value = postcard::from_bytes(raw.as_ref()).unwrap();
-            Ok(value)
+        .map(|x| {
+            serde_json::from_str(&x)
+                .map_err(|err| anyhow!("Failed to parse JSON from string: {}", err))
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<Result<Model>>>()
+        .into_iter()
+        .collect::<Result<Vec<Model>>>()?;
 
     Ok(ret)
 }
 
-pub async fn set(uploader: String, data: Bytes, file_name_raw: Option<String>) -> Result<String> {
+pub async fn set(
+    env: RouteEnv,
+    uploader: String,
+    data: Bytes,
+    file_name_raw: Option<String>,
+) -> Result<String> {
     let now = Utc::now();
     let hash = Sha3_256::digest(&data).to_vec();
     let hash = BASE64_URL_SAFE_NO_PAD.encode(&hash);
@@ -69,7 +86,10 @@ pub async fn set(uploader: String, data: Bytes, file_name_raw: Option<String>) -
     };
 
     // Check if the image is already uploaded
-    ensure!(!DB.contains_key(db_key.as_str())?, "Image already uploaded");
+    ensure!(
+        env.kv.images.get(db_key.clone()).await?.is_some(),
+        "Image already uploaded"
+    );
 
     let data = if *IS_ENABLE_WEBP_AUTO_CONVERT {
         use image::{codecs::gif::GifDecoder, AnimationDecoder};
@@ -133,8 +153,10 @@ pub async fn set(uploader: String, data: Bytes, file_name_raw: Option<String>) -
         size,
         mime: mime.to_mime_type().to_string(),
     };
-    let raw = postcard::to_allocvec(&value)?;
-    DB.insert(db_key.as_str(), raw)?;
+    env.kv
+        .images
+        .set(db_key.clone(), serde_json::to_string(&value)?)
+        .await?;
 
     std::thread::spawn({
         let db_key = db_key.clone();
@@ -190,16 +212,8 @@ pub fn generate_thumbnail(hash: impl ToString, data: Bytes) -> Result<Bytes> {
     Ok(image)
 }
 
-pub async fn get(key: impl ToString) -> Result<Option<Model>> {
-    let ret = DB
-        .get(key.to_string().as_bytes())?
-        .map(|r| postcard::from_bytes(r.to_vec().as_slice()).unwrap());
-
-    Ok(ret)
-}
-
-pub async fn delete(id: impl ToString) -> Result<()> {
-    DB.remove(id.to_string().as_bytes())?;
+pub async fn delete(env: RouteEnv, id: String) -> Result<()> {
+    env.kv.images.delete(id).await?;
 
     Ok(())
 }

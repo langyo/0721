@@ -8,12 +8,15 @@ use axum::{
     Router,
 };
 
-pub async fn route() -> Result<Router> {
+use _database::RouteEnv;
+
+pub async fn route(env: RouteEnv) -> Result<Router> {
     let router = Router::new()
         .route("/count", get(list::count))
         .route("/list", get(list::list))
         .route("/register", post(insert::register))
-        .route("/delete/:id", delete(update::delete));
+        .route("/delete/:id", delete(update::delete))
+        .with_state(env);
 
     Ok(router)
 }

@@ -39,5 +39,4 @@ script = '''
 #!@duckscript
 
 exec cargo clean
-rm -r ./cache
 '''

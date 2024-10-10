@@ -1,24 +1,27 @@
 use anyhow::Result;
 
-use axum::response::IntoResponse;
+use axum::{extract::State, response::IntoResponse};
 use axum_extra::{
     headers::{authorization::Bearer, Authorization},
     TypedHeader,
 };
 use hyper::StatusCode;
 
-use _database::functions::frontend::auth::verify as do_verify;
+use _database::{functions::frontend::auth::verify as do_verify, RouteEnv};
 
-#[tracing::instrument]
+#[tracing::instrument(skip_all, parent = None)]
 pub async fn verify(
     bearer: TypedHeader<Authorization<Bearer>>,
+    State(env): State<RouteEnv>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    do_verify(bearer.token().to_string()).await.map_err(|err| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Cannot verify: {}", err),
-        )
-    })?;
+    do_verify(env, bearer.token().to_string())
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Cannot verify: {}", err),
+            )
+        })?;
 
     Ok(())
 }

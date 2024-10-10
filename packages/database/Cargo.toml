@@ -7,10 +7,13 @@ edition.workspace = true
 _types = { path = "../types" }
 _functions = { path = "../functions" }
 
+tairitsu-database = { workspace = true }
+
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true }
 once_cell = { workspace = true }
+cfg-if = { workspace = true }
 
 base64 = { workspace = true }
 bytes = { workspace = true }
@@ -27,13 +30,18 @@ log = { workspace = true }
 tokio = { version = "^1", features = ["full"] }
 tracing = { workspace = true }
 
+worker = { workspace = true }
+sea-orm = { workspace = true }
+
 jsonwebtoken = "^9"
 bcrypt = "^0.15"
 sha3 = "^0.10"
 
-sled = { workspace = true }
-postcard = { workspace = true }
-
 image = { workspace = true }
 webp = { workspace = true }
 webp-animation = { workspace = true }
+
+[features]
+cloudflare = ["tairitsu-database/cloudflare"]
+native = ["tairitsu-database/native"]
+wasi = ["tairitsu-database/wasi"]

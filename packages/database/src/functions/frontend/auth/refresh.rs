@@ -3,29 +3,36 @@ use anyhow::{anyhow, ensure, Context, Result};
 use jsonwebtoken::{decode, Validation};
 
 use super::{generate_token, Claims, JWT_SECRET};
-use crate::functions::backend::user::*;
+use crate::{functions::backend::user::*, init::RouteEnv};
 use _types::response::UserInfo;
+use tairitsu_database::prelude::*;
 
-pub async fn refresh(token: String) -> Result<UserInfo> {
+pub async fn refresh(env: RouteEnv, token: String) -> Result<UserInfo> {
     let token = decode::<Claims>(&token, &JWT_SECRET.decoding, &Validation::default())
         .context("Invalid token")?;
 
-    let name = token.claims.name.clone();
-    let user = get(name.clone()).await?.ok_or(anyhow!("User not found"))?;
+    let email = token.claims.email.clone();
+    let user = get(env.clone(), email.clone())
+        .await?
+        .ok_or(anyhow!("User not found"))?;
 
     let iat = token.claims.iat;
-    let updated_at = user.clone().updated_at
-        - chrono::Duration::try_minutes(1).ok_or(anyhow!(
-            "Failed to create token: Failed to subtract 1 minute from updated_at"
-        ))?;
+    let updated_at = env
+        .kv
+        .token_expired
+        .get(user.email.clone())
+        .await?
+        .ok_or(anyhow!("Token expired"))?;
+    let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc);
     ensure!(iat >= updated_at, "Token expired");
 
-    let (token, updated_at) = generate_token(name.clone(), user.clone()).await?;
+    let (token, updated_at) = generate_token(env.clone(), user.clone()).await?;
 
     Ok(UserInfo {
         token,
-        name,
-        permission: user.permission,
+        name: user.name,
+        email: user.email,
+        permission: serde_json::from_str(&user.permission)?,
         updated_at,
     })
 }

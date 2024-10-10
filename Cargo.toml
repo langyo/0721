@@ -69,7 +69,14 @@ wasm-bindgen = "0.2.92"
 wasm-bindgen-futures = "^0.4"
 gloo = "^0.11"
 
-sea-orm = "^1"
+sea-orm = { version = "^1", default-features = false, features = [
+    "macros",
+    "proxy",
+    "with-uuid",
+    "with-chrono",
+    "with-json",
+    "debug-print",
+] }
 worker = "^0.3"
 
 image = { version = "^0.25", features = ["gif", "jpeg", "png", "webp"] }

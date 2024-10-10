@@ -7,7 +7,7 @@ use crate::utils::{ExtractAuthInfo, ExtractLanguageInfo};
 use _client::app::AppStates;
 use _types::config::load_config;
 
-#[tracing::instrument]
+#[tracing::instrument(skip_all, parent = None)]
 pub async fn query(
     ExtractLanguageInfo(language): ExtractLanguageInfo,
     ExtractAuthInfo(auth): ExtractAuthInfo,

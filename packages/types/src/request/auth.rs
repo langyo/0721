@@ -14,10 +14,10 @@ pub struct RefreshInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegisterParams {
-    pub name: String,
-    pub password_raw: String,
+    pub name: Option<String>,
+    pub password_raw: Option<String>,
     pub email: String,
-    pub permission: String,
+    pub permission: Option<Permission>,
 }
 
 #[derive(

@@ -1,24 +1,22 @@
-use std::str::FromStr;
-
 use anyhow::Result;
 
-use axum::{extract::Json, response::IntoResponse};
-use chrono::Utc;
+use axum::{
+    extract::{Json, State},
+    response::IntoResponse,
+};
 use hyper::StatusCode;
 
 use crate::utils::ExtractAuthInfo;
-use _database::functions::{
-    backend::user::{get as do_select, set as do_insert},
-    frontend::auth::generate_hash,
+use _database::{
+    functions::backend::user::{get as do_select, set as do_insert},
+    RouteEnv,
 };
-use _types::{
-    models::user::Model as DTO,
-    request::{Permission, RegisterParams},
-};
+use _types::request::RegisterParams;
 
-#[tracing::instrument]
+#[tracing::instrument(skip_all, parent = None)]
 pub async fn register(
     ExtractAuthInfo(info): ExtractAuthInfo,
+    State(env): State<RouteEnv>,
     Json(vo): Json<RegisterParams>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     if !info
@@ -31,28 +29,21 @@ pub async fn register(
         return Err((StatusCode::FORBIDDEN, "No permission".to_string()));
     }
 
-    if do_select(&vo.name)
-        .await
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
-        .is_some()
+    if do_select(
+        env.clone(),
+        vo.name
+            .clone()
+            .ok_or((StatusCode::BAD_REQUEST, "No name".to_string()))?,
+    )
+    .await
+    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+    .is_some()
     {
         return Err((StatusCode::BAD_REQUEST, "Duplicated name".to_string()));
     }
 
-    let password_hash = generate_hash(&vo.password_raw)
+    do_insert(env.clone(), vo)
+        .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-
-    do_insert(
-        vo.name,
-        &DTO {
-            updated_at: Utc::now(),
-            permission: Permission::from_str(&vo.permission)
-                .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))?,
-            password_hash,
-            email: vo.email,
-        },
-    )
-    .await
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(())
 }

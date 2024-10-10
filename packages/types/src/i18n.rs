@@ -1,96 +1,59 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use yuuka::derive_struct;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct Config {
-    pub header: config_item::Header,
-    pub portal: config_item::Portal,
-    pub images: config_item::Images,
-    pub config: config_item::Config,
-}
+derive_struct!(pub Config {
+    header: {
+        welcome: String,
+        loading: String,
 
-pub mod config_item {
-    use serde::{Deserialize, Serialize};
+        portal: String,
+        images: String,
+        users: String,
+        config: String,
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    #[serde(rename_all = "kebab-case")]
-    pub struct Header {
-        pub welcome: String,
-        pub loading: String,
+        login: String,
+        logout: String,
+        register: String,
 
-        pub portal: String,
-        pub images: String,
-        pub users: String,
-        pub config: String,
+        username: String,
+        password: String,
+        email: String,
 
-        pub login: String,
-        pub logout: String,
-        pub register: String,
+        user: String,
+        manager: String,
+    },
+    portal: {
+        upload: String,
+        download: String,
+        delete: String,
 
-        pub username: String,
-        pub password: String,
-        pub email: String,
-
-        pub user: String,
-        pub manager: String,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    #[serde(rename_all = "kebab-case")]
-    pub struct Portal {
-        pub upload: String,
-        pub download: String,
-        pub delete: String,
-
-        pub progress: String,
-        pub fail: String,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    #[serde(rename_all = "kebab-case")]
-    pub struct Images {
-        pub total_count: String,
-        pub load_more: String,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    #[serde(rename_all = "kebab-case")]
-    pub struct Config {
-        pub portal: config::Portal,
-        pub router: config::Router,
-        pub upload: config::Upload,
-    }
-
-    pub mod config {
-        use serde::{Deserialize, Serialize};
-
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-        #[serde(rename_all = "kebab-case")]
-        pub struct Portal {
-            pub engine_version: String,
-            pub title_suffix: String,
-            pub footer_banner: String,
-            pub language: String,
-            pub timezone: String,
-        }
-
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-        #[serde(rename_all = "kebab-case")]
-        pub struct Router {
-            pub media_entry_path: String,
-            pub limit_referrer_host: String,
-        }
-
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-        #[serde(rename_all = "kebab-case")]
-        pub struct Upload {
-            pub image_size_limit: String,
-            pub webp_auto_convert: String,
-            pub use_source_file_name: String,
-        }
-    }
-}
+        progress: String,
+        fail: String,
+    },
+    images: {
+        total_count: String,
+        load_more: String,
+    },
+    config: {
+        portal: {
+            engine_version: String,
+            language: String,
+            timezone: String,
+            title_suffix: String,
+            footer_banner: String,
+        },
+        router: {
+            media_entry_path: String,
+            limit_referrer_host: String,
+        },
+        upload: {
+            image_size_limit: String,
+            webp_auto_convert: String,
+            use_source_file_name: String,
+        },
+    },
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
