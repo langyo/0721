@@ -1,11 +1,9 @@
-use std::collections::HashMap;
-
 use stylist::{css, yew::styled_component};
 use yew::prelude::*;
 
 use crate::components::{icons, GlobalSkeleton};
 use _functions::{
-    models::user::{delete, list},
+    models::user::{count, delete, list},
     utils::global_state::GlobalStateContext,
 };
 use _types::request::Permission;
@@ -17,15 +15,19 @@ pub fn Users() -> HtmlResult {
     let t = global_state.language.to_config().unwrap();
 
     let is_downloading = use_state(|| true);
-    let user_list = use_state(HashMap::new);
+    let user_count = use_state(|| 0);
+    let user_list = use_state(Vec::new);
     use_effect_with((), {
         let is_downloading = is_downloading.clone();
+        let user_count = user_count.clone();
         let user_list = user_list.clone();
         |_| {
             wasm_bindgen_futures::spawn_local(async move {
+                let user_count = user_count.clone();
                 let user_list = user_list.clone();
-                let ret = list().await.unwrap();
-                user_list.set(ret);
+
+                user_count.set(count().await.unwrap());
+                user_list.set(list(None, None).await.unwrap());
 
                 is_downloading.set(false);
             });
@@ -49,7 +51,7 @@ pub fn Users() -> HtmlResult {
                 justify-content: center;
             ")}>
                 {
-                    user_list.iter().map(|(name, item)| html! {
+                    user_list.iter().map(|item| html! {
                         <div class={css!("
                             width: 80%;
                             height: 64px;
@@ -85,7 +87,7 @@ pub fn Users() -> HtmlResult {
                                     align-items: center;
                                     justify-content: center;
                                 ")}>
-                                    {name.clone()}
+                                    {item.name.clone()}
 
                                     {
                                         if item.permission == Permission::Manager {
@@ -136,11 +138,11 @@ pub fn Users() -> HtmlResult {
                                         box-shadow: var(--shadow-half);
                                     ")}
                                     onclick={
-                                        let name = name.clone();
+                                        let email = item.email.clone();
                                         Callback::from(move |_| {
-                                            let name = name.clone();
+                                            let email = email.clone();
                                             wasm_bindgen_futures::spawn_local(async move {
-                                                if delete(name).await.is_ok() {
+                                                if delete(email).await.is_ok() {
                                                     gloo::utils::window().location().reload().unwrap();
                                                 } else {
                                                     gloo::dialogs::alert("Failed to delete user.");
@@ -155,6 +157,54 @@ pub fn Users() -> HtmlResult {
                         </div>
                     }).collect::<Html>()
                 }
+
+                <button
+                    class={classes!(css!("
+                        width: 128px;
+                        height: 32px;
+                        margin: 16px;
+
+                        font-size: 16px;
+                        font-weight: bolder;
+                        text-align: center;
+                    "), {
+                        if (*user_count) <= (*user_list).len() {
+                            css!("
+                                background: var(--color-dark-less);
+                                pointer-events: none;
+                            ")
+                        } else {
+                            css!("")
+                        }
+                    })}
+                    onclick={
+                        let user_count = user_count.clone();
+                        let user_list = user_list.clone();
+
+                        Callback::from(move |_| {
+                            let user_count = user_count.clone();
+                            let user_list = user_list.clone();
+
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let user_count = user_count.clone();
+                                let user_list = user_list.clone();
+
+                                let current_count_raw = count().await.unwrap();
+                                let current_list_raw = (*user_list).clone();
+
+                                user_count.set(current_count_raw);
+                                if current_count_raw > current_list_raw.len() {
+                                    user_list.set(list(
+                                        Some(current_list_raw.len()),
+                                        Some(100),
+                                    ).await.unwrap());
+                                }
+                            });
+                        })
+                    }
+                >
+                    { t.images.load_more }
+                </button>
 
                 <button
                     class={css!("
