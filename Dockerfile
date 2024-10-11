@@ -11,10 +11,14 @@ RUN cargo install wasm-bindgen-cli@0.2.95
 COPY ./Cargo.toml /home/Cargo.toml
 RUN cargo new --name server /home/packages/server
 COPY ./packages/server/Cargo.toml /home/packages/server/Cargo.toml
-RUN cargo new --lib --name client /home/packages/client
+RUN cargo new --lib --name _client /home/packages/client
 COPY ./packages/client/Cargo.toml /home/packages/client/Cargo.toml
-RUN cargo new --lib --name database /home/packages/database
+RUN cargo new --lib --name _database /home/packages/database
 COPY ./packages/database/Cargo.toml /home/packages/database/Cargo.toml
+RUN cargo new --lib --name _functions /home/packages/functions
+COPY ./packages/functions/Cargo.toml /home/packages/functions/Cargo.toml
+RUN cargo new --lib --name _types /home/packages/types
+COPY ./packages/types/Cargo.toml /home/packages/types/Cargo.toml
 
 ENV ROOT_DIR=/home/res
 WORKDIR /home
@@ -23,6 +27,8 @@ RUN cargo fetch
 COPY ./packages/server /home/packages/server
 COPY ./packages/client /home/packages/client
 COPY ./packages/database /home/packages/database
+COPY ./packages/functions /home/packages/functions
+COPY ./packages/types /home/packages/types
 
 COPY ./res/languages /home/res/languages
 COPY ./res/website /home/res/website
