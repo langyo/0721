@@ -24,7 +24,10 @@ pub async fn refresh(env: RouteEnv, token: String) -> Result<UserInfo> {
         .await?
         .ok_or(anyhow!("Token expired"))?;
     let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc);
-    ensure!(iat >= updated_at, "Token expired");
+    ensure!(
+        iat >= updated_at - chrono::Duration::seconds(5),
+        "Token expired"
+    );
 
     let (token, updated_at) = generate_token(env.clone(), user.clone()).await?;
 
