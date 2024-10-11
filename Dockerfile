@@ -6,7 +6,7 @@ RUN apt update && apt install -y clang
 RUN rustup target add wasm32-unknown-unknown
 RUN rustup target add wasm32-wasi
 RUN cargo install cargo-make
-RUN cargo install wasm-bindgen-cli@0.2.94
+RUN cargo install wasm-bindgen-cli@0.2.95
 
 COPY ./Cargo.toml /home/Cargo.toml
 RUN cargo new --name server /home/packages/server
