@@ -1,6 +1,6 @@
 # Preload dependencies,
 # used to speed up repeated builds and reduce traffic consumption of libraries
-FROM rust:latest as stage-deps
+FROM rust:latest AS stage-deps
 
 RUN apt update && apt install -y clang
 RUN rustup target add wasm32-unknown-unknown
@@ -29,13 +29,13 @@ COPY ./res/website /home/res/website
 COPY ./res/Config.default.toml /home/res/Config.default.toml
 
 # Stage 1 for client build, used to compile wasm file
-FROM stage-deps as stage-client-build1
+FROM stage-deps AS stage-client-build1
 
 WORKDIR /home
 RUN cargo build --offline --package _client --target wasm32-unknown-unknown --release
 
 # Stage 2 for client build, used to process wasm file for browser platform
-FROM stage-deps as stage-client-build2
+FROM stage-deps AS stage-client-build2
 
 COPY --from=stage-client-build1 /home/target/wasm32-unknown-unknown/release/_client.wasm /home/client.wasm
 WORKDIR /home
@@ -48,13 +48,13 @@ RUN wasm-bindgen\
   client.wasm
 
 # Stage 1 for server build, used to compile server program
-FROM stage-deps as stage-server-build1
+FROM stage-deps AS stage-server-build1
 
 WORKDIR /home
 RUN cargo build --offline --package _server --release
 
 # Stage 2 for server build, used to integrate the build result of client and generate the final image
-FROM ubuntu:latest as stage-server-build2
+FROM ubuntu:latest AS stage-server-build2
 
 RUN apt update && apt install -y openssl
 
