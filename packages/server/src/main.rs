@@ -15,7 +15,7 @@ use _database::{init, InitRouteEnvParams, RouteEnv};
 async fn main() -> Result<()> {
     #[cfg(not(debug_assertions))]
     {
-        use _database::LOG_DIR;
+        use _types::consts::LOG_DIR;
         use tracing_subscriber::fmt::writer::MakeWriterExt;
 
         let file_appender = tracing_appender::rolling::daily((*LOG_DIR).clone(), "log");
