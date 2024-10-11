@@ -104,6 +104,16 @@ cfg_if::cfg_if! {
                     std::fs::create_dir_all(&pwd).map_err(
                         |err| anyhow::anyhow!("Failed to create directory: {}", err)
                     )?;
+                } else {
+                    std::fs::create_dir_all("/home/cache/sql").map_err(
+                        |err| anyhow::anyhow!("Failed to create directory: {}", err)
+                    )?;
+                    std::fs::create_dir_all("/home/cache/kv").map_err(
+                        |err| anyhow::anyhow!("Failed to create directory: {}", err)
+                    )?;
+                    std::fs::create_dir_all("/home/cache/bucket").map_err(
+                        |err| anyhow::anyhow!("Failed to create directory: {}", err)
+                    )?;
                 }
 
                 match param {
