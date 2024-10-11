@@ -34,34 +34,40 @@ pub async fn get(env: RouteEnv, id: String) -> Result<Option<Model>> {
     }
 }
 
-pub async fn count(env: RouteEnv) -> Result<u64> {
+pub async fn count(env: RouteEnv) -> Result<usize> {
     let count = env
         .kv
         .global_config
         .get(GLOBAL_CONFIG_MEDIA_COUNT_KEY.to_string())
         .await?
-        .map(|x| x.parse::<u64>().unwrap_or(0))
+        .map(|x| x.parse::<usize>().unwrap_or(0))
         .unwrap_or(0);
 
     Ok(count)
 }
 
 pub async fn list(env: RouteEnv, offset: usize, limit: usize) -> Result<Vec<Model>> {
-    let ret = env
+    let keys = env
         .kv
         .images
         .list_by_prefix("".to_string(), Some(limit), Some(offset.to_string()))
-        .await?
-        .into_iter()
-        .map(|x| {
-            serde_json::from_str(&x)
-                .map_err(|err| anyhow!("Failed to parse JSON from string: {}", err))
+        .await?;
+    let values = keys
+        .iter()
+        .map(|key| async {
+            let value = env
+                .kv
+                .images
+                .get(key.clone())
+                .await?
+                .ok_or(anyhow!("Key not found"))?;
+            Ok(serde_json::from_str(&value)?)
         })
-        .collect::<Vec<Result<Model>>>()
-        .into_iter()
-        .collect::<Result<Vec<Model>>>()?;
+        .collect::<Vec<_>>();
+    let values: Vec<Result<Model>> = futures::future::join_all(values).await;
+    let values = values.into_iter().collect::<Result<Vec<Model>>>()?;
 
-    Ok(ret)
+    Ok(values)
 }
 
 pub async fn set(
@@ -87,7 +93,7 @@ pub async fn set(
 
     // Check if the image is already uploaded
     ensure!(
-        env.kv.images.get(db_key.clone()).await?.is_some(),
+        env.kv.images.get(db_key.clone()).await?.is_none(),
         "Image already uploaded"
     );
 
@@ -158,6 +164,21 @@ pub async fn set(
         .set(db_key.clone(), serde_json::to_string(&value)?)
         .await?;
 
+    let count = env
+        .kv
+        .global_config
+        .get(GLOBAL_CONFIG_MEDIA_COUNT_KEY.to_string())
+        .await?
+        .map(|x| x.parse::<usize>().unwrap_or(0))
+        .unwrap_or(0);
+    env.kv
+        .global_config
+        .set(
+            GLOBAL_CONFIG_MEDIA_COUNT_KEY.to_string(),
+            (count + 1).to_string(),
+        )
+        .await?;
+
     std::thread::spawn({
         let db_key = db_key.clone();
         let hash = hash.clone();
@@ -214,6 +235,21 @@ pub fn generate_thumbnail(hash: impl ToString, data: Bytes) -> Result<Bytes> {
 
 pub async fn delete(env: RouteEnv, id: String) -> Result<()> {
     env.kv.images.delete(id).await?;
+
+    let count = env
+        .kv
+        .global_config
+        .get(GLOBAL_CONFIG_MEDIA_COUNT_KEY.to_string())
+        .await?
+        .map(|x| x.parse::<usize>().unwrap_or(0))
+        .unwrap_or(0);
+    env.kv
+        .global_config
+        .set(
+            GLOBAL_CONFIG_MEDIA_COUNT_KEY.to_string(),
+            (count - 1).to_string(),
+        )
+        .await?;
 
     Ok(())
 }

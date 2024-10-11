@@ -1,11 +1,12 @@
-use std::collections::HashMap;
-
 use anyhow::{anyhow, Result};
 
 use reqwest::Client;
 
 use crate::utils::{get_auth_cache, get_host};
-use _types::{request::RegisterParams, response::UserBasicInfo};
+use _types::{
+    request::{PageArgs, RegisterParams},
+    response::UserBasicInfo,
+};
 
 pub async fn count() -> Result<usize> {
     let token = get_auth_cache()?;
@@ -22,10 +23,11 @@ pub async fn count() -> Result<usize> {
     }
 }
 
-pub async fn list() -> Result<HashMap<String, UserBasicInfo>> {
+pub async fn list(offset: Option<usize>, limit: Option<usize>) -> Result<Vec<UserBasicInfo>> {
     let token = get_auth_cache()?;
     let res = Client::new()
         .get(format!("{}/api/user/list", get_host()?))
+        .query(&PageArgs { offset, limit })
         .bearer_auth(token.token)
         .send()
         .await?;

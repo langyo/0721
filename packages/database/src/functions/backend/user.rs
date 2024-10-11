@@ -22,8 +22,8 @@ pub async fn get(env: RouteEnv, email: String) -> Result<Option<Model>> {
     Ok(ret)
 }
 
-pub async fn count(env: RouteEnv) -> Result<u64> {
-    let count = Entity::find().count(&**env.sql).await?;
+pub async fn count(env: RouteEnv) -> Result<usize> {
+    let count = Entity::find().count(&**env.sql).await? as usize;
 
     Ok(count)
 }

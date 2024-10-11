@@ -65,7 +65,19 @@ pub static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
     path
 });
 pub static MEDIA_DIR: Lazy<PathBuf> = Lazy::new(|| {
-    let mut path = CACHE_DIR.clone();
+    let mut path = {
+        #[cfg(debug_assertions)]
+        {
+            std::env::current_dir().unwrap().join("target/cache")
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            std::env::var("ROOT_DIR")
+                .ok()
+                .map(|dir| Path::new(&dir).to_path_buf().join("cache"))
+                .expect("ROOT_DIR is not set")
+        }
+    };
     path.push("media");
 
     // If directory does not exist, create it
@@ -75,7 +87,19 @@ pub static MEDIA_DIR: Lazy<PathBuf> = Lazy::new(|| {
     path
 });
 pub static MEDIA_CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
-    let mut path = CACHE_DIR.clone();
+    let mut path = {
+        #[cfg(debug_assertions)]
+        {
+            std::env::current_dir().unwrap().join("target/cache")
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            std::env::var("ROOT_DIR")
+                .ok()
+                .map(|dir| Path::new(&dir).to_path_buf().join("cache"))
+                .expect("ROOT_DIR is not set")
+        }
+    };
     path.push("media-cache");
 
     // If directory does not exist, create it
@@ -86,7 +110,19 @@ pub static MEDIA_CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| {
 });
 
 pub static LOG_DIR: Lazy<PathBuf> = Lazy::new(|| {
-    let mut path = CACHE_DIR.clone();
+    let mut path = {
+        #[cfg(debug_assertions)]
+        {
+            std::env::current_dir().unwrap().join("target/cache")
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            std::env::var("ROOT_DIR")
+                .ok()
+                .map(|dir| Path::new(&dir).to_path_buf().join("cache"))
+                .expect("ROOT_DIR is not set")
+        }
+    };
     path.push("log");
 
     // If directory does not exist, create it
