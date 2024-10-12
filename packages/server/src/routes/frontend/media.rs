@@ -80,7 +80,7 @@ pub async fn download_media(
         // Try to read cache file.
 
         let mut path = MEDIA_CACHE_DIR.clone();
-        path.push(&format!("{}.webp", db_key));
+        path.push(format!("{}.webp", db_key));
 
         if let Ok(file_raw) = tokio::fs::read(path).await {
             Bytes::from(file_raw)

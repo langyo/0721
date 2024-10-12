@@ -224,7 +224,7 @@ pub fn generate_thumbnail(hash: impl ToString, data: Bytes) -> Result<Bytes> {
     std::fs::write(
         {
             let mut path = MEDIA_CACHE_DIR.clone();
-            path.push(&format!("{}.webp", hash.to_string()));
+            path.push(format!("{}.webp", hash.to_string()));
             path
         },
         &image,
