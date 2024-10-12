@@ -17,24 +17,25 @@ macro_rules! icon {
     ($name: ident, $source_path: expr) => {
         #[styled_component]
         pub fn $name(props: &Props) -> Html {
+            let source = include_str!($source_path);
+            let source = source.replace("currentColor", &props.color);
+
+            use ::base64::prelude::*;
+            let source = BASE64_STANDARD.encode(source);
+
             html! {
                 <div
                     class={css!("
                         width: var(--icon-size);
                         height: var(--icon-size);
-
-                        & > svg {
-                            color: var(--icon-color);
-                            transition: all 0s;
-                        }
                     ")}
                     style={format!("
                         --icon-size: {}px;
-                        --icon-color: {};
-                    ", props.size, props.color)}
-                >
-                    {Html::from_html_unchecked(include_str!($source_path).into())}
-                </div>
+                        background-color: {};
+                        --webkit-mask-image: url('data:image/svg+xml;base64,{}');
+                        mask-image: url('data:image/svg+xml;base64,{}');
+                    ", props.size, props.color, source, source)}
+                />
             }
         }
     };
