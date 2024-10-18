@@ -74,3 +74,14 @@ use-source-file-name = false
 > You can configure it via the additional command line argument `-e JWT_SECRET=your_secret_key` for the `docker run` command.
 >
 > The default user is `admin` and the password is `admin` too. Modification of username and password is currently not supported. If operations are required, please create new users and delete old users. Subsequent versions will improve this capability.
+
+## Debug
+
+> You needs to install `cargo-make` and `wasm-bindgen-cli` first.
+>
+> `cargo install cargo-make`
+> `cargo install wasm-bindgen-cli@0.2.95`
+
+```bash
+cargo make dev
+```
