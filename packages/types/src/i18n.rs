@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use yuuka::derive_struct;
 
 derive_struct!(
-    #[serde(rename_all = "kebab-case")]
+    #[derive(Serialize, Deserialize)]
+    #[macros_recursive(serde(rename_all = "kebab-case"))]
     pub Config {
         header: {
             welcome: String,
