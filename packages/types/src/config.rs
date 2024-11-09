@@ -1,13 +1,14 @@
 use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-
 use yuuka::derive_struct;
 
 use crate::consts::CACHE_DIR;
 
 derive_struct!(
-    #[serde(rename_all = "kebab-case")]
+    #[derive(PartialEq, Serialize, Deserialize)]
+    #[macros_recursive(serde(rename_all = "kebab-case"))]
     pub Config {
         portal: {
             title_suffix: String,
