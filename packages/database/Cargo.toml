@@ -34,7 +34,7 @@ worker = { workspace = true }
 sea-orm = { workspace = true }
 
 jsonwebtoken = "^9"
-bcrypt = "^0.15"
+bcrypt = "^0.16"
 sha3 = "^0.10"
 
 image = { workspace = true }
