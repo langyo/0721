@@ -77,7 +77,7 @@ sea-orm = { version = "^1", default-features = false, features = [
     "with-json",
     "debug-print",
 ] }
-worker = "^0.4"
+worker = "^0.5"
 
 image = { version = "^0.25", features = ["gif", "jpeg", "png", "webp"] }
 webp = "^0.3"
