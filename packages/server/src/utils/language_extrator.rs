@@ -7,7 +7,6 @@ use _types::i18n::Language;
 
 pub struct ExtractLanguageInfo(pub Language);
 
-#[async_trait::async_trait]
 impl<S> FromRequestParts<S> for ExtractLanguageInfo
 where
     S: Send + Sync,
