@@ -36,8 +36,8 @@ tracing-appender = { workspace = true }
 image = { workspace = true }
 webp = { workspace = true }
 
-axum = { version = "^0.7", features = ["query", "multipart"] }
-axum-extra = { version = "^0.9", features = [
+axum = { version = "^0.8", features = ["query", "multipart"] }
+axum-extra = { version = "^0.10", features = [
   "typed-header",
   "multipart",
   "cookie",
