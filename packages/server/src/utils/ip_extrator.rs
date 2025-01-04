@@ -11,7 +11,6 @@ use axum::{
 #[allow(dead_code)]
 pub struct ExtractIP(pub Option<std::net::IpAddr>);
 
-#[async_trait::async_trait]
 impl<S> FromRequestParts<S> for ExtractIP
 where
     S: Send + Sync,

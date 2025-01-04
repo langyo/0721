@@ -17,7 +17,6 @@ use _types::response::AuthInfo;
 
 pub struct ExtractAuthInfo(pub AuthInfo);
 
-#[async_trait::async_trait]
 impl FromRequestParts<RouteEnv> for ExtractAuthInfo {
     type Rejection = Response;
 
