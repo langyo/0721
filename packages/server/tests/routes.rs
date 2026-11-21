@@ -10,7 +10,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::Router;
-use i0721_proto::{Role, UserRecord};
+use i0721_proto::{Role, SiteConfigStrict, UserRecord};
 use i0721_store::{CreateUser, MemoryStore, Store};
 use jiff::Timestamp;
 use tower::ServiceExt;
@@ -20,6 +20,14 @@ use i0721_server::blob::MemoryBlobStore;
 use i0721_server::config::Config;
 use i0721_server::routes;
 use i0721_server::state::AppState;
+
+/// A complete strict settings document with one section mutated.
+fn full_settings_json(mutate: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut json =
+        serde_json::to_value(SiteConfigStrict::from(&i0721_proto::default_site_config())).unwrap();
+    mutate(&mut json);
+    json.to_string()
+}
 
 /// A 4×4 red PNG.
 fn tiny_png() -> Vec<u8> {
@@ -34,7 +42,7 @@ fn tiny_png() -> Vec<u8> {
     bytes
 }
 
-fn test_config() -> Config {
+fn base_config() -> Config {
     Config {
         database_url: "unused".to_owned(),
         listen: "127.0.0.1:8080".parse().unwrap(),
@@ -43,7 +51,13 @@ fn test_config() -> Config {
         static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../res/website"),
         upload_concurrency: 4,
         log_filter: "off".to_owned(),
+        seed_admin_password: "admin-password".to_owned(),
+        trusted_proxies: Vec::new(),
     }
+}
+
+fn test_config() -> Config {
+    base_config()
 }
 
 async fn test_state() -> (AppState, UserRecord) {
@@ -459,9 +473,9 @@ async fn upload_requires_auth_and_respects_the_size_limit() {
                 .method("PUT")
                 .uri("/api/v1/settings")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    serde_json::json!({"upload": {"image-size-limit": "1KiB"}}).to_string(),
-                ))
+                .body(Body::from(full_settings_json(|json| {
+                    json["upload"]["image-size-limit"] = "1KiB".into();
+                })))
                 .unwrap(),
             &token,
         ))
@@ -645,10 +659,9 @@ async fn settings_get_put_and_referer_gate() {
                 .method("PUT")
                 .uri("/api/v1/settings")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    serde_json::json!({"router": {"limit-referrer-host": ["good.example"]}})
-                        .to_string(),
-                ))
+                .body(Body::from(full_settings_json(|json| {
+                    json["router"]["limit-referrer-host"] = serde_json::json!(["good.example"]);
+                })))
                 .unwrap(),
             &token,
         ))
@@ -701,4 +714,306 @@ async fn placeholder_index_serves() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn settings_put_requires_the_complete_document() {
+    let (state, admin) = test_state().await;
+    let token = state.signer.sign(admin.id, Timestamp::now());
+
+    // Missing a whole section: 400, and the stored config is untouched.
+    let partial = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"router": {"media-entry-path": "/media", "limit-referrer-host": []}})
+                        .to_string(),
+                ))
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(partial.status(), StatusCode::BAD_REQUEST);
+
+    // Unknown leaf inside a section: 400.
+    let unknown_leaf = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(full_settings_json(|json| {
+                    json["upload"]["max-pixels"] = serde_json::json!(1);
+                })))
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unknown_leaf.status(), StatusCode::BAD_REQUEST);
+
+    // Unknown top-level section: 400.
+    let unknown_section = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(full_settings_json(|json| {
+                    json["experimental"] = serde_json::json!({});
+                })))
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unknown_section.status(), StatusCode::BAD_REQUEST);
+
+    // The stored config still round-trips the seed defaults.
+    let get = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri("/api/v1/settings")
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(get.into_body(), 4096).await.unwrap();
+    let config: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        config,
+        serde_json::to_value(i0721_proto::default_site_config()).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn dedupe_is_per_owner_and_shares_the_blob() {
+    let (state, _) = test_state().await;
+    let admin_token = login(&state, "admin", "admin-password").await;
+
+    // A member with a password so they can upload through the API.
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "member".to_owned(),
+            display_name: "Member".to_owned(),
+            role: Role::Member,
+            password_hash: Some(hash_password("member-pass").unwrap()),
+        })
+        .await
+        .unwrap();
+    drop(member);
+    let member_token = login(&state, "member", "member-pass").await;
+
+    // Admin uploads; the member uploads the identical bytes.
+    let (status, admin_file) = upload(&state, &admin_token, tiny_png(), "cat.png").await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, member_file) = upload(&state, &member_token, tiny_png(), "cat.png").await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "another owner's identical content is a new row, not a DTO leak"
+    );
+    assert_ne!(admin_file["id"], member_file["id"]);
+    assert_eq!(admin_file["url"], member_file["url"]);
+    assert_eq!(admin_file["sha256"], member_file["sha256"]);
+
+    // The same owner re-uploading dedupes to their own row.
+    let (status, again) = upload(&state, &admin_token, tiny_png(), "cat.png").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["id"], admin_file["id"]);
+
+    // Deleting one owner's row must NOT remove the shared blob while
+    // the other row still lives.
+    let url = admin_file["url"].as_str().unwrap().to_owned();
+    let id = admin_file["id"].as_str().unwrap().to_owned();
+    let removed = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/files/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+            &admin_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    let still = app(&state)
+        .oneshot(Request::builder().uri(&url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        still.status(),
+        StatusCode::OK,
+        "the member's row still serves the shared blob"
+    );
+
+    // Deleting the last live row reclaims the blob.
+    let member_id = member_file["id"].as_str().unwrap().to_owned();
+    let removed_last = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/files/{member_id}"))
+                .body(Body::empty())
+                .unwrap(),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(removed_last.status(), StatusCode::NO_CONTENT);
+    let gone = app(&state)
+        .oneshot(Request::builder().uri(&url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn file_mutations_require_owner_or_admin() {
+    let (state, admin) = test_state().await;
+    let admin_token = state.signer.sign(admin.id, Timestamp::now());
+
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "member".to_owned(),
+            display_name: "Member".to_owned(),
+            role: Role::Member,
+            password_hash: Some(hash_password("member-pass").unwrap()),
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+
+    // The admin's file: the member may neither rename nor delete it.
+    let (_, admin_file) = upload(&state, &admin_token, tiny_png(), "admin.png").await;
+    let admin_id = admin_file["id"].as_str().unwrap().to_owned();
+    for (method, uri) in [
+        ("PATCH", format!("/api/v1/files/{admin_id}")),
+        ("DELETE", format!("/api/v1/files/{admin_id}")),
+    ] {
+        let body = if method == "PATCH" {
+            Body::from(r#"{"name": "hijacked"}"#)
+        } else {
+            Body::empty()
+        };
+        let response = app(&state)
+            .oneshot(bearer(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(body)
+                    .unwrap(),
+                &member_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "{method} by member"
+        );
+    }
+
+    // The member's own file: theirs to rename and delete.
+    let (_, member_file) = upload(&state, &member_token, tiny_png(), "member.png").await;
+    let member_id = member_file["id"].as_str().unwrap().to_owned();
+    let renamed = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/files/{member_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"name": "my file"}"#))
+                .unwrap(),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(renamed.status(), StatusCode::OK);
+
+    // The admin may rename the member's file (owner-or-admin).
+    let admin_renamed = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/files/{member_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"name": "admin says"}"#))
+                .unwrap(),
+            &admin_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(admin_renamed.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn xff_shapes_login_throttling_only_through_trust() {
+    // Untrusted (default): forged X-Forwarded-For cannot rotate buckets.
+    let (state, _) = test_state().await;
+    let mut saw_limit = false;
+    for i in 0..7 {
+        let mut request = login_request("admin", "wrong");
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            header::HeaderValue::from_str(&format!("10.99.0.{i}:nope")).unwrap(),
+        );
+        let response = app(&state).oneshot(request).await.unwrap();
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            saw_limit = true;
+        }
+    }
+    assert!(
+        saw_limit,
+        "with no trusted proxies the socket identity alone is throttled"
+    );
+
+    // Trusted: the rightmost valid XFF entry is its own bucket, and the
+    // socket identity remains separate.
+    let mut config = base_config();
+    config.trusted_proxies = vec!["127.0.0.0/8".parse().unwrap()];
+    let store = Arc::new(MemoryStore::new());
+    store
+        .create_user(CreateUser {
+            username: "admin".to_owned(),
+            display_name: "Administrator".to_owned(),
+            role: Role::Admin,
+            password_hash: Some(hash_password("admin-password").unwrap()),
+        })
+        .await
+        .unwrap();
+    let state = AppState::new(store, Arc::new(MemoryBlobStore::new()), Arc::new(config));
+    let mut limited = false;
+    for _ in 0..7 {
+        let mut request = login_request("admin", "wrong");
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            header::HeaderValue::from_static("9.9.9.9"),
+        );
+        let response = app(&state).oneshot(request).await.unwrap();
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            limited = true;
+        }
+    }
+    assert!(limited, "the XFF identity is throttled on its own");
+    let no_header = app(&state)
+        .oneshot(login_request("admin", "wrong"))
+        .await
+        .unwrap();
+    assert_ne!(
+        no_header.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the socket identity has a separate bucket"
+    );
 }

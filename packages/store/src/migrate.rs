@@ -6,9 +6,13 @@
 //! with no file here — so it can adopt a database sea-orm has been
 //! migrating and pick up exactly where sea-orm left off.
 //!
-//! Dedupe keys (`sha256`, `storage_key`) are *partial* unique indexes
-//! over live rows only: a soft-deleted file frees its hash for a
-//! re-upload, which a plain column UNIQUE would forbid.
+//! The dedupe key is `(owner_id, sha256)` as a *partial* unique index
+//! over live rows: dedupe is per owner (never leak one user's file to
+//! another), and a soft-deleted file frees its hash for a re-upload.
+//! `storage_key` stays content-addressed (hex SHA-256), so rows from
+//! different owners can share one blob — its index is deliberately
+//! non-unique; blob reclamation when the last live row goes away is the
+//! caller's job (GC hardening lands with the netdisk waves).
 
 use lacrymira_pg::Migration;
 
@@ -93,12 +97,32 @@ pub fn migrations() -> Vec<Migration> {
         Migration::new(
             "20261122000002",
             "seed the default site settings row",
+            // Dollar-quoting: the JSON payload is data, not SQL text — a
+            // `'` inside a future default value must never be able to
+            // escape the literal (string interpolation would break there).
             format!(
-                "INSERT INTO settings (key, value) VALUES ('site', '{}'::jsonb)
+                "INSERT INTO settings (key, value) VALUES ('site', $i0721${json}$i0721$::jsonb) \
                  ON CONFLICT (key) DO NOTHING;",
-                serde_json::to_string(&i0721_proto::default_site_config())
+                json = serde_json::to_string(&i0721_proto::default_site_config())
                     .expect("the default site config is always serializable")
             ),
+        ),
+        Migration::new(
+            "20261122000003",
+            "scope file dedupe per owner and share storage keys",
+            // Dedupe is per owner: two users uploading the same bytes both
+            // get a row (one DTO must never leak another user's file).
+            // storage_key stays content-addressed, so their rows share one
+            // blob — the index is therefore deliberately NOT unique.
+            r#"
+            DROP INDEX IF EXISTS files_sha256_live_key;
+            DROP INDEX IF EXISTS files_storage_key_live_key;
+
+            CREATE UNIQUE INDEX files_owner_sha256_live_key
+                ON files (owner_id, sha256) WHERE deleted_at IS NULL;
+            CREATE INDEX files_storage_key_live_key
+                ON files (storage_key) WHERE deleted_at IS NULL;
+            "#,
         ),
     ]
 }
@@ -120,19 +144,22 @@ mod tests {
     }
 
     #[test]
-    fn seed_json_matches_default_site_config() {
+    fn seed_json_is_dollar_quoted_and_matches_the_default_config() {
         let seed = migrations()
             .into_iter()
             .find(|m| m.version == "20261122000002")
             .expect("seed migration present");
-        let json: serde_json::Value = serde_json::from_str(
-            seed.sql
-                .split("'site', '")
-                .nth(1)
-                .and_then(|rest| rest.split("'::jsonb").next())
-                .expect("seed SQL carries the JSON"),
-        )
-        .expect("seed JSON parses");
+        let json_str = seed
+            .sql
+            .split("$i0721$")
+            .nth(1)
+            .and_then(|rest| rest.split("$i0721$").next())
+            .expect("seed SQL carries dollar-quoted JSON");
+        assert!(
+            !json_str.contains('$'),
+            "the default config payload must stay inside the dollar-quoted literal"
+        );
+        let json: serde_json::Value = serde_json::from_str(json_str).expect("seed JSON parses");
         assert_eq!(
             json,
             serde_json::to_value(i0721_proto::default_site_config()).unwrap()

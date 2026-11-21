@@ -183,6 +183,104 @@ impl SiteConfig {
     }
 }
 
+/// The strict wire form of [`SiteConfig`] — what `PUT /api/v1/settings`
+/// accepts. Unlike the storage form (whose serde defaults make partial
+/// rows readable), every section and every leaf is **required** and
+/// unknown fields are rejected: a PUT is a full replacement, so a
+/// missing section would silently wipe live configuration back to the
+/// seed defaults instead of failing the request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct SiteConfigStrict {
+    /// Portal presentation.
+    pub portal: PortalConfigStrict,
+    /// Routing and hotlink protection.
+    pub router: RouterConfigStrict,
+    /// Upload pipeline.
+    pub upload: UploadConfigStrict,
+}
+
+/// Strict [`PortalConfig`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct PortalConfigStrict {
+    /// Suffix appended to the page title.
+    pub title_suffix: String,
+    /// Footer banner entries.
+    pub footer_banner: Vec<FooterBanner>,
+    /// Default language tag.
+    pub language: String,
+    /// Timezone offset in hours.
+    pub timezone: i32,
+}
+
+/// Strict [`RouterConfig`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct RouterConfigStrict {
+    /// Public entry path of the media endpoint (pinned to `/media` by
+    /// [`SiteConfig::validate`]).
+    pub media_entry_path: String,
+    /// Referrer host allow-list; empty = no limit.
+    pub limit_referrer_host: Vec<String>,
+}
+
+/// Strict [`UploadConfig`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct UploadConfigStrict {
+    /// Upload size limit — `"8MiB"` style or a bare byte count string.
+    pub image_size_limit: String,
+    /// Auto-convert images (incl. animated GIF) to WebP.
+    pub webp_auto_convert: bool,
+    /// Keep the original file name as the display name.
+    pub use_source_file_name: bool,
+}
+
+impl From<SiteConfigStrict> for SiteConfig {
+    fn from(strict: SiteConfigStrict) -> Self {
+        SiteConfig {
+            portal: PortalConfig {
+                title_suffix: strict.portal.title_suffix,
+                footer_banner: strict.portal.footer_banner,
+                language: strict.portal.language,
+                timezone: strict.portal.timezone,
+            },
+            router: RouterConfig {
+                media_entry_path: strict.router.media_entry_path,
+                limit_referrer_host: strict.router.limit_referrer_host,
+            },
+            upload: UploadConfig {
+                image_size_limit: strict.upload.image_size_limit,
+                webp_auto_convert: strict.upload.webp_auto_convert,
+                use_source_file_name: strict.upload.use_source_file_name,
+            },
+        }
+    }
+}
+
+impl From<&SiteConfig> for SiteConfigStrict {
+    fn from(config: &SiteConfig) -> Self {
+        SiteConfigStrict {
+            portal: PortalConfigStrict {
+                title_suffix: config.portal.title_suffix.clone(),
+                footer_banner: config.portal.footer_banner.clone(),
+                language: config.portal.language.clone(),
+                timezone: config.portal.timezone,
+            },
+            router: RouterConfigStrict {
+                media_entry_path: config.router.media_entry_path.clone(),
+                limit_referrer_host: config.router.limit_referrer_host.clone(),
+            },
+            upload: UploadConfigStrict {
+                image_size_limit: config.upload.image_size_limit.clone(),
+                webp_auto_convert: config.upload.webp_auto_convert,
+                use_source_file_name: config.upload.use_source_file_name,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_json_falls_back_to_defaults() {
+    fn stored_partial_json_falls_back_to_defaults_on_read() {
         let cfg: SiteConfig =
             serde_json::from_str(r#"{"upload": {"use-source-file-name": true}}"#).unwrap();
         assert!(cfg.upload.use_source_file_name);
@@ -254,5 +352,49 @@ mod tests {
         let mut cfg = default_site_config();
         cfg.upload.image_size_limit = "32MiB".to_owned();
         assert!(cfg.validate().is_err());
+    }
+
+    fn full_strict_json() -> serde_json::Value {
+        serde_json::to_value(SiteConfigStrict::from(&default_site_config())).unwrap()
+    }
+
+    #[test]
+    fn strict_wire_accepts_the_complete_document() {
+        let strict: SiteConfigStrict =
+            serde_json::from_value(full_strict_json()).expect("full document parses");
+        assert_eq!(SiteConfig::from(strict), default_site_config());
+    }
+
+    #[test]
+    fn strict_wire_rejects_a_missing_section() {
+        let mut json = full_strict_json();
+        json.as_object_mut().unwrap().remove("upload");
+        assert!(
+            serde_json::from_value::<SiteConfigStrict>(json).is_err(),
+            "a PUT without the upload section must fail, not reset it to defaults"
+        );
+    }
+
+    #[test]
+    fn strict_wire_rejects_an_unknown_section() {
+        let mut json = full_strict_json();
+        json.as_object_mut()
+            .unwrap()
+            .insert("extra".to_owned(), serde_json::json!({}));
+        assert!(serde_json::from_value::<SiteConfigStrict>(json).is_err());
+    }
+
+    #[test]
+    fn strict_wire_rejects_an_unknown_field_and_a_missing_leaf() {
+        let mut unknown_leaf = full_strict_json();
+        unknown_leaf["upload"]["max-pixels"] = serde_json::json!(1);
+        assert!(serde_json::from_value::<SiteConfigStrict>(unknown_leaf).is_err());
+
+        let mut missing_leaf = full_strict_json();
+        missing_leaf["router"]
+            .as_object_mut()
+            .unwrap()
+            .remove("media-entry-path");
+        assert!(serde_json::from_value::<SiteConfigStrict>(missing_leaf).is_err());
     }
 }

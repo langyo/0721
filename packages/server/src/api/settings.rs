@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Json;
 use serde::Serialize;
 
-use i0721_proto::{default_site_config, SiteConfig, CONFIG_SETTING_KEY};
+use i0721_proto::{default_site_config, SiteConfig, SiteConfigStrict, CONFIG_SETTING_KEY};
 
 use crate::api::auth::require_admin;
 use crate::error::ApiError;
@@ -81,13 +81,24 @@ pub async fn get(
     Ok(Json(site_config(&state).await?))
 }
 
-/// `PUT /api/v1/settings`
+/// `PUT /api/v1/settings` — a **full replacement**.
+///
+/// The wire form is [`SiteConfigStrict`]: every section and leaf is
+/// required and unknown fields are rejected, so a partial body fails
+/// with 400 instead of silently resetting the omitted sections to the
+/// seed defaults.
 pub async fn set(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(config): Json<SiteConfig>,
+    payload: Result<Json<SiteConfigStrict>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
     require_admin(&state, &headers).await?;
+    // A body the strict wire form rejects is a client error: map the
+    // extractor's 422 to the API's uniform 400.
+    let Json(strict) = payload.map_err(|rejection| {
+        ApiError::bad_request(format!("invalid settings document: {rejection}"))
+    })?;
+    let config: SiteConfig = strict.into();
     config.validate().map_err(ApiError::bad_request)?;
     state
         .store

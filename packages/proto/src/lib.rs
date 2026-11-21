@@ -20,7 +20,9 @@ pub mod page;
 pub mod size;
 pub mod user;
 
-pub use config::{default_site_config, FooterBanner, SiteConfig, CONFIG_SETTING_KEY};
+pub use config::{
+    default_site_config, FooterBanner, SiteConfig, SiteConfigStrict, CONFIG_SETTING_KEY,
+};
 pub use file::{classify_kind, validate_file_name, FileDto, FileKind, FileRecord, NewFile};
 pub use page::{PageArgs, PageResult};
 pub use size::parse_size_limit;
