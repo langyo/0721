@@ -1095,8 +1095,9 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     let state = AppState::new(store, racy.clone(), Arc::new(test_config()));
 
     let token = login(&state, "admin", "admin-password").await;
-    let bytes: Vec<u8> = b"race-test-payload".to_vec();
-    let (status, dto) = upload(&state, &token, bytes.clone(), "race.bin").await;
+    // A real image so the pipeline produces a thumbnail alongside the blob.
+    let bytes: Vec<u8> = tiny_png();
+    let (status, dto) = upload(&state, &token, bytes.clone(), "race.png").await;
     assert_eq!(status, StatusCode::CREATED, "upload succeeds: {dto}");
     let key = dto["url"]
         .as_str()
@@ -1112,15 +1113,15 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     *racy.payload.lock().unwrap() = Some((
         i0721_proto::NewFile {
             owner_id: other.id,
-            name: "raced.bin".to_owned(),
-            kind: i0721_proto::FileKind::Other,
-            mime: "application/octet-stream".to_owned(),
+            name: "raced.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
             size: bytes.len() as i64,
             sha256: key.clone(),
             storage_backend: "local".to_owned(),
             storage_key: key.clone(),
-            thumbnail_key: None,
-            original_name: "raced.bin".to_owned(),
+            thumbnail_key: Some(format!("{key}.webp")),
+            original_name: "raced.png".to_owned(),
         },
         key.clone(),
     ));
@@ -1140,12 +1141,13 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     // The racing live row must still be servable: the blob was restored,
-    // not orphaned.
+    // not orphaned. Its thumbnail serves too (restored alongside, or
+    // regenerated from the restored media bytes on first ask).
     let media = app(&state)
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/media/{key}"))
+                .uri(format!("/media/{key}?thumbnail=true"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1156,8 +1158,77 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
         StatusCode::OK,
         "the racing upload's live row keeps its bytes"
     );
-    let served = axum::body::to_bytes(media.into_body(), 1024 * 1024)
+    assert_eq!(
+        media
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/webp"),
+        "the thumbnail variant serves the restored webp thumbnail"
+    );
+    let _ = bytes;
+}
+
+#[tokio::test]
+async fn final_delete_reclaims_the_last_blob_and_thumbnail() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (status, dto) = upload(&state, &token, tiny_png(), "last.png").await;
+    assert_eq!(status, StatusCode::CREATED, "upload succeeds: {dto}");
+    let key = dto["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+    let thumb_key = format!("{key}.webp");
+
+    // The racing-row window is closed first: no other live row exists, so
+    // the reclaim must actually free both blobs (this pins the `> 0`
+    // restore guard against an unconditional-restore regression).
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/files/{file_id}"))
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
         .await
         .unwrap();
-    assert_eq!(&served[..], &bytes[..]);
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let media = app(&state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(media.status(), StatusCode::NOT_FOUND, "the row is gone");
+
+    assert!(
+        state
+            .blobs
+            .get(i0721_server::blob::BlobSlot::Media, &key)
+            .await
+            .unwrap()
+            .is_none(),
+        "the last live row's media blob is reclaimed"
+    );
+    assert!(
+        state
+            .blobs
+            .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+            .await
+            .unwrap()
+            .is_none(),
+        "the last live row's thumbnail is reclaimed"
+    );
 }

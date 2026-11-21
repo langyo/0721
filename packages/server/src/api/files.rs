@@ -237,17 +237,28 @@ pub async fn remove(
     {
         // Compare-and-restore: an upload of the same content can land a new
         // live row between the count above and the unlink below (uploads
-        // write the blob before `create_file`). Snapshot the bytes, unlink,
-        // recount, and put the bytes back when a live row appeared — the
-        // blob may flicker for a moment, but a live row is never orphaned.
+        // write the blob before `create_file`). Snapshot the media bytes
+        // and the thumbnail, unlink both, recount, and put whichever a
+        // surviving live row still needs back — a live row is never left
+        // without its bytes. (Thumbnail regeneration reads the media blob,
+        // so the thumbnail restore rides on the media restore; keeping the
+        // cached bytes avoids the regeneration blip entirely.)
         let snapshot = state
             .blobs
             .get(BlobSlot::Media, &record.storage_key)
             .await?;
+        let thumb_key = record.thumbnail_key.clone();
+        let thumb_snapshot = match thumb_key.as_deref() {
+            Some(key) => state.blobs.get(BlobSlot::Cache, key).await?,
+            None => None,
+        };
         state
             .blobs
             .delete(BlobSlot::Media, &record.storage_key)
             .await?;
+        if let Some(key) = thumb_key.as_deref() {
+            state.blobs.delete(BlobSlot::Cache, key).await?;
+        }
         if state
             .store
             .count_live_files_by_storage_key(&record.storage_key)
@@ -260,11 +271,9 @@ pub async fn remove(
                     .put(BlobSlot::Media, &record.storage_key, &bytes)
                     .await?;
             }
-        }
-        // Thumbnails regenerate on demand when the cache is missing, so a
-        // racing consumer simply pays one regeneration.
-        if let Some(thumb_key) = record.thumbnail_key.as_deref() {
-            state.blobs.delete(BlobSlot::Cache, thumb_key).await?;
+            if let (Some(key), Some(bytes)) = (thumb_key.as_deref(), thumb_snapshot) {
+                state.blobs.put(BlobSlot::Cache, key, &bytes).await?;
+            }
         }
     }
     Ok(StatusCode::NO_CONTENT)
