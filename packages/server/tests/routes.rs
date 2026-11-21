@@ -1019,3 +1019,145 @@ async fn xff_shapes_login_throttling_only_through_trust() {
         "the socket identity has a separate bucket"
     );
 }
+
+/// Simulates the reclaim race C3 demonstrated: when the delete handler
+/// unlinks the media blob, a concurrent upload of the same content has
+/// just landed a live row on the same content-addressed key (uploads put
+/// the blob before `create_file`, so the blob is present again at unlink
+/// time). The handler must notice the revived live row and restore the
+/// bytes instead of orphaning them.
+struct RaceInjectingBlobs {
+    inner: MemoryBlobStore,
+    store: Arc<MemoryStore>,
+    payload: std::sync::Mutex<Option<(i0721_proto::NewFile, String)>>,
+}
+
+#[async_trait::async_trait]
+impl i0721_server::blob::BlobStore for RaceInjectingBlobs {
+    async fn put(
+        &self,
+        slot: i0721_server::blob::BlobSlot,
+        key: &str,
+        data: &[u8],
+    ) -> Result<(), std::io::Error> {
+        self.inner.put(slot, key, data).await
+    }
+
+    async fn get(
+        &self,
+        slot: i0721_server::blob::BlobSlot,
+        key: &str,
+    ) -> Result<Option<axum::body::Bytes>, std::io::Error> {
+        self.inner.get(slot, key).await
+    }
+
+    async fn delete(
+        &self,
+        slot: i0721_server::blob::BlobSlot,
+        key: &str,
+    ) -> Result<(), std::io::Error> {
+        if let i0721_server::blob::BlobSlot::Media = slot {
+            let injected = self.payload.lock().unwrap().take();
+            if let Some((new_file, _key)) = injected {
+                self.store.create_file(new_file).await.unwrap();
+            }
+        }
+        self.inner.delete(slot, key).await
+    }
+}
+
+#[tokio::test]
+async fn blob_reclaim_restores_when_a_racing_upload_lands() {
+    let store = Arc::new(MemoryStore::new());
+    let admin = store
+        .create_user(CreateUser {
+            username: "admin".to_owned(),
+            display_name: "Administrator".to_owned(),
+            role: Role::Admin,
+            password_hash: Some(hash_password("admin-password").unwrap()),
+        })
+        .await
+        .unwrap();
+    let other = store
+        .create_user(CreateUser {
+            username: "other".to_owned(),
+            display_name: "Other Member".to_owned(),
+            role: Role::Member,
+            password_hash: Some(hash_password("other-password").unwrap()),
+        })
+        .await
+        .unwrap();
+    let racy = Arc::new(RaceInjectingBlobs {
+        inner: MemoryBlobStore::new(),
+        store: store.clone(),
+        payload: std::sync::Mutex::new(None),
+    });
+    let state = AppState::new(store, racy.clone(), Arc::new(test_config()));
+
+    let token = login(&state, "admin", "admin-password").await;
+    let bytes: Vec<u8> = b"race-test-payload".to_vec();
+    let (status, dto) = upload(&state, &token, bytes.clone(), "race.bin").await;
+    assert_eq!(status, StatusCode::CREATED, "upload succeeds: {dto}");
+    let key = dto["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+
+    // Arm the interleave: the "upload" lands its live row exactly when the
+    // delete handler reaches the unlink.
+    *racy.payload.lock().unwrap() = Some((
+        i0721_proto::NewFile {
+            owner_id: other.id,
+            name: "raced.bin".to_owned(),
+            kind: i0721_proto::FileKind::Other,
+            mime: "application/octet-stream".to_owned(),
+            size: bytes.len() as i64,
+            sha256: key.clone(),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: "raced.bin".to_owned(),
+        },
+        key.clone(),
+    ));
+
+    let _admin = admin;
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/files/{file_id}"))
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // The racing live row must still be servable: the blob was restored,
+    // not orphaned.
+    let media = app(&state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        media.status(),
+        StatusCode::OK,
+        "the racing upload's live row keeps its bytes"
+    );
+    let served = axum::body::to_bytes(media.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(&served[..], &bytes[..]);
+}

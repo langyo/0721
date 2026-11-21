@@ -235,10 +235,34 @@ pub async fn remove(
         .await?
         == 0
     {
+        // Compare-and-restore: an upload of the same content can land a new
+        // live row between the count above and the unlink below (uploads
+        // write the blob before `create_file`). Snapshot the bytes, unlink,
+        // recount, and put the bytes back when a live row appeared — the
+        // blob may flicker for a moment, but a live row is never orphaned.
+        let snapshot = state
+            .blobs
+            .get(BlobSlot::Media, &record.storage_key)
+            .await?;
         state
             .blobs
             .delete(BlobSlot::Media, &record.storage_key)
             .await?;
+        if state
+            .store
+            .count_live_files_by_storage_key(&record.storage_key)
+            .await?
+            > 0
+        {
+            if let Some(bytes) = snapshot {
+                state
+                    .blobs
+                    .put(BlobSlot::Media, &record.storage_key, &bytes)
+                    .await?;
+            }
+        }
+        // Thumbnails regenerate on demand when the cache is missing, so a
+        // racing consumer simply pays one regeneration.
         if let Some(thumb_key) = record.thumbnail_key.as_deref() {
             state.blobs.delete(BlobSlot::Cache, thumb_key).await?;
         }

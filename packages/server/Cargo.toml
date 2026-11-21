@@ -41,7 +41,9 @@ webp = { workspace = true }
 webp-animation = { workspace = true }
 
 [dev-dependencies]
+i0721-proto = { workspace = true }
 i0721-store = { workspace = true }
+async-trait = { workspace = true }
 tower = { workspace = true }
 
 [lints]
