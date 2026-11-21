@@ -41,11 +41,15 @@ production.
 ```bash
 cd deploy
 cat > .env <<'EOF'
-JWT_SECRET=change-me-to-a-long-random-string
+I0721_JWT_SECRET=change-me-to-a-long-random-string
 POSTGRES_PASSWORD=change-me-too
 EOF
 docker compose up -d --build
 ```
+
+> The compose variable is `I0721_JWT_SECRET` (compose interpolates it into
+> the container's `JWT_SECRET`). A bare `docker run` / systemd deployment
+> sets `JWT_SECRET` directly — see the table below.
 
 The service listens on `127.0.0.1:8080` (override with
 `I0721_PUBLISH=127.0.0.1:9090`). `GET /api/health` reports status and
