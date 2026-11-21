@@ -35,5 +35,5 @@ USER i0721
 WORKDIR /app
 ENV I0721_MEDIA_ROOT=/app/data \
     I0721_STATIC_DIR=/app/res/website
-EXPOSE 80
+EXPOSE 8080
 ENTRYPOINT ["./i0721-server"]

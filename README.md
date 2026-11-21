@@ -63,7 +63,7 @@ healthchecks (pg_isready + /api/health with start periods).
 The image also runs standalone against an external PostgreSQL:
 
 ```bash
-docker run -d -p 8080:80 \
+docker run -d -p 8080:8080 \
   -e I0721_DATABASE_URL='postgres://i0721:secret@db-host:5432/i0721' \
   -e JWT_SECRET='a-long-random-string' \
   -v i0721-media:/app/data \
@@ -86,7 +86,7 @@ required variable or an unparseable value refuses to start):
 |---|---|---|
 | `I0721_DATABASE_URL` | required | PostgreSQL URL |
 | `JWT_SECRET` | required | HS256 secret for the transition-era tokens |
-| `I0721_LISTEN` | `0.0.0.0:80` | HTTP bind address |
+| `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
 | `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it) |
 | `I0721_STATIC_DIR` | `res/website` | placeholder static site directory |
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |

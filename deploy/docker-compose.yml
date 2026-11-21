@@ -34,16 +34,16 @@ services:
     # Loopback publishing: a reverse proxy (or an frp tunnel) fronts this
     # in production; nothing is exposed beyond the host itself.
     ports:
-      - "${I0721_PUBLISH:-127.0.0.1:8080}:80"
+      - "${I0721_PUBLISH:-127.0.0.1:8080}:8080"
     environment:
       I0721_DATABASE_URL: postgres://i0721:${POSTGRES_PASSWORD}@postgres:5432/i0721
       JWT_SECRET: ${I0721_JWT_SECRET:?set I0721_JWT_SECRET}
-      I0721_LISTEN: 0.0.0.0:80
+      I0721_LISTEN: 0.0.0.0:8080
       I0721_MEDIA_ROOT: /app/data
     volumes:
       - i0721-media:/app/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/api/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 6

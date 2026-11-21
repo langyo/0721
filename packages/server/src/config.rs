@@ -11,9 +11,10 @@ use std::path::PathBuf;
 
 use ipnet::IpNet;
 
-/// Default bind address (the container publishes :80).
+/// Default bind address. The port stays unprivileged on purpose: the runtime
+/// image runs as a non-root user, which cannot bind ports below 1024.
 pub const DEFAULT_LISTEN: SocketAddr =
-    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 80);
+    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 8080);
 
 /// Default root for blobs (`media/` and `media-cache/` live below it),
 /// matching the legacy `MEDIA_DIR` / `MEDIA_CACHE_DIR` semantics.
@@ -215,5 +216,20 @@ mod tests {
             source: err,
         };
         assert!(err.to_string().contains("I0721_LISTEN"));
+    }
+}
+
+#[cfg(test)]
+mod listen_tests {
+    use super::DEFAULT_LISTEN;
+
+    /// The runtime image runs as a non-root user: a default below 1024 would
+    /// make every container boot fail on bind. Pin the unprivileged default.
+    #[test]
+    fn default_listen_port_is_unprivileged() {
+        assert!(
+            DEFAULT_LISTEN.port() >= 1024,
+            "default listen must stay >= 1024"
+        );
     }
 }
