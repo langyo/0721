@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pre_history = migration.pre_history.len(),
         "migrations up to date"
     );
-    seed_default_admin(&store).await?;
+    seed_default_admin(&store, &config.seed_admin_password).await?;
 
     let blobs = LocalBlobStore::open(&config.media_root)?;
     let listen = config.listen;
@@ -48,13 +48,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// The legacy deployment shipped with an `admin`/`admin` account; keep
-/// that bootstrap story: when the user table is empty, seed it.
-/// (The OAuth wave replaces this with a first-run enrollment flow.)
-async fn seed_default_admin(store: &PgStore) -> Result<(), Box<dyn std::error::Error>> {
+/// that bootstrap story: when the user table is empty, seed it with
+/// [`Config::seed_admin_password`] (default `admin`, overridable via
+/// `I0721_SEED_ADMIN_PASSWORD`; see the README warning). Forced
+/// rotation on first login arrives with the authentication wave.
+async fn seed_default_admin(
+    store: &PgStore,
+    seed_password: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     if store.count_users().await? > 0 {
         return Ok(());
     }
-    let password_hash = auth::hash_password("admin").map_err(|err| err.to_string())?;
+    let password_hash = auth::hash_password(seed_password).map_err(|err| err.to_string())?;
     let admin = store
         .create_user(CreateUser {
             username: "admin".to_owned(),
@@ -65,7 +70,7 @@ async fn seed_default_admin(store: &PgStore) -> Result<(), Box<dyn std::error::E
         .await?;
     tracing::warn!(
         username = %admin.username,
-        "empty user table — seeded the default admin account (password \"admin\"); change it after the first login"
+        "empty user table — seeded the default admin account; change its password after the first login"
     );
     Ok(())
 }

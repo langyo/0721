@@ -6,6 +6,9 @@
 
 use std::net::IpAddr;
 use std::sync::Mutex;
+
+use axum::http::HeaderMap;
+use ipnet::IpNet;
 use std::time::{Duration, Instant};
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -200,6 +203,41 @@ impl LoginLimiter {
     }
 }
 
+/// Derive the client IP for rate limiting.
+///
+/// Behind a reverse proxy the socket address is the proxy's, so
+/// `X-Forwarded-For` is the only signal carrying the real client — but
+/// it is trivially forgeable. The rule: only when the **socket** peer is
+/// inside [`Config::trusted_proxies`](crate::config::Config) is the
+/// header honored at all, and then the *rightmost* parseable entry (the
+/// one appended by the proxy closest to us) identifies the client. An
+/// untrusted — or absent/invalid — header leaves the socket address in
+/// charge.
+#[must_use]
+pub fn effective_client_ip(
+    trusted_proxies: &[IpNet],
+    socket: IpAddr,
+    headers: &HeaderMap,
+) -> IpAddr {
+    let trusted = trusted_proxies
+        .iter()
+        .any(|net| crate::config::net_contains(net, socket));
+    if !trusted {
+        return socket;
+    }
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .split(',')
+                .rev()
+                .filter_map(|entry| entry.trim().parse::<IpAddr>().ok())
+                .next()
+        })
+        .unwrap_or(socket)
+}
+
 /// Read the token watermark — the RFC 3339 timestamp of the user's most
 /// recent login — and tell whether a token's `iat` still clears it.
 ///
@@ -295,6 +333,31 @@ mod tests {
         // A different IP is unaffected.
         let other: IpAddr = "127.0.0.2".parse().unwrap();
         assert!(limiter.record(other).is_ok());
+    }
+
+    #[test]
+    fn xff_is_ignored_without_trust_and_honored_with_it() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_static("9.9.9.9, 8.8.8.8"),
+        );
+        let socket: IpAddr = "127.0.0.1".parse().unwrap();
+
+        // Untrusted socket: the forged header changes nothing.
+        assert_eq!(effective_client_ip(&[], socket, &headers), socket);
+
+        // Trusted socket: the rightmost parseable entry identifies the
+        // client.
+        let loopback: IpNet = "127.0.0.0/8".parse().unwrap();
+        assert_eq!(
+            effective_client_ip(&[loopback], socket, &headers),
+            "8.8.8.8".parse::<IpAddr>().unwrap()
+        );
+
+        // Garbage entries are skipped; with none left, the socket wins.
+        let garbage = HeaderMap::new();
+        assert_eq!(effective_client_ip(&[loopback], socket, &garbage), socket);
     }
 
     #[test]

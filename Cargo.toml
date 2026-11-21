@@ -60,6 +60,7 @@ base64 = "^0.22"
 argon2 = "^0.5"
 password-hash = { version = "^0.5", features = ["getrandom"] }
 hmac = "^0.12"
+ipnet = "^2"
 sha2 = "^0.10"
 
 # media pipeline

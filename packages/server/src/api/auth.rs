@@ -9,7 +9,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-use crate::auth::{clears_watermark, verify_password, watermark_key, Claims};
+use crate::auth::{clears_watermark, effective_client_ip, verify_password, watermark_key, Claims};
 use crate::error::ApiError;
 use crate::state::AppState;
 use i0721_proto::UserDto;
@@ -87,9 +87,11 @@ pub(crate) async fn require_admin(
 pub async fn login(
     ConnectInfo(source): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<AuthSession>, ApiError> {
-    state.login_limiter.record(source.ip())?;
+    let client_ip = effective_client_ip(&state.config.trusted_proxies, source.ip(), &headers);
+    state.login_limiter.record(client_ip)?;
 
     let user = state
         .store

@@ -23,6 +23,7 @@ bytes = { workspace = true }
 argon2 = { workspace = true }
 password-hash = { workspace = true }
 hmac = { workspace = true }
+ipnet = { workspace = true }
 sha2 = { workspace = true }
 image = { workspace = true }
 jiff = { workspace = true }
