@@ -1,49 +1,37 @@
-# Preload dependencies,
-# used to speed up repeated builds and reduce traffic consumption of libraries
-FROM rust:latest AS stage-deps
+# 0721 resource service — multi-stage build.
+#
+# Stage 1 compiles the workspace (the placeholder static site ships from
+# the repo; the hikari webui wave adds its own build stage and switches
+# the server to embedded-frontend).
+FROM rust:1 AS stage-build
 
-RUN apt update && apt install -y clang
+# libwebp (the `webp` crate builds its C sources via cc) and the image
+# codecs need a C toolchain; the rust image carries gcc already.
+RUN apt update && apt install -y --no-install-recommends clang && rm -rf /var/lib/apt/lists/*
 
-COPY ./Cargo.toml /home/Cargo.toml
-COPY ./Cargo.lock /home/Cargo.lock
-RUN cargo new --name server /home/packages/server
-COPY ./packages/server/Cargo.toml /home/packages/server/Cargo.toml
-RUN cargo new --lib --name _database /home/packages/database
-COPY ./packages/database/Cargo.toml /home/packages/database/Cargo.toml
-RUN cargo new --lib --name _functions /home/packages/functions
-COPY ./packages/functions/Cargo.toml /home/packages/functions/Cargo.toml
-RUN cargo new --lib --name _types /home/packages/types
-COPY ./packages/types/Cargo.toml /home/packages/types/Cargo.toml
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY packages ./packages
+COPY res ./res
+RUN cargo build --release --locked --package i0721-server
 
-ENV ROOT_DIR=/home/res
-WORKDIR /home
-RUN cargo fetch --locked
+# Stage 2 keeps only the binary, the placeholder site and the languages.
+FROM debian:bookworm-slim AS stage-runtime
 
-COPY ./packages/server /home/packages/server
-COPY ./packages/database /home/packages/database
-COPY ./packages/functions /home/packages/functions
-COPY ./packages/types /home/packages/types
+RUN apt update && apt install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --uid 1000 i0721
 
-COPY ./res/languages /home/res/languages
-COPY ./res/website /home/res/website
-COPY ./res/Config.default.toml /home/res/Config.default.toml
+COPY --from=stage-build /build/target/release/i0721-server /app/i0721-server
+COPY res/website /app/res/website
+COPY res/languages /app/res/languages
 
-# Compile the server binary (the browser client lane is retired; the hikari
-# webui wave will re-introduce a frontend build stage).
-FROM stage-deps AS stage-server-build
+# Writable blob root (mount a volume here; compose uses a named volume).
+RUN mkdir -p /app/data/media /app/data/media-cache && chown -R i0721:i0721 /app
 
-WORKDIR /home
-RUN cargo build --offline --locked --package _server --release
-
-# Runtime image with the static website and the server binary.
-FROM ubuntu:latest AS stage-runtime
-
-RUN apt update && apt install -y openssl
-
-COPY ./res/website /home/website
-COPY --from=stage-server-build /home/target/release/_server /home/a
-
-ENV ROOT_DIR=/home
-WORKDIR /home
-ENTRYPOINT [ "./a" ]
+USER i0721
+WORKDIR /app
+ENV I0721_MEDIA_ROOT=/app/data \
+    I0721_STATIC_DIR=/app/res/website
 EXPOSE 80
+ENTRYPOINT ["./i0721-server"]
