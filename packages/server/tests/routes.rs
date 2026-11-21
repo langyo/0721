@@ -1143,11 +1143,13 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     // The racing live row must still be servable: the blob was restored,
     // not orphaned. Its thumbnail serves too (restored alongside, or
     // regenerated from the restored media bytes on first ask).
+    // Byte-equality first: the surviving row's media bytes are the
+    // upload's, not some other blob's.
     let media = app(&state)
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/media/{key}?thumbnail=true"))
+                .uri(format!("/media/{key}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1158,15 +1160,47 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
         StatusCode::OK,
         "the racing upload's live row keeps its bytes"
     );
+    let served = axum::body::to_bytes(media.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    use sha2::{Digest, Sha256};
+    let served_hash = Sha256::digest(&served);
+    let served_hex: String = served_hash.iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
-        media
+        served_hex, key,
+        "the restored bytes hash to their own content-addressed key"
+    );
+    assert_eq!(
+        &served[..4],
+        b"RIFF".as_slice(),
+        "the stored bytes are the converted webp, not some other blob"
+    );
+
+    // The thumbnail variant serves as well (restored alongside, or
+    // regenerated from the restored media bytes on first ask).
+    let thumb = app(&state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{key}?thumbnail=true"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        thumb.status(),
+        StatusCode::OK,
+        "the thumbnail variant serves"
+    );
+    assert_eq!(
+        thumb
             .headers()
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok()),
         Some("image/webp"),
-        "the thumbnail variant serves the restored webp thumbnail"
+        "the thumbnail variant serves the webp thumbnail"
     );
-    let _ = bytes;
 }
 
 #[tokio::test]
