@@ -3,19 +3,6 @@ use once_cell::sync::Lazy;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub static WASM_DIR: Lazy<PathBuf> = Lazy::new(|| {
-    #[cfg(debug_assertions)]
-    {
-        std::env::current_dir().unwrap().join("target/wasm32-html")
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        std::env::var("ROOT_DIR")
-            .ok()
-            .map(|dir| Path::new(&dir).to_path_buf())
-            .expect("ROOT_DIR is not set")
-    }
-});
 pub static WEBSITE_RES_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let mut path = {
         #[cfg(debug_assertions)]

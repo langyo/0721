@@ -4,11 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-_client = { path = "../client" }
 _database = { path = "../database" }
 _types = { path = "../types" }
-
-hikari-boot = { workspace = true }
 
 anyhow = { workspace = true }
 async-trait = { workspace = true }
@@ -51,13 +48,6 @@ tower-http = { version = "^0.6", features = [
   "compression-gzip",
 ] }
 url = "^2"
-
-stylist = { version = "^0.13", features = [
-  "yew_integration",
-  "ssr",
-  "hydration",
-] }
-yew = { version = "^0.21", features = ["ssr", "hydration"] }
 
 [features]
 default = ["native"]

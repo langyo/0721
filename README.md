@@ -1,12 +1,22 @@
 # 0721
 
-![clippy workflow](https://img.shields.io/github/actions/workflow/status/langyo/0721/publish.yml)
+<div align="center">
+  <img src="https://raw.githubusercontent.com/celestia-island/celestia-island.github.io/main/res/logos/0721.webp" alt="0721" width="180" />
+</div>
+
+![CI workflow](https://img.shields.io/github/actions/workflow/status/langyo/0721/ci.yml)
 ![GitHub License](https://img.shields.io/github/license/langyo/0721)
 ![GitHub Tag](https://img.shields.io/github/v/tag/langyo/0721)
 
 > Ciallo～(∠·ω< )⌒★
 
 A simple engine for image hosting written in Rust.
+
+> The service is being rebuilt on the Celestia island family stack
+> (axum + lacrymira + hikari webui): image hosting grows into a netdisk +
+> gallery with OAuth sign-in, S3/IPFS storage backends and an MCP surface
+> for AI agents. The current trunk carries the workspace tooling bootstrap;
+> feature waves land as squash-merged pull requests.
 
 ## Features
 
@@ -77,11 +87,8 @@ use-source-file-name = false
 
 ## Debug
 
-> You needs to install `cargo-make` and `wasm-bindgen-cli` first.
->
-> `cargo install cargo-make`
-> `cargo install wasm-bindgen-cli@0.2.95`
-
-```bash
-cargo make dev
-```
+`just fetch` once to stage the shared recipes, then `just gate`
+(fmt → clippy → test → `cargo deny`). This is the same lane the CI
+dispatch workflow runs. The retired Yew client lane (cargo-make +
+wasm-bindgen) is gone from the tree; the hikari webui wave will bring the
+new frontend dev lane.

@@ -1,0 +1,30 @@
+name: CI
+
+# Compile/test lane is dispatch-only per the 2026-11-06 trigger policy: CI
+# does not run on pull requests; the trunk push only carries the sub-minute
+# basic checks (verify-versions et al. in their own workflow files).
+on:
+  workflow_dispatch:
+
+jobs:
+  rust:
+    name: Rust (fmt / clippy / test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace

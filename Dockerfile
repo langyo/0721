@@ -3,16 +3,11 @@
 FROM rust:latest AS stage-deps
 
 RUN apt update && apt install -y clang
-RUN rustup target add wasm32-unknown-unknown
-RUN rustup target add wasm32-wasi
-RUN cargo install cargo-make
-RUN cargo install wasm-bindgen-cli@0.2.95
 
 COPY ./Cargo.toml /home/Cargo.toml
+COPY ./Cargo.lock /home/Cargo.lock
 RUN cargo new --name server /home/packages/server
 COPY ./packages/server/Cargo.toml /home/packages/server/Cargo.toml
-RUN cargo new --lib --name _client /home/packages/client
-COPY ./packages/client/Cargo.toml /home/packages/client/Cargo.toml
 RUN cargo new --lib --name _database /home/packages/database
 COPY ./packages/database/Cargo.toml /home/packages/database/Cargo.toml
 RUN cargo new --lib --name _functions /home/packages/functions
@@ -22,10 +17,9 @@ COPY ./packages/types/Cargo.toml /home/packages/types/Cargo.toml
 
 ENV ROOT_DIR=/home/res
 WORKDIR /home
-RUN cargo fetch
+RUN cargo fetch --locked
 
 COPY ./packages/server /home/packages/server
-COPY ./packages/client /home/packages/client
 COPY ./packages/database /home/packages/database
 COPY ./packages/functions /home/packages/functions
 COPY ./packages/types /home/packages/types
@@ -34,40 +28,20 @@ COPY ./res/languages /home/res/languages
 COPY ./res/website /home/res/website
 COPY ./res/Config.default.toml /home/res/Config.default.toml
 
-# Stage 1 for client build, used to compile wasm file
-FROM stage-deps AS stage-client-build1
+# Compile the server binary (the browser client lane is retired; the hikari
+# webui wave will re-introduce a frontend build stage).
+FROM stage-deps AS stage-server-build
 
 WORKDIR /home
-RUN cargo build --offline --package _client --target wasm32-unknown-unknown --release
+RUN cargo build --offline --locked --package _server --release
 
-# Stage 2 for client build, used to process wasm file for browser platform
-FROM stage-deps AS stage-client-build2
-
-COPY --from=stage-client-build1 /home/target/wasm32-unknown-unknown/release/_client.wasm /home/client.wasm
-WORKDIR /home
-RUN wasm-bindgen\
-  --out-dir /home/dist\
-  --out-name client\
-  --target no-modules\
-  --no-typescript\
-  --no-modules-global wasm_vendor_entry\
-  client.wasm
-
-# Stage 1 for server build, used to compile server program
-FROM stage-deps AS stage-server-build1
-
-WORKDIR /home
-RUN cargo build --offline --package _server --release
-
-# Stage 2 for server build, used to integrate the build result of client and generate the final image
-FROM ubuntu:latest AS stage-server-build2
+# Runtime image with the static website and the server binary.
+FROM ubuntu:latest AS stage-runtime
 
 RUN apt update && apt install -y openssl
 
 COPY ./res/website /home/website
-COPY --from=stage-client-build2 /home/dist/client_bg.wasm /home/client_bg.wasm
-COPY --from=stage-client-build2 /home/dist/client.js /home/client.js
-COPY --from=stage-server-build1 /home/target/release/_server /home/a
+COPY --from=stage-server-build /home/target/release/_server /home/a
 
 ENV ROOT_DIR=/home
 WORKDIR /home

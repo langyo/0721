@@ -12,12 +12,13 @@ panic = "abort"
 [workspace.package]
 authors = ["langyo <langyo.china@gmail.com>"]
 publish = false
+license = "Apache-2.0"
+rust-version = "1.94"
 
 version = "0.3.2"
 edition = "2021"
 
 [workspace.dependencies]
-hikari-boot = { git = "https://github.com/celestia-island/hikari" }
 tairitsu-database = { git = "https://github.com/celestia-island/tairitsu" }
 
 anyhow = "^1"
