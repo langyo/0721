@@ -132,6 +132,17 @@ impl Store for MemoryStore {
             .collect())
     }
 
+    async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(lock_err)?
+            .files
+            .iter()
+            .filter(|file| file.deleted_at.is_none() && file.storage_key == key)
+            .count() as u64)
+    }
+
     async fn count_files(&self) -> Result<u64, StoreError> {
         Ok(self
             .inner
@@ -154,14 +165,20 @@ impl Store for MemoryStore {
             .cloned())
     }
 
-    async fn get_file_by_sha256(&self, sha256: &str) -> Result<Option<FileRecord>, StoreError> {
+    async fn get_file_by_owner_and_sha256(
+        &self,
+        owner_id: Uuid,
+        sha256: &str,
+    ) -> Result<Option<FileRecord>, StoreError> {
         Ok(self
             .inner
             .lock()
             .map_err(lock_err)?
             .files
             .iter()
-            .find(|file| file.deleted_at.is_none() && file.sha256 == sha256)
+            .find(|file| {
+                file.deleted_at.is_none() && file.owner_id == owner_id && file.sha256 == sha256
+            })
             .cloned())
     }
 
@@ -178,13 +195,11 @@ impl Store for MemoryStore {
 
     async fn create_file(&self, file: NewFile) -> Result<FileRecord, StoreError> {
         let mut inner = self.inner.lock().map_err(lock_err)?;
-        if inner
-            .files
-            .iter()
-            .any(|f| f.deleted_at.is_none() && f.sha256 == file.sha256)
-        {
+        if inner.files.iter().any(|f| {
+            f.deleted_at.is_none() && f.owner_id == file.owner_id && f.sha256 == file.sha256
+        }) {
             return Err(conflict(format!(
-                "content {sha} is already uploaded",
+                "content {sha} is already uploaded by this user",
                 sha = file.sha256
             )));
         }
@@ -314,15 +329,69 @@ mod tests {
         assert_eq!(store.count_files().await.unwrap(), 2);
         assert!(
             store.create_file(new_file(owner.id, "aa")).await.is_err(),
-            "live duplicate hash is rejected"
+            "the same owner's live duplicate hash is rejected"
         );
 
         assert!(store.soft_delete_file(a.id).await.unwrap());
+        assert!(
+            !store.soft_delete_file(a.id).await.unwrap(),
+            "the guarded update marks 0 rows the second time"
+        );
         assert_eq!(store.count_files().await.unwrap(), 1);
         assert!(store.get_file(a.id).await.unwrap().is_none());
         assert!(
             store.create_file(new_file(owner.id, "aa")).await.is_ok(),
             "soft delete frees the hash for re-upload"
+        );
+    }
+
+    #[tokio::test]
+    async fn dedupe_is_per_owner_and_shares_the_blob() {
+        let store = MemoryStore::new();
+        let owner_a = store.create_user(new_user("a")).await.unwrap();
+        let owner_b = store.create_user(new_user("b")).await.unwrap();
+
+        let first = store.create_file(new_file(owner_a.id, "aa")).await.unwrap();
+        // Same content, different owner: a NEW row (no DTO leak), sharing
+        // the same content-addressed storage key.
+        let second = store.create_file(new_file(owner_b.id, "aa")).await.unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.storage_key, second.storage_key);
+        assert_eq!(
+            store.count_live_files_by_storage_key("aa").await.unwrap(),
+            2
+        );
+
+        // Soft-deleting one row leaves the blob referenced by the other.
+        assert!(store.soft_delete_file(first.id).await.unwrap());
+        assert_eq!(
+            store.count_live_files_by_storage_key("aa").await.unwrap(),
+            1
+        );
+        assert!(
+            store.soft_delete_file(second.id).await.unwrap(),
+            "the last live row can go too"
+        );
+        assert_eq!(
+            store.count_live_files_by_storage_key("aa").await.unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn rename_after_soft_delete_answers_none() {
+        let store = MemoryStore::new();
+        let owner = store.create_user(new_user("u")).await.unwrap();
+        let a = store.create_file(new_file(owner.id, "aa")).await.unwrap();
+        store.soft_delete_file(a.id).await.unwrap();
+        assert!(store.rename_file(a.id, "renamed").await.unwrap().is_none());
+        assert!(
+            store
+                .rename_file(Uuid::new_v4(), "renamed")
+                .await
+                .unwrap()
+                .is_none(),
+            "unknown ids answer None too"
         );
     }
 

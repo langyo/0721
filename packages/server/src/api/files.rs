@@ -12,7 +12,7 @@ use crate::blob::BlobSlot;
 use crate::error::ApiError;
 use crate::pipeline::{process_upload, UploadRules};
 use crate::state::AppState;
-use i0721_proto::{validate_file_name, FileDto, NewFile, PageArgs, PageResult};
+use i0721_proto::{validate_file_name, FileDto, NewFile, PageArgs, PageResult, Role};
 
 /// Optional query of the upload endpoint (the legacy `?name=`).
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -103,8 +103,15 @@ pub async fn upload(
             }
         })?;
 
-    // Dedupe: identical stored content answers with the existing record.
-    if let Some(existing) = state.store.get_file_by_sha256(&processed.sha256).await? {
+    // Dedupe is per owner: re-uploading content THIS user already has
+    // answers with their existing record; another user's identical file
+    // is invisible here and becomes a fresh row below (sharing the same
+    // content-addressed blob).
+    if let Some(existing) = state
+        .store
+        .get_file_by_owner_and_sha256(user.id, &processed.sha256)
+        .await?
+    {
         return Ok((StatusCode::OK, Json(FileDto::from(existing))).into_response());
     }
 
@@ -114,6 +121,8 @@ pub async fn upload(
         .as_ref()
         .map(|_| format!("{storage_key}.webp"));
 
+    // Same bytes ⇒ same key ⇒ idempotent write even when another owner
+    // already placed the blob (write-then-rename underneath).
     state
         .blobs
         .put(BlobSlot::Media, &storage_key, &processed.data)
@@ -154,15 +163,36 @@ pub async fn upload(
     };
     let record = match state.store.create_file(new_file).await {
         Ok(record) => record,
-        // Lost the dedupe race: return the winner's record.
+        // Lost the per-owner dedupe race: return the winner's record.
         Err(i0721_store::StoreError::Conflict(_)) => state
             .store
-            .get_file_by_sha256(&processed.sha256)
+            .get_file_by_owner_and_sha256(user.id, &processed.sha256)
             .await?
             .ok_or_else(|| ApiError::conflict("content already uploaded"))?,
         Err(err) => return Err(err.into()),
     };
     Ok((StatusCode::CREATED, Json(FileDto::from(record))).into_response())
+}
+
+/// The owner-or-admin gate: members may only mutate their own files,
+/// admins any file. (The legacy engine gated deletion admin-only; the
+/// netdisk reading of this wave is that your own uploads are yours —
+/// recorded as a deliberate behavior change.)
+async fn require_file_owner_or_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+    id: Uuid,
+) -> Result<(i0721_proto::UserRecord, i0721_proto::FileRecord), ApiError> {
+    let (_, user) = require_auth(state, headers).await?;
+    let record = state
+        .store
+        .get_file(id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("file not found"))?;
+    if user.role != Role::Admin && record.owner_id != user.id {
+        return Err(ApiError::forbidden("not your file"));
+    }
+    Ok((user, record))
 }
 
 /// `PATCH /api/v1/files/{id}`
@@ -172,7 +202,7 @@ pub async fn rename(
     headers: HeaderMap,
     Json(request): Json<RenameRequest>,
 ) -> Result<Json<FileDto>, ApiError> {
-    require_auth(&state, &headers).await?;
+    require_file_owner_or_admin(&state, &headers, id).await?;
     validate_file_name(&request.name).map_err(|err| ApiError::bad_request(err.to_string()))?;
     let record = state
         .store
@@ -182,18 +212,36 @@ pub async fn rename(
     Ok(Json(FileDto::from(record)))
 }
 
-/// `DELETE /api/v1/files/{id}` — soft delete; the blob stays until the
-/// netdisk wave wires restore/purge.
+/// `DELETE /api/v1/files/{id}` — soft delete (guarded UPDATE). The blob
+/// and thumbnail are reclaimed only when no other live row still
+/// references the content-addressed key; full blob GC belongs to the
+/// netdisk waves.
 pub async fn remove(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    require_auth(&state, &headers).await?;
+    // The gate's fetch doubles as the pre-delete snapshot: the guarded
+    // UPDATE below may be the second of a racing pair (then 404), and
+    // after it the row is no longer readable through `get_file`.
+    let (_, record) = require_file_owner_or_admin(&state, &headers, id).await?;
     let removed = state.store.soft_delete_file(id).await?;
-    if removed {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::not_found("file not found"))
+    if !removed {
+        return Err(ApiError::not_found("file not found"));
     }
+    if state
+        .store
+        .count_live_files_by_storage_key(&record.storage_key)
+        .await?
+        == 0
+    {
+        state
+            .blobs
+            .delete(BlobSlot::Media, &record.storage_key)
+            .await?;
+        if let Some(thumb_key) = record.thumbnail_key.as_deref() {
+            state.blobs.delete(BlobSlot::Cache, thumb_key).await?;
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

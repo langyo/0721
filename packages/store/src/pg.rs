@@ -269,8 +269,26 @@ impl Store for PgStore {
             .transpose()
     }
 
-    async fn get_file_by_sha256(&self, sha256: &str) -> Result<Option<FileRecord>, StoreError> {
-        self.query_one::<FileModel>(live_file_by(FileColumn::Sha256, sha256))
+    async fn get_file_by_owner_and_sha256(
+        &self,
+        owner_id: Uuid,
+        sha256: &str,
+    ) -> Result<Option<FileRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(
+                FileColumn::DeletedAt
+                    .is_null()
+                    .into_inner()
+                    .and(FileColumn::OwnerId.eq(owner_id).into_inner())
+                    .and(FileColumn::Sha256.eq(sha256).into_inner()),
+            ),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        self.query_one::<FileModel>(cmd)
             .await?
             .map(file_model_to_record)
             .transpose()
@@ -284,9 +302,13 @@ impl Store for PgStore {
     }
 
     async fn create_file(&self, file: NewFile) -> Result<FileRecord, StoreError> {
-        if self.get_file_by_sha256(&file.sha256).await?.is_some() {
+        if self
+            .get_file_by_owner_and_sha256(file.owner_id, &file.sha256)
+            .await?
+            .is_some()
+        {
             return Err(StoreError::Conflict(format!(
-                "content {sha} is already uploaded",
+                "content {sha} is already uploaded by this user",
                 sha = file.sha256
             )));
         }
@@ -299,12 +321,15 @@ impl Store for PgStore {
     }
 
     async fn rename_file(&self, id: Uuid, name: &str) -> Result<Option<FileRecord>, StoreError> {
-        if self.get_file(id).await?.is_none() {
-            return Ok(None);
-        }
+        // Single guarded UPDATE: `WHERE id = $1 AND deleted_at IS NULL`.
+        // No read-then-write window — a concurrent soft delete makes this
+        // answer `None` (0 rows) instead of resurrecting the row.
         let cmd = update_command::<FileModel>(
             vec![("name", Value::Text(name.to_owned()))],
-            FileColumn::Id.eq(id).into_inner(),
+            FileColumn::Id
+                .eq(id)
+                .into_inner()
+                .and(FileColumn::DeletedAt.is_null().into_inner()),
         )?;
         self.query_one::<FileModel>(cmd)
             .await?
@@ -313,14 +338,29 @@ impl Store for PgStore {
     }
 
     async fn soft_delete_file(&self, id: Uuid) -> Result<bool, StoreError> {
-        if self.get_file(id).await?.is_none() {
-            return Ok(false);
-        }
+        // Single guarded UPDATE, same shape as rename: the second call of
+        // a racing pair simply marks 0 rows.
         let cmd = update_command::<FileModel>(
             vec![("deleted_at", Value::Timestamp(Timestamp::now().to_string()))],
-            FileColumn::Id.eq(id).into_inner(),
+            FileColumn::Id
+                .eq(id)
+                .into_inner()
+                .and(FileColumn::DeletedAt.is_null().into_inner()),
         )?;
         Ok(self.query_one::<FileModel>(cmd).await?.is_some())
+    }
+
+    async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError> {
+        let count = self
+            .executor
+            .count::<FileModel>(Some(
+                FileColumn::DeletedAt
+                    .is_null()
+                    .into_inner()
+                    .and(FileColumn::StorageKey.eq(key).into_inner()),
+            ))
+            .await?;
+        Ok(count as u64)
     }
 
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {

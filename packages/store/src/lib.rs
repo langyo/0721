@@ -98,21 +98,38 @@ pub trait Store: Send + Sync {
     /// Fetch one live file by id.
     async fn get_file(&self, id: Uuid) -> Result<Option<FileRecord>, StoreError>;
 
-    /// Fetch a live file by content hash (the dedupe probe).
-    async fn get_file_by_sha256(&self, sha256: &str) -> Result<Option<FileRecord>, StoreError>;
+    /// Fetch a live file by owner and content hash (the per-owner dedupe
+    /// probe — one user's upload must never answer with another's row).
+    async fn get_file_by_owner_and_sha256(
+        &self,
+        owner_id: Uuid,
+        sha256: &str,
+    ) -> Result<Option<FileRecord>, StoreError>;
 
     /// Fetch a live file by its public storage key (the `/media/:key`
-    /// lookup).
+    /// lookup). Several rows may share one storage key (per-owner dedupe
+    /// keeps the blob content-addressed); any of them authorizes serving.
     async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError>;
 
-    /// Record a freshly uploaded file; the sha256 must be unique among
-    /// live files ([`StoreError::Conflict`] otherwise).
+    /// Count live rows sharing a storage key — the caller's blob-reclaim
+    /// probe (a blob goes away only with its last live row; full GC is a
+    /// netdisk-wave concern).
+    async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError>;
+
+    /// Record a freshly uploaded file; `(owner_id, sha256)` must be
+    /// unique among that owner's live files ([`StoreError::Conflict`]
+    /// otherwise). The storage key may be shared with other owners' rows
+    /// (same content, same blob).
     async fn create_file(&self, file: i0721_proto::NewFile) -> Result<FileRecord, StoreError>;
 
-    /// Rename a live file; `None` when the id is unknown or soft-deleted.
+    /// Rename a live file via a single guarded UPDATE
+    /// (`WHERE id = $1 AND deleted_at IS NULL`); `None` when the id is
+    /// unknown or already soft-deleted (no read-then-write race).
     async fn rename_file(&self, id: Uuid, name: &str) -> Result<Option<FileRecord>, StoreError>;
 
-    /// Soft-delete a live file; returns whether a row was marked.
+    /// Soft-delete a live file via a single guarded UPDATE
+    /// (`WHERE id = $1 AND deleted_at IS NULL`); returns whether a row
+    /// was marked (a second call answers `false`).
     async fn soft_delete_file(&self, id: Uuid) -> Result<bool, StoreError>;
 
     /// Read one settings row.

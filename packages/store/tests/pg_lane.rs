@@ -142,9 +142,13 @@ async fn pg_user_crud_and_uniqueness() {
 async fn pg_files_timeline_dedupe_and_soft_delete() {
     let Some(store) = db().await else { return };
     let owner = store.create_user(scratch_user()).await.expect("owner");
+    let other = store
+        .create_user(scratch_user())
+        .await
+        .expect("other owner");
 
-    let file = |sha: &str| NewFile {
-        owner_id: owner.id,
+    let file = |owner_id, sha: &str| NewFile {
+        owner_id,
         name: sha.to_owned(),
         kind: FileKind::Image,
         mime: "image/webp".to_owned(),
@@ -157,11 +161,11 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
     };
 
     let a = store
-        .create_file(file(&uuid::Uuid::new_v4().simple().to_string()))
+        .create_file(file(owner.id, &uuid::Uuid::new_v4().simple().to_string()))
         .await
         .expect("file a");
     let b = store
-        .create_file(file(&uuid::Uuid::new_v4().simple().to_string()))
+        .create_file(file(owner.id, &uuid::Uuid::new_v4().simple().to_string()))
         .await
         .expect("file b");
 
@@ -178,30 +182,66 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
         "b uploaded later, listed first"
     );
 
-    // Dedupe probe.
+    // Per-owner dedupe probe.
     assert_eq!(
         store
-            .get_file_by_sha256(&a.sha256)
+            .get_file_by_owner_and_sha256(owner.id, &a.sha256)
             .await
             .expect("sha probe")
             .map(|f| f.id),
         Some(a.id)
     );
     assert!(matches!(
-        store.create_file(file(&a.sha256)).await,
+        store.create_file(file(owner.id, &a.sha256)).await,
         Err(i0721_store::StoreError::Conflict(_))
     ));
 
-    // Soft delete hides the row and frees the hash.
-    assert!(store.soft_delete_file(a.id).await.expect("soft delete"));
-    assert!(store.get_file(a.id).await.expect("get").is_none());
-    let resurrected = store
-        .create_file(file(&a.sha256))
+    // Another owner, same bytes: a fresh row sharing the storage key.
+    let shared = store
+        .create_file(file(other.id, &a.sha256))
         .await
-        .expect("freed hash re-uploadable");
+        .expect("cross-owner upload is a new row, not a conflict");
+    assert_ne!(shared.id, a.id);
+    assert_eq!(shared.storage_key, a.storage_key);
+    assert_eq!(
+        store
+            .count_live_files_by_storage_key(&a.storage_key)
+            .await
+            .expect("storage key census"),
+        2
+    );
+
+    // Guarded soft delete: hides the row, keeps the other owner's blob
+    // reference alive, and a second call marks 0 rows.
+    assert!(store.soft_delete_file(a.id).await.expect("soft delete"));
+    assert!(
+        !store
+            .soft_delete_file(a.id)
+            .await
+            .expect("second soft delete"),
+        "the guarded update refuses the second call"
+    );
+    assert!(store.get_file(a.id).await.expect("get").is_none());
+    assert_eq!(
+        store
+            .count_live_files_by_storage_key(&a.storage_key)
+            .await
+            .expect("census after delete"),
+        1,
+        "the other owner's row still references the blob"
+    );
+    let resurrected = store
+        .create_file(file(owner.id, &a.sha256))
+        .await
+        .expect("soft delete frees the per-owner hash");
     assert_ne!(resurrected.id, a.id);
 
-    // Rename.
+    // Guarded rename: a soft-deleted row answers None.
+    assert!(store
+        .rename_file(a.id, "renamed")
+        .await
+        .expect("rename query")
+        .is_none());
     let renamed = store
         .rename_file(b.id, "renamed")
         .await
@@ -210,6 +250,7 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
     assert_eq!(renamed.name, "renamed");
 
     cleanup_user(&store, owner.id).await;
+    cleanup_user(&store, other.id).await;
 }
 
 #[tokio::test]
