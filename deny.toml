@@ -20,10 +20,29 @@ allow = [
     "Unlicense",
     "Zlib",
     "MPL-2.0",
+    "LicenseRef-SySL-1.0",
 ]
 confidence-threshold = 0.8
 # Workspace crates are publish = false.
 private = { ignore = true }
+
+# The family's own ORM (currently consumed from its git master) carries the
+# SySL 1.0 text via license-file; the hash pins it so a swapped license
+# would fail loudly.
+[[licenses.clarify]]
+name = "lacrymira"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "LICENSE", hash = 0x4313eae3 }]
+
+[[licenses.clarify]]
+name = "lacrymira-macros"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "LICENSE", hash = 0x4313eae3 }]
+
+[[licenses.clarify]]
+name = "lacrymira-pg"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "LICENSE", hash = 0x4313eae3 }]
 
 [[licenses.clarify]]
 name = "ring"
@@ -38,3 +57,7 @@ highlight = "all"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Registry fallback (see Cargo.toml): the family ORM master carries the
+# find/insert helpers the service is built on.
+allow-git = ["https://github.com/celestia-island/lacrymira"]
