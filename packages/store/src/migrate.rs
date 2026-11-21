@@ -155,9 +155,14 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split("$i0721$").next())
             .expect("seed SQL carries dollar-quoted JSON");
+        assert_eq!(
+            seed.sql.matches("$i0721$").count(),
+            2,
+            "the statement must carry exactly the two dollar-quote delimiters"
+        );
         assert!(
-            !json_str.contains('$'),
-            "the default config payload must stay inside the dollar-quoted literal"
+            !json_str.contains("i0721$"),
+            "the payload itself must never close the dollar-quoted literal early"
         );
         let json: serde_json::Value = serde_json::from_str(json_str).expect("seed JSON parses");
         assert_eq!(

@@ -398,3 +398,22 @@ mod tests {
         assert!(serde_json::from_value::<SiteConfigStrict>(missing_leaf).is_err());
     }
 }
+
+#[cfg(test)]
+mod strict_section_tests {
+    use super::*;
+
+    fn full_strict_json() -> serde_json::Value {
+        serde_json::to_value(SiteConfigStrict::from(&default_site_config())).unwrap()
+    }
+
+    #[test]
+    fn strict_rejects_unknown_leaves_inside_a_section() {
+        let mut value = full_strict_json();
+        value["router"]["unexpected-leaf"] = serde_json::json!(true);
+        assert!(
+            serde_json::from_value::<SiteConfigStrict>(value).is_err(),
+            "the section-level deny_unknown_fields gate must reject unknown leaves even if the root gate were ever relaxed"
+        );
+    }
+}

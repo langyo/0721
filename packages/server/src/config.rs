@@ -140,39 +140,44 @@ impl Config {
     /// [`ConfigError`] when a required variable is missing or a set
     /// variable cannot be parsed.
     pub fn from_env() -> Result<Self, ConfigError> {
-        let database_url =
-            std::env::var("I0721_DATABASE_URL").map_err(|_| ConfigError::Missing {
-                var: "I0721_DATABASE_URL",
-            })?;
-        let jwt_secret =
-            std::env::var("JWT_SECRET").map_err(|_| ConfigError::Missing { var: "JWT_SECRET" })?;
-        let listen = match std::env::var("I0721_LISTEN") {
-            Ok(raw) => raw
+        Self::from_env_with(|key| std::env::var(key).ok())
+    }
+
+    /// Injection point so configuration mapping is testable without racing
+    /// on process-global environment variables.
+    pub fn from_env_with(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let database_url = lookup("I0721_DATABASE_URL").ok_or(ConfigError::Missing {
+            var: "I0721_DATABASE_URL",
+        })?;
+        let jwt_secret = lookup("JWT_SECRET").ok_or(ConfigError::Missing { var: "JWT_SECRET" })?;
+        let listen = match lookup("I0721_LISTEN") {
+            Some(raw) => raw
+                .clone()
                 .parse()
                 .map_err(|source| ConfigError::Listen { value: raw, source })?,
-            Err(_) => DEFAULT_LISTEN,
+            None => DEFAULT_LISTEN,
         };
         let media_root = PathBuf::from(
-            std::env::var("I0721_MEDIA_ROOT").unwrap_or_else(|_| DEFAULT_MEDIA_ROOT.to_owned()),
+            lookup("I0721_MEDIA_ROOT").unwrap_or_else(|| DEFAULT_MEDIA_ROOT.to_owned()),
         );
         let static_dir = PathBuf::from(
-            std::env::var("I0721_STATIC_DIR").unwrap_or_else(|_| DEFAULT_STATIC_DIR.to_owned()),
+            lookup("I0721_STATIC_DIR").unwrap_or_else(|| DEFAULT_STATIC_DIR.to_owned()),
         );
-        let upload_concurrency = match std::env::var("I0721_UPLOAD_CONCURRENCY") {
-            Ok(raw) => raw
+        let upload_concurrency = match lookup("I0721_UPLOAD_CONCURRENCY") {
+            Some(raw) => raw
                 .parse::<usize>()
                 .ok()
                 .filter(|n| *n > 0)
-                .ok_or(ConfigError::UploadConcurrency { value: raw })?,
-            Err(_) => DEFAULT_UPLOAD_CONCURRENCY,
+                .ok_or(ConfigError::UploadConcurrency { value: raw.clone() })?,
+            None => DEFAULT_UPLOAD_CONCURRENCY,
         };
-        let log_filter = std::env::var("I0721_LOG")
-            .unwrap_or_else(|_| "i0721_server=info,tower_http=warn".to_owned());
-        let seed_admin_password = std::env::var("I0721_SEED_ADMIN_PASSWORD")
-            .unwrap_or_else(|_| DEFAULT_SEED_ADMIN_PASSWORD.to_owned());
-        let trusted_proxies = match std::env::var("I0721_TRUSTED_PROXIES") {
-            Ok(raw) => parse_trusted_proxies(&raw)?,
-            Err(_) => Vec::new(),
+        let log_filter =
+            lookup("I0721_LOG").unwrap_or_else(|| "i0721_server=info,tower_http=warn".to_owned());
+        let seed_admin_password = lookup("I0721_SEED_ADMIN_PASSWORD")
+            .unwrap_or_else(|| DEFAULT_SEED_ADMIN_PASSWORD.to_owned());
+        let trusted_proxies = match lookup("I0721_TRUSTED_PROXIES") {
+            Some(raw) => parse_trusted_proxies(&raw)?,
+            None => Vec::new(),
         };
         Ok(Self {
             database_url,
@@ -231,5 +236,53 @@ mod listen_tests {
             DEFAULT_LISTEN.port() >= 1024,
             "default listen must stay >= 1024"
         );
+    }
+}
+
+#[cfg(test)]
+mod from_env_with_tests {
+    use super::Config;
+
+    fn lookup<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |key| {
+            vars.iter()
+                .find(|(k, _)| **k == *key)
+                .map(|(_, v)| String::from(*v))
+        }
+    }
+
+    fn required() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("I0721_DATABASE_URL", "postgres://x/y"),
+            ("JWT_SECRET", "s"),
+        ]
+    }
+
+    #[test]
+    fn seed_admin_password_defaults_to_the_documented_value() {
+        let config = Config::from_env_with(lookup(&required())).unwrap();
+        assert_eq!(
+            config.seed_admin_password,
+            super::DEFAULT_SEED_ADMIN_PASSWORD
+        );
+    }
+
+    #[test]
+    fn seed_admin_password_honors_the_override() {
+        let mut vars = required();
+        vars.push(("I0721_SEED_ADMIN_PASSWORD", "first-boot-secret"));
+        let config = Config::from_env_with(lookup(&vars)).unwrap();
+        assert_eq!(config.seed_admin_password, "first-boot-secret");
+    }
+
+    #[test]
+    fn missing_database_url_fails_loudly() {
+        let err = Config::from_env_with(lookup(&[])).unwrap_err();
+        assert!(matches!(
+            err,
+            super::ConfigError::Missing {
+                var: "I0721_DATABASE_URL"
+            }
+        ));
     }
 }

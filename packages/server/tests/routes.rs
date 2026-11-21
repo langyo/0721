@@ -960,14 +960,16 @@ async fn file_mutations_require_owner_or_admin() {
 
 #[tokio::test]
 async fn xff_shapes_login_throttling_only_through_trust() {
-    // Untrusted (default): forged X-Forwarded-For cannot rotate buckets.
+    // Untrusted (default): forged X-Forwarded-For cannot rotate buckets. The
+    // entries must be *parseable and distinct* — unparseable ones would mask
+    // an unconditional-trust regression (both shapes read as "no XFF").
     let (state, _) = test_state().await;
     let mut saw_limit = false;
-    for i in 0..7 {
+    for i in 1..8 {
         let mut request = login_request("admin", "wrong");
         request.headers_mut().insert(
             "x-forwarded-for",
-            header::HeaderValue::from_str(&format!("10.99.0.{i}:nope")).unwrap(),
+            header::HeaderValue::from_str(&format!("10.99.0.{i}")).unwrap(),
         );
         let response = app(&state).oneshot(request).await.unwrap();
         if response.status() == StatusCode::TOO_MANY_REQUESTS {
@@ -976,7 +978,7 @@ async fn xff_shapes_login_throttling_only_through_trust() {
     }
     assert!(
         saw_limit,
-        "with no trusted proxies the socket identity alone is throttled"
+        "with no trusted proxies the socket identity alone is throttled even against rotating parseable XFF entries"
     );
 
     // Trusted: the rightmost valid XFF entry is its own bucket, and the
