@@ -161,8 +161,8 @@ mod tests {
             "the statement must carry exactly the two dollar-quote delimiters"
         );
         assert!(
-            !json_str.contains("i0721$"),
-            "the payload itself must never close the dollar-quoted literal early"
+            !json_str.contains('$'),
+            "the payload carries no dollar sign at all, so no tag it could form with the closing delimiter terminates the literal early"
         );
         let json: serde_json::Value = serde_json::from_str(json_str).expect("seed JSON parses");
         assert_eq!(

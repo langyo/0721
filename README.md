@@ -41,7 +41,7 @@ production.
 ```bash
 cd deploy
 cat > .env <<'EOF'
-I0721_JWT_SECRET=change-me-to-a-long-random-string
+JWT_SECRET=change-me-to-a-long-random-string
 POSTGRES_PASSWORD=change-me-too
 EOF
 docker compose up -d --build

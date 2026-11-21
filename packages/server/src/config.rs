@@ -145,7 +145,9 @@ impl Config {
 
     /// Injection point so configuration mapping is testable without racing
     /// on process-global environment variables.
-    pub fn from_env_with(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+    pub(crate) fn from_env_with(
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ConfigError> {
         let database_url = lookup("I0721_DATABASE_URL").ok_or(ConfigError::Missing {
             var: "I0721_DATABASE_URL",
         })?;
