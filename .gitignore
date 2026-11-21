@@ -11,6 +11,10 @@ target/
 # dev files
 cache/
 
+# deploy secrets (compose reads deploy/.env; see README deploy section)
+.env
+deploy/.env
+
 # celestia-devtools: staged-on-demand shared justfile recipes (celestia-devtools init / just fetch)
 /.just/
 /celestia-devtools.just

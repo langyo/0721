@@ -160,12 +160,12 @@ mod tests {
             2,
             "the statement must carry exactly the two dollar-quote delimiters"
         );
-        // serde_json escapes `$` as `\\u0024`, so a payload dollar appears in
-        // either form; both are barred so no dollar-quote tag can ever be
-        // formed between the payload and the closing delimiter.
+        // serde_json keeps `$` verbatim (only control characters are
+        // escaped), so barring the raw dollar is sufficient and can really
+        // fire: a future default value containing `$` fails here.
         assert!(
-            !json_str.contains('$') && !json_str.contains("\\u0024"),
-            "the payload carries no dollar sign in raw or escaped form, so no tag it could form with the closing delimiter terminates the literal early"
+            !json_str.contains('$'),
+            "the payload carries no dollar sign, so no dollar-quote tag can be formed between the payload and the closing delimiter"
         );
         let json: serde_json::Value = serde_json::from_str(json_str).expect("seed JSON parses");
         assert_eq!(

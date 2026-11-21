@@ -89,7 +89,7 @@ required variable or an unparseable value refuses to start):
 | Variable | Default | Meaning |
 |---|---|---|
 | `I0721_DATABASE_URL` | required | PostgreSQL URL |
-| `JWT_SECRET` | required | HS256 secret for the transition-era tokens |
+| `JWT_SECRET` (container-side; compose sets it from `I0721_JWT_SECRET`) | required | HS256 secret for the transition-era tokens |
 | `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
 | `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it) |
 | `I0721_STATIC_DIR` | `res/website` | placeholder static site directory |

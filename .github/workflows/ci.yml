@@ -28,3 +28,9 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Dependency licences
+        run: cargo deny check licenses bans sources
