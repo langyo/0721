@@ -18,7 +18,9 @@ RUN cargo build --release --locked --package i0721-server
 # Stage 2 keeps only the binary, the placeholder site and the languages.
 FROM debian:bookworm-slim AS stage-runtime
 
-RUN apt update && apt install -y --no-install-recommends ca-certificates \
+# curl stays in the runtime image: the compose healthcheck probes
+# /api/health through it.
+RUN apt update && apt install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 1000 i0721
 

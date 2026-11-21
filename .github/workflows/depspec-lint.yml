@@ -1,0 +1,10 @@
+name: Depspec-Lint
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  check:
+    uses: celestia-island/celestia-devtools/.github/workflows/depspec-lint.yml@c45f1881e00cb55d0a2a1fcf57b28734ece119bb

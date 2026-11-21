@@ -49,7 +49,14 @@ docker compose up -d --build
 
 The service listens on `127.0.0.1:8080` (override with
 `I0721_PUBLISH=127.0.0.1:9090`). `GET /api/health` reports status and
-where the site configuration came from.
+where the site configuration came from; both containers carry
+healthchecks (pg_isready + /api/health with start periods).
+
+> **Production note**: the compose env form (secrets as environment
+> variables) is for development and single-host trials. A production
+> deployment passes secrets via systemd `LoadCredential=` (or an
+> equivalent secret store); compose is not the production secrets
+> channel.
 
 ### Single container
 
@@ -65,8 +72,10 @@ docker run -d -p 8080:80 \
 
 Migrations apply automatically at boot (bookkeeping is compatible with
 the legacy `seaql_migrations` table). On an empty user table the service
-seeds an `admin`/`admin` account — change the password after the first
-login (create a second admin, then delete or re-role the default one).
+seeds an `admin` account — **the seed password is `admin` unless
+`I0721_SEED_ADMIN_PASSWORD` is set, and it is only a first-boot
+convenience: change it immediately** (create a second admin, then delete
+or re-role the default one).
 
 ## Configuration
 
@@ -82,6 +91,8 @@ required variable or an unparseable value refuses to start):
 | `I0721_STATIC_DIR` | `res/website` | placeholder static site directory |
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |
 | `I0721_LOG` | `i0721_server=info,tower_http=warn` | tracing filter |
+| `I0721_SEED_ADMIN_PASSWORD` | `admin` | first-boot admin password (empty user table only) |
+| `I0721_TRUSTED_PROXIES` | *(empty)* | CIDR list whose `X-Forwarded-For` is honored for login throttling; empty = never trust the header |
 
 The site configuration (the old `Config.toml`) lives in the `settings`
 table and is edited through the admin API (`GET/PUT /api/v1/settings`) —
@@ -109,6 +120,18 @@ changes apply on the next request, no container restart:
 
 `media-entry-path` is pinned to `/media`: existing image links point
 there and must keep working.
+
+Two caveats worth knowing:
+
+- Links produced by the **legacy** engine carry its own key scheme
+  (base64url SHA-3-256 of the original bytes); the rewritten service
+  cannot resolve them until the old data is imported — the import tool
+  is a later wave, so run the generations side by side if old links
+  must keep resolving during the transition.
+- The referrer allow-list only stops requests whose browser sends a
+  default `Referer` header. It is a courtesy gate, not technical
+  protection: any client that omits the header passes it. Hard
+  access control is what permissions and share tokens are for.
 
 ## API sketch
 

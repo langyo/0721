@@ -24,6 +24,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+      start_period: 10s
 
   service:
     build:
@@ -41,6 +42,12 @@ services:
       I0721_MEDIA_ROOT: /app/data
     volumes:
       - i0721-media:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     depends_on:
       postgres:
         condition: service_healthy

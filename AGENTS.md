@@ -16,9 +16,11 @@
 ## 开发纪律
 
 - trunk = `master`，只经 PR + squash merge；标题 = `<gitmoji> 一句英文陈述句.`
-  （钩子由 `celestia-devtools init` 安装；CI 口径 = trunk 基本检查 <1 分钟 + `ci.yml` 手动 dispatch）。
+  （钩子由 `celestia-devtools init` 安装）。
 - 门禁 = `just gate`（fmt → clippy -D warnings → test → cargo deny）；
   devtools 漂移检查 = `celestia-devtools init --check`。
+- CI 口径 = trunk 基本检查（push master：<1 分钟、无编译——verify-versions +
+  depspec-lint + family-versions）+ `ci.yml` 手动 dispatch（全量门禁）。
 - 依赖声明两段式（`^0.8` / `^0.1` 形）；时间一律 jiff 禁 chrono；不直接 use sqlx
   （逃生舱走 lacrymira `Command::Sql`）。`wasm-bindgen` 精确钉版是 wasm-bindgen-cli 配套的
   过渡豁免，Yew 退役波一并移除。

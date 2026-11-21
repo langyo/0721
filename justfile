@@ -7,7 +7,7 @@ import? "./.just/celestia-devtools.just"
 set shell := ["bash", "-c"]
 set windows-shell := ["bash.exe", "-c"]
 
-# The staged celestia-devtools recipes (0.7.0) use list functions.
+# The staged celestia-devtools recipes (0.14.2) use list functions.
 set unstable
 set lists
 
