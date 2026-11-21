@@ -1,0 +1,199 @@
+//! `/api/v1/files` — timeline list, multipart upload (the legacy
+//! pipeline), rename, soft delete.
+
+use axum::extract::{Multipart, Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Json};
+use serde::Deserialize;
+use uuid::Uuid;
+
+use crate::api::auth::require_auth;
+use crate::blob::BlobSlot;
+use crate::error::ApiError;
+use crate::pipeline::{process_upload, UploadRules};
+use crate::state::AppState;
+use i0721_proto::{validate_file_name, FileDto, NewFile, PageArgs, PageResult};
+
+/// Optional query of the upload endpoint (the legacy `?name=`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UploadQuery {
+    /// Force the display name of the uploaded file.
+    pub name: Option<String>,
+}
+
+/// The rename request body.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RenameRequest {
+    /// The new display name.
+    pub name: String,
+}
+
+/// `GET /api/v1/files?offset&limit`
+pub async fn list(
+    State(state): State<AppState>,
+    Query(args): Query<PageArgs>,
+    headers: HeaderMap,
+) -> Result<Json<PageResult<FileDto>>, ApiError> {
+    require_auth(&state, &headers).await?;
+    let (offset, limit) = args.sanitize();
+    let total = state.store.count_files().await?;
+    let items = state
+        .store
+        .list_files(offset, limit)
+        .await?
+        .into_iter()
+        .map(FileDto::from)
+        .collect();
+    Ok(Json(PageResult {
+        total,
+        offset,
+        limit,
+        items,
+    }))
+}
+
+/// `POST /api/v1/files` (multipart, field `file`)
+///
+/// Pipeline: size limit → SHA-256 → WebP convert → thumbnail → dedupe
+/// probe → blob write → metadata row. Identical content returns the
+/// existing record with `200`; a fresh file answers `201`.
+pub async fn upload(
+    State(state): State<AppState>,
+    Query(args): Query<UploadQuery>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<axum::response::Response, ApiError> {
+    let (_, user) = require_auth(&state, &headers).await?;
+
+    let field = multipart
+        .next_field()
+        .await
+        .map_err(|err| ApiError::bad_request(format!("multipart read failed: {err}")))?
+        .ok_or_else(|| ApiError::bad_request("no file field in the request"))?;
+    let file_name = field.file_name().map(str::to_owned);
+    let data = field
+        .bytes()
+        .await
+        .map_err(|err| ApiError::bad_request(format!("multipart read failed: {err}")))?;
+
+    let config = crate::api::settings::site_config(&state).await?;
+    let rules = UploadRules {
+        size_limit: i0721_proto::parse_size_limit(&config.upload.image_size_limit)
+            .unwrap_or(8 * 1024 * 1024),
+        webp_auto_convert: config.upload.webp_auto_convert,
+    };
+
+    // One upload pipeline at a time, up to the configured concurrency —
+    // the legacy engine capped image processing at 4 in flight.
+    let _slot = state
+        .upload_slots
+        .acquire()
+        .await
+        .map_err(|_| ApiError::internal("upload lane closed"))?;
+    let processed =
+        process_upload(&data, file_name.as_deref(), &rules).map_err(|err| match err {
+            crate::pipeline::PipelineError::TooLarge { limit, actual } => {
+                ApiError::too_large(format!("upload is {actual} bytes, the limit is {limit}"))
+            }
+            crate::pipeline::PipelineError::Decode(reason) => {
+                ApiError::bad_request(format!("undecodable image: {reason}"))
+            }
+            crate::pipeline::PipelineError::Encode(reason) => {
+                ApiError::internal(format!("WebP encoding failed: {reason}"))
+            }
+        })?;
+
+    // Dedupe: identical stored content answers with the existing record.
+    if let Some(existing) = state.store.get_file_by_sha256(&processed.sha256).await? {
+        return Ok((StatusCode::OK, Json(FileDto::from(existing))).into_response());
+    }
+
+    let storage_key = processed.sha256.clone();
+    let thumbnail_key = processed
+        .thumbnail
+        .as_ref()
+        .map(|_| format!("{storage_key}.webp"));
+
+    state
+        .blobs
+        .put(BlobSlot::Media, &storage_key, &processed.data)
+        .await?;
+    if let (Some(thumbnail), Some(thumb_key)) =
+        (processed.thumbnail.as_ref(), thumbnail_key.as_deref())
+    {
+        state
+            .blobs
+            .put(BlobSlot::Cache, thumb_key, thumbnail)
+            .await?;
+    }
+
+    let name = args
+        .name
+        .clone()
+        .or_else(|| {
+            if config.upload.use_source_file_name {
+                file_name.clone()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| storage_key.clone());
+    validate_file_name(&name).map_err(|err| ApiError::bad_request(err.to_string()))?;
+
+    let new_file = NewFile {
+        owner_id: user.id,
+        name,
+        kind: processed.kind,
+        mime: processed.mime.clone(),
+        size: processed.data.len() as i64,
+        sha256: processed.sha256.clone(),
+        storage_backend: "local".to_owned(),
+        storage_key,
+        thumbnail_key,
+        original_name: file_name.unwrap_or_default(),
+    };
+    let record = match state.store.create_file(new_file).await {
+        Ok(record) => record,
+        // Lost the dedupe race: return the winner's record.
+        Err(i0721_store::StoreError::Conflict(_)) => state
+            .store
+            .get_file_by_sha256(&processed.sha256)
+            .await?
+            .ok_or_else(|| ApiError::conflict("content already uploaded"))?,
+        Err(err) => return Err(err.into()),
+    };
+    Ok((StatusCode::CREATED, Json(FileDto::from(record))).into_response())
+}
+
+/// `PATCH /api/v1/files/{id}`
+pub async fn rename(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<RenameRequest>,
+) -> Result<Json<FileDto>, ApiError> {
+    require_auth(&state, &headers).await?;
+    validate_file_name(&request.name).map_err(|err| ApiError::bad_request(err.to_string()))?;
+    let record = state
+        .store
+        .rename_file(id, &request.name)
+        .await?
+        .ok_or_else(|| ApiError::not_found("file not found"))?;
+    Ok(Json(FileDto::from(record)))
+}
+
+/// `DELETE /api/v1/files/{id}` — soft delete; the blob stays until the
+/// netdisk wave wires restore/purge.
+pub async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    require_auth(&state, &headers).await?;
+    let removed = state.store.soft_delete_file(id).await?;
+    if removed {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found("file not found"))
+    }
+}
