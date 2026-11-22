@@ -1,55 +1,76 @@
-mod routes;
-mod utils;
+//! Process entry point for the 0721 resource service.
 
-use anyhow::Result;
-use log::info;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
-use axum::serve;
-use tokio::net::TcpListener;
+use i0721_proto::Role;
+use i0721_store::{CreateUser, PgStore, Store};
 
-use crate::routes::route;
-use _database::{init, InitRouteEnvParams, RouteEnv};
+use i0721_server::auth;
+use i0721_server::blob::LocalBlobStore;
+use i0721_server::config::Config;
+use i0721_server::routes;
+use i0721_server::state::AppState;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    #[cfg(not(debug_assertions))]
-    {
-        use _types::consts::LOG_DIR;
-        use tracing_subscriber::fmt::writer::MakeWriterExt;
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::from_env()?;
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(&config.log_filter))
+        .init();
 
-        let file_appender = tracing_appender::rolling::daily((*LOG_DIR).clone(), "log");
-        let std_out = std::io::stdout.with_max_level(tracing::Level::INFO);
-        tracing_subscriber::fmt()
-            .with_writer(std_out.and(file_appender))
-            .init();
+    let store = PgStore::connect(&config.database_url).await?;
+    let migration = store.migrate().await?;
+    tracing::info!(
+        applied = migration.applied.len(),
+        skipped = migration.skipped.len(),
+        pre_history = migration.pre_history.len(),
+        "migrations up to date"
+    );
+    seed_default_admin(&store, &config.seed_admin_password).await?;
+
+    let blobs = LocalBlobStore::open(&config.media_root)?;
+    let listen = config.listen;
+    let state = AppState::new(Arc::new(store), Arc::new(blobs), Arc::new(config));
+
+    let listener = tokio::net::TcpListener::bind(listen).await?;
+    tracing::info!(
+        listen = %listen,
+        version = env!("CARGO_PKG_VERSION"),
+        "0721 resource service starting"
+    );
+    axum::serve(
+        listener,
+        routes::app(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// The legacy deployment shipped with an `admin`/`admin` account; keep
+/// that bootstrap story: when the user table is empty, seed it with
+/// [`Config::seed_admin_password`] (default `admin`, overridable via
+/// `I0721_SEED_ADMIN_PASSWORD`; see the README warning). Forced
+/// rotation on first login arrives with the authentication wave.
+async fn seed_default_admin(
+    store: &PgStore,
+    seed_password: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if store.count_users().await? > 0 {
+        return Ok(());
     }
-
-    #[cfg(debug_assertions)]
-    {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .with_writer(std::io::stdout)
-            .init();
-    }
-
-    let port = std::env::var("PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(80);
-    let env = RouteEnv::new(InitRouteEnvParams::Native).await?;
-    init(env.clone()).await?;
-
-    let router = route(env.clone())
-        .await?
-        .into_make_service_with_connect_info::<SocketAddr>();
-
-    info!("Site will run on port {port}");
-
-    let listener = TcpListener::bind(format!("0.0.0.0:{port}"))
-        .await
-        .expect("Failed to bind");
-    serve(listener, router).await?;
-
+    let password_hash = auth::hash_password(seed_password).map_err(|err| err.to_string())?;
+    let admin = store
+        .create_user(CreateUser {
+            username: "admin".to_owned(),
+            display_name: "Administrator".to_owned(),
+            role: Role::Admin,
+            password_hash: Some(password_hash),
+        })
+        .await?;
+    tracing::warn!(
+        username = %admin.username,
+        "empty user table — seeded the default admin account; change its password after the first login"
+    );
     Ok(())
 }

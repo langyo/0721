@@ -1,0 +1,41 @@
+name: Commit Message Lint
+
+# One in-flight run per ref (ci-ops 8.3.3): a superseded dispatch on the same
+# ref cancels its predecessor instead of queueing behind it. The old group's
+# pull_request half was dead from the 2026-11-06 dispatch-only policy on (L183).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  # Dispatch-only per the 2026-11-06 trigger policy: CI no longer runs on pull
+  # requests. Commit-message format is held by review plus the squash subject;
+  # this lane stays dispatchable so a PR's commits can still be checked on
+  # demand, by number, from any runner.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to lint"
+        required: true
+        type: string
+permissions:
+  # A called workflow cannot grant itself a permission the caller withholds —
+  # the mismatch reads as startup_failure. The org default token permissions
+  # were tightened on 2026-10-02 and this caller was missed, so the single
+  # required check stopped reporting entirely. Grant exactly what the reusable
+  # lint declares and nothing more.
+  contents: read
+  pull-requests: read
+
+jobs:
+  lint-commits:
+    uses: celestia-island/celestia-devtools/.github/workflows/commit-msg-lint.yml@c45f1881e00cb55d0a2a1fcf57b28734ece119bb
+    with:
+      devtools-ref: c45f1881e00cb55d0a2a1fcf57b28734ece119bb
+      # Lane switch without touching this tree: the org variables resolve to the
+      # self-hosted fleet while the hosted lane is down (2026-09-24 account
+      # payments: a job sent there sits fifteen minutes with no runner before
+      # being cancelled, indistinguishable from "the check never reports").
+      runner: ${{ vars.LINT_RUNNER || '["ubuntu-latest"]' }}
+      lane: ${{ vars.LINT_LANE || 'hosted' }}
+      pr: ${{ inputs.pr }}

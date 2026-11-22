@@ -1,6 +1,5 @@
 [workspace]
 members = ["packages/*"]
-default-members = ["packages/server"]
 resolver = "2"
 
 [profile.release]
@@ -12,78 +11,71 @@ panic = "abort"
 [workspace.package]
 authors = ["langyo <langyo.china@gmail.com>"]
 publish = false
+license = "Apache-2.0"
+rust-version = "1.94"
 
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 
 [workspace.dependencies]
-hikari-boot = { git = "https://github.com/celestia-island/hikari" }
-tairitsu-database = { git = "https://github.com/celestia-island/tairitsu" }
+# internal
+i0721-proto = { path = "packages/proto", version = "^0.4" }
+i0721-store = { path = "packages/store", version = "^0.4" }
 
-anyhow = "^1"
-async-trait = "^0.1"
-derive_more = { version = "^2", features = ["full"] }
-once_cell = "^1"
-
-base64 = "^0.22"
-bytes = "^1"
-chrono = { version = "^0.4", features = ["serde", "unstable-locales"] }
-futures = "^0.3"
-cfg-if = "^1"
-
+# serialization
 serde = { version = "^1", features = ["derive"] }
 serde_json = "^1"
-postcard = { version = "^1", features = ["alloc"] }
-toml = "^0.8"
-strum = { version = "^0.27", features = ["derive"] }
-uuid = { version = "^1", features = [
-    'v4',
-    'fast-rng',
-    'macro-diagnostics',
-    'serde',
-] }
 
-log = "^0.4"
-tracing = "^0.1"
-tracing-subscriber = "^0.3"
-tracing-appender = "^0.2"
-console_log = "^1"
-
-web-sys = { version = "^0.3", features = [
-    "Window",
-    "Document",
-    "Navigator",
-    "Element",
-    "HtmlElement",
-    "HtmlHeadElement",
-    "HtmlBodyElement",
-    "HtmlStyleElement",
-    "HtmlTextAreaElement",
-    "HtmlInputElement",
-    "HtmlFormElement",
-    "CssStyleDeclaration",
-    "WheelEvent",
-] }
-js-sys = "^0.3"
-wasm-bindgen = "0.2.95"
-wasm-bindgen-futures = "^0.4"
-gloo = "^0.11"
-
-sea-orm = { version = "^1", default-features = false, features = [
+# async / http
+tokio = { version = "^1", features = [
     "macros",
-    "proxy",
-    "with-uuid",
-    "with-chrono",
-    "with-json",
-    "debug-print",
+    "net",
+    "rt-multi-thread",
+    "signal",
+    "fs",
 ] }
-worker = "^0.5"
+axum = { version = "^0.8", features = ["multipart"] }
+tower = { version = "^0.5", features = ["util"] }
+tower-http = { version = "^0.7", features = ["compression-gzip", "fs", "limit"] }
+tracing = "^0.1"
+tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 
-image = { version = "^0.25", features = ["gif", "jpeg", "png", "webp"] }
+# data access (family ORM; timestamps are jiff — chrono is absent by design).
+# REGISTRY FALLBACK: lacrymira/lacrymira-pg 0.1.0 as published on crates.io
+# are a stale, mutually incompatible pair (the core predates uuid/jiff model
+# typing; the pg driver predates the find/insert helpers). Until a coherent
+# version is published, pin the family git master (Cargo.lock pins the rev).
+lacrymira = { git = "https://github.com/celestia-island/lacrymira", branch = "master", version = "0.1" }
+lacrymira-pg = { git = "https://github.com/celestia-island/lacrymira", branch = "master", version = "0.1" }
+
+# misc
+async-trait = "^0.1"
+bytes = "^1"
+thiserror = "^2"
+uuid = { version = "^1", features = ["v4", "fast-rng", "serde"] }
+jiff = { version = "^1", features = ["serde"] }
+base64 = "^0.22"
+
+# auth (transition password + HS256 token)
+argon2 = "^0.5"
+password-hash = { version = "^0.5", features = ["getrandom"] }
+hmac = "^0.12"
+ipnet = "^2"
+sha2 = "^0.10"
+
+# media pipeline
+image = { version = "^0.25", default-features = false, features = [
+    "gif",
+    "jpeg",
+    "png",
+    "webp",
+] }
 webp = "^0.3"
 webp-animation = "^0.9"
+mime_guess = "^2"
 
-[patch.crates-io]
-yew = { git = "https://github.com/langyo/yew", branch = "wasi-support-test" }
-yew-router = { git = "https://github.com/langyo/yew", branch = "wasi-support-test" }
-stylist = { git = "https://github.com/langyo/stylist-rs", branch = "wasi-support" }
+# request-side parsing
+url = "^2"
+
+[workspace.lints.rust]
+unsafe_code = "deny"

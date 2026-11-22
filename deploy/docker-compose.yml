@@ -1,0 +1,57 @@
+# 0721 resource service — single-host deployment (ayane shape: self-built
+# image, loopback-only publishing, named volumes).
+#
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Required environment (put them in an env file next to this compose file
+# or export them before calling compose):
+#   I0721_JWT_SECRET     — the HS256 secret for the transition-era tokens
+#   POSTGRES_PASSWORD    — the PostgreSQL password for the 0721 role
+name: i0721
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: i0721
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: i0721
+    volumes:
+      - i0721-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U i0721 -d i0721"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  service:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Loopback publishing: a reverse proxy (or an frp tunnel) fronts this
+    # in production; nothing is exposed beyond the host itself.
+    ports:
+      - "${I0721_PUBLISH:-127.0.0.1:8080}:8080"
+    environment:
+      I0721_DATABASE_URL: postgres://i0721:${POSTGRES_PASSWORD}@postgres:5432/i0721
+      JWT_SECRET: ${I0721_JWT_SECRET:?set I0721_JWT_SECRET}
+      I0721_LISTEN: 0.0.0.0:8080
+      I0721_MEDIA_ROOT: /app/data
+    volumes:
+      - i0721-media:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  i0721-pgdata:
+  i0721-media:

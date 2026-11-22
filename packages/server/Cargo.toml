@@ -1,66 +1,51 @@
 [package]
-name = "_server"
+name = "i0721-server"
+description = "The 0721 resource service (axum 0.8 + tokio)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "i0721-server"
+path = "src/main.rs"
 
 [dependencies]
-_client = { path = "../client" }
-_database = { path = "../database" }
-_types = { path = "../types" }
+i0721-proto = { workspace = true }
+i0721-store = { workspace = true }
 
-hikari-boot = { workspace = true }
-
-anyhow = { workspace = true }
 async-trait = { workspace = true }
-derive_more = { workspace = true }
-once_cell = { workspace = true }
-cfg-if = { workspace = true }
-
+axum = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
-chrono = { workspace = true }
-futures = { workspace = true }
-tokio = { version = "^1", features = ["full"] }
-
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+hmac = { workspace = true }
+ipnet = { workspace = true }
+sha2 = { workspace = true }
+image = { workspace = true }
+jiff = { workspace = true }
+mime_guess = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = { workspace = true }
-strum = { workspace = true }
-uuid = { workspace = true }
-
-log = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-tracing-appender = { workspace = true }
-
-image = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
 webp = { workspace = true }
+webp-animation = { workspace = true }
 
-axum = { version = "^0.8", features = ["query", "multipart"] }
-axum-extra = { version = "^0.10", features = [
-  "typed-header",
-  "multipart",
-  "cookie",
-] }
-clap = { version = "^4", features = ["derive"] }
-hyper = { version = "^1", features = ["server", "http1"] }
-tower = { version = "^0.5", features = ["make"] }
-tower-http = { version = "^0.6", features = [
-  "fs",
-  "trace",
-  "compression-gzip",
-] }
-url = "^2"
+[dev-dependencies]
+i0721-proto = { workspace = true }
+i0721-store = { workspace = true }
+async-trait = { workspace = true }
+sha2 = { workspace = true }
+tower = { workspace = true }
 
-stylist = { version = "^0.13", features = [
-  "yew_integration",
-  "ssr",
-  "hydration",
-] }
-yew = { version = "^0.21", features = ["ssr", "hydration"] }
-
-[features]
-default = ["native"]
-cloudflare = ["_database/cloudflare"]
-native = ["_database/native"]
-wasi = ["_database/wasi"]
+[lints]
+workspace = true

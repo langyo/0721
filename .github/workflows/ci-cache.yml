@@ -1,0 +1,13 @@
+name: CI Cache Policy
+
+on:
+  # Basic check (sub-minute, no compile): runs after a squash merge, never on
+  # the pull request itself (2026-11-06 trigger policy).
+  push:
+    branches: [master]
+  workflow_dispatch:
+jobs:
+  cache-policy:
+    uses: celestia-island/celestia-devtools/.github/workflows/ci-cache.yml@c45f1881e00cb55d0a2a1fcf57b28734ece119bb
+    with:
+      devtools-ref: c45f1881e00cb55d0a2a1fcf57b28734ece119bb

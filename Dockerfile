@@ -1,75 +1,39 @@
-# Preload dependencies,
-# used to speed up repeated builds and reduce traffic consumption of libraries
-FROM rust:latest AS stage-deps
+# 0721 resource service — multi-stage build.
+#
+# Stage 1 compiles the workspace (the placeholder static site ships from
+# the repo; the hikari webui wave adds its own build stage and switches
+# the server to embedded-frontend).
+FROM rust:1 AS stage-build
 
-RUN apt update && apt install -y clang
-RUN rustup target add wasm32-unknown-unknown
-RUN rustup target add wasm32-wasi
-RUN cargo install cargo-make
-RUN cargo install wasm-bindgen-cli@0.2.95
+# libwebp (the `webp` crate builds its C sources via cc) and the image
+# codecs need a C toolchain; the rust image carries gcc already.
+RUN apt update && apt install -y --no-install-recommends clang && rm -rf /var/lib/apt/lists/*
 
-COPY ./Cargo.toml /home/Cargo.toml
-RUN cargo new --name server /home/packages/server
-COPY ./packages/server/Cargo.toml /home/packages/server/Cargo.toml
-RUN cargo new --lib --name _client /home/packages/client
-COPY ./packages/client/Cargo.toml /home/packages/client/Cargo.toml
-RUN cargo new --lib --name _database /home/packages/database
-COPY ./packages/database/Cargo.toml /home/packages/database/Cargo.toml
-RUN cargo new --lib --name _functions /home/packages/functions
-COPY ./packages/functions/Cargo.toml /home/packages/functions/Cargo.toml
-RUN cargo new --lib --name _types /home/packages/types
-COPY ./packages/types/Cargo.toml /home/packages/types/Cargo.toml
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY packages ./packages
+COPY res ./res
+RUN cargo build --release --locked --package i0721-server
 
-ENV ROOT_DIR=/home/res
-WORKDIR /home
-RUN cargo fetch
+# Stage 2 keeps only the binary, the placeholder site and the languages.
+FROM debian:bookworm-slim AS stage-runtime
 
-COPY ./packages/server /home/packages/server
-COPY ./packages/client /home/packages/client
-COPY ./packages/database /home/packages/database
-COPY ./packages/functions /home/packages/functions
-COPY ./packages/types /home/packages/types
+# curl stays in the runtime image: the compose healthcheck probes
+# /api/health through it.
+RUN apt update && apt install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --uid 1000 i0721
 
-COPY ./res/languages /home/res/languages
-COPY ./res/website /home/res/website
-COPY ./res/Config.default.toml /home/res/Config.default.toml
+COPY --from=stage-build /build/target/release/i0721-server /app/i0721-server
+COPY res/website /app/res/website
+COPY res/languages /app/res/languages
 
-# Stage 1 for client build, used to compile wasm file
-FROM stage-deps AS stage-client-build1
+# Writable blob root (mount a volume here; compose uses a named volume).
+RUN mkdir -p /app/data/media /app/data/media-cache && chown -R i0721:i0721 /app
 
-WORKDIR /home
-RUN cargo build --offline --package _client --target wasm32-unknown-unknown --release
-
-# Stage 2 for client build, used to process wasm file for browser platform
-FROM stage-deps AS stage-client-build2
-
-COPY --from=stage-client-build1 /home/target/wasm32-unknown-unknown/release/_client.wasm /home/client.wasm
-WORKDIR /home
-RUN wasm-bindgen\
-  --out-dir /home/dist\
-  --out-name client\
-  --target no-modules\
-  --no-typescript\
-  --no-modules-global wasm_vendor_entry\
-  client.wasm
-
-# Stage 1 for server build, used to compile server program
-FROM stage-deps AS stage-server-build1
-
-WORKDIR /home
-RUN cargo build --offline --package _server --release
-
-# Stage 2 for server build, used to integrate the build result of client and generate the final image
-FROM ubuntu:latest AS stage-server-build2
-
-RUN apt update && apt install -y openssl
-
-COPY ./res/website /home/website
-COPY --from=stage-client-build2 /home/dist/client_bg.wasm /home/client_bg.wasm
-COPY --from=stage-client-build2 /home/dist/client.js /home/client.js
-COPY --from=stage-server-build1 /home/target/release/_server /home/a
-
-ENV ROOT_DIR=/home
-WORKDIR /home
-ENTRYPOINT [ "./a" ]
-EXPOSE 80
+USER i0721
+WORKDIR /app
+ENV I0721_MEDIA_ROOT=/app/data \
+    I0721_STATIC_DIR=/app/res/website
+EXPOSE 8080
+ENTRYPOINT ["./i0721-server"]
