@@ -80,7 +80,7 @@ describe("ProvidersView (family table roster)", () => {
   it("masks the secret and offers a warning badge when none is stored", async () => {
     listProvidersMock.mockResolvedValue([
       provider(),
-      provider({ id: "gh", display_name: "GitHub", has_secret: false, secret_tail: null }),
+      provider({ id: "gh", display_name: "GitHub", has_secret: false }),
     ]);
     wrapper = mountView();
     await flushPromises();
