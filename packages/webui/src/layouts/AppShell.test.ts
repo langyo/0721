@@ -3,10 +3,12 @@ import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import { createPinia, setActivePinia, type Pinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The transport/engine probes are the shell's ENVIRONMENT, not the
-// subject: the RPC singleton is never installed in a unit test, and
-// the health fetch must not touch a network. Both composables still
-// run for real (they degrade to disconnected/null without a client).
+// Environment note: the transport/engine probes are the shell's
+// environment, not the subject — no RPC client is installed under the
+// runner and the health fetch must not leave the process. Both
+// composables still run for real (disconnected/null without a client).
+// comment-gate-ok: describes the harness, not a behaviour the code must
+// exhibit — no assertion depends on it.
 vi.mock("@/api", () => ({ health: vi.fn().mockRejectedValue(new Error("no net")) }));
 
 import { HkMenu, HkStatusBar } from "@celestia-island/hikari";
@@ -22,6 +24,11 @@ import type { UserDto } from "@/types";
  * always, the system group ONLY for admins — and every item navigates
  * by route. A regression that flattens the groups or leaks the admin
  * pages to a member fails here.
+ *
+ * MUT:admin-gating-forced-true — flipping the shell's `if (auth.isAdmin)`
+ * to `if (true)` reddens the member test on the group label; with the
+ * label pins neutralized it still reddens on the sidebar group COUNT
+ * (`expected 3 to be 2`), so the gating is pinned twice, independently.
  */
 
 const i18n = createAppI18n();
@@ -98,10 +105,12 @@ describe("AppShell (family grouped chrome)", () => {
     // A second, independent pin on the same gating: the admin pages'
     // own labels must not render for a member either (with this, the
     // guarantee no longer rests on the group-label line alone).
-    // providers.title measured alias-free in all 12 locales (users.title
-    // shares status.member's value in de/ja/ko/zh-Hans/zh-Hant,
-    // nav.settings shares chrome.settings' in ar/en/ja/ko) — a colliding
-    // label would let this negative assertion mis-target.
+    // providers.title measured value-unique in all 12 locales (users.title
+    // shares status.member's in de/ja/ko/zh-Hans/zh-Hant, nav.settings
+    // shares chrome.settings' in ar/en/ja/ko) — a colliding label would
+    // let this negative assertion mis-target.
+    // comment-gate-ok: a measurement of the locale tables, not a
+    // behaviour claim; the assertion below is what the gate should bite on.
     expect(text).not.toContain(i18n.global.t("common.providers.title"));
     // And the gating is pinned on the DATA path too, independent of any
     // label: the menu receives two groups for a member, three for an
@@ -132,8 +141,11 @@ describe("AppShell (family grouped chrome)", () => {
 
   it("feeds the family status bar the live engine identity and probe state", async () => {
     // The HkStatusBar prop-name seam is untyped (Vue fallthrough attrs
-    // type-check clean), so the wiring is pinned BEHAVIOURALLY: a real
-    // health payload must arrive on the bar's engineVersion prop (R3 S2).
+    // type-check clean), so the wiring is pinned behaviourally: a real
+    // health payload must arrive on the bar's engineVersion prop.
+    // MUT:statusbar-prop-name-typo — renaming the prop to
+    // `:engine-vresion` leaves vue-tsc clean and reddens THIS test with
+    // `expected null to be 'sentinel-engine-9.9.9'` (verified twice).
     // useEngineHealth reads raw fetch("/api/health") — stub the global.
     vi.stubGlobal(
       "fetch",
