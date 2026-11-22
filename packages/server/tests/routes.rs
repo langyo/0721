@@ -56,6 +56,7 @@ fn base_config() -> Config {
         seed_admin_password: "admin-password".to_owned(),
         trusted_proxies: Vec::new(),
         public_origin: None,
+        cookie_secure: "auto".to_owned(),
         storage_backend: "local".to_owned(),
     }
 }
@@ -5931,52 +5932,51 @@ async fn mcp_reupload_of_own_bytes_still_faces_the_quota_gate() {
 /// The session cookie policy (public-exposure hardening): `SameSite=Lax`
 /// always — `Strict` would strip the cookie from a top-level navigation
 /// that follows a share link from another site, which is this service's
-/// bread and butter — and `Secure` exactly when the deployment is https.
+/// bread and butter — and `Secure` decided per REQUEST (the edge's
+/// `X-Forwarded-Proto`) with `I0721_COOKIE_SECURE` as the pin for edges
+/// that terminate TLS without forwarding the scheme.
 #[tokio::test]
 async fn session_cookie_is_lax_and_secure_only_over_https() {
-    // http dev deployment: Lax, no Secure.
-    let (state, _admin) = test_state().await;
-    let response = app(&state)
-        .oneshot(login_request("admin", "admin-password"))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let cookie = response
-        .headers()
-        .get(header::SET_COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .expect("login sets the cookie")
-        .to_owned();
-    assert!(cookie.contains("SameSite=Lax"), "Lax, not Strict: {cookie}");
-    assert!(!cookie.contains("Strict"), "no Strict left: {cookie}");
-    assert!(
-        !cookie.contains("Secure"),
-        "plain-http dev keeps working: {cookie}"
-    );
+    async fn login_cookie(state: &AppState, extra: Option<(&'static str, &'static str)>) -> String {
+        let mut request = login_request("admin", "admin-password");
+        if let Some((name, value)) = extra {
+            request.headers_mut().insert(
+                header::HeaderName::from_static(name),
+                header::HeaderValue::from_static(value),
+            );
+        }
+        let response = app(state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .expect("login sets the cookie")
+            .to_owned()
+    }
 
-    // https deployment (the public origin pinned): the same login adds
-    // Secure.
-    let (state2, _admin2) = test_state().await;
-    let mut config = state2.config.as_ref().clone();
-    config.public_origin = Some("https://res.example".to_owned());
-    let https_state = i0721_server::state::AppState::new(
-        state2.store.clone(),
-        state2.blobs.clone(),
+    // Plain http, no forwarded scheme: Lax, no Secure (the LAN dev lane
+    // must be able to log in at all).
+    let (state, _admin) = test_state().await;
+    let cookie = login_cookie(&state, None).await;
+    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
+    assert!(!cookie.contains("Strict"), "no Strict left: {cookie}");
+    assert!(!cookie.contains("Secure"), "http keeps working: {cookie}");
+
+    // Behind a TLS edge that forwards the scheme: Secure appears.
+    let cookie = login_cookie(&state, Some(("x-forwarded-proto", "https"))).await;
+    assert!(cookie.contains("Secure"), "https edge: {cookie}");
+    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
+
+    // The pin for edges that do not forward the scheme.
+    let (state_always, _) = test_state().await;
+    let mut config = state_always.config.as_ref().clone();
+    config.cookie_secure = "always".to_owned();
+    let pinned = i0721_server::state::AppState::new(
+        state_always.store.clone(),
+        state_always.blobs.clone(),
         std::sync::Arc::new(config),
     );
-    let response = app(&https_state)
-        .oneshot(login_request("admin", "admin-password"))
-        .await
-        .unwrap();
-    let cookie = response
-        .headers()
-        .get(header::SET_COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .expect("cookie")
-        .to_owned();
-    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
-    assert!(
-        cookie.contains("Secure"),
-        "an https deployment must mark the cookie Secure: {cookie}"
-    );
+    let cookie = login_cookie(&pinned, None).await;
+    assert!(cookie.contains("Secure"), "pinned always: {cookie}");
 }

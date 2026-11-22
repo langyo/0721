@@ -64,6 +64,7 @@ mod tests {
             seed_admin_password: "unused".to_owned(),
             trusted_proxies: Vec::new(),
             public_origin: None,
+            cookie_secure: "auto".to_owned(),
             storage_backend: backend.to_owned(),
         }
     }

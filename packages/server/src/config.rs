@@ -136,6 +136,9 @@ pub struct Config {
     pub log_filter: String,
     /// First-boot admin password (empty user table only).
     pub seed_admin_password: String,
+    /// `I0721_COOKIE_SECURE`: `auto` (default, trust X-Forwarded-Proto),
+    /// `always` (edge terminates TLS without forwarding the scheme) or `never`.
+    pub cookie_secure: String,
     /// Networks whose `X-Forwarded-For` is honored for client-IP
     /// derivation (login throttling). Empty = never trust the header.
     pub trusted_proxies: Vec<IpNet>,
@@ -229,6 +232,7 @@ impl Config {
             upload_concurrency,
             log_filter,
             seed_admin_password,
+            cookie_secure: lookup("I0721_COOKIE_SECURE").unwrap_or_else(|| "auto".to_owned()),
             trusted_proxies,
             public_origin,
             storage_backend: lookup("I0721_STORAGE_BACKEND").unwrap_or_else(|| "local".to_owned()),
