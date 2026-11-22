@@ -7,7 +7,15 @@
 # stage produced (the chest four-guardrail Dockerfile shape: the
 # bare-specifier gate and the vue-tsc/check_i18n runs all happen inside
 # the webui build command before any byte reaches the binary).
-FROM node:24-slim AS stage-webui
+#
+# Base image refs are overridable build args so CI can retarget them at a
+# registry mirror when docker.io is unreachable from the fleet (the chest
+# pattern). Defaults keep plain `docker build` on the upstream names.
+ARG NODE_IMAGE=node:24-slim
+ARG RUST_IMAGE=rust:1-slim
+ARG BASE_IMAGE=debian:bookworm-slim
+
+FROM ${NODE_IMAGE} AS stage-webui
 
 # python3 runs the i18n gate inside the webui build command; corepack
 # ships with node and pins the pnpm version the lockfile expects.
@@ -26,7 +34,7 @@ COPY res res
 COPY packages/webui packages/webui
 RUN pnpm --filter @celestia-island/i0721-webui build
 
-FROM rust:1-slim AS stage-build
+FROM ${RUST_IMAGE} AS stage-build
 
 # libwebp (the `webp` crate builds its C sources via cc) and the image
 # codecs need a C toolchain; the rust image carries gcc already.
@@ -41,7 +49,7 @@ COPY --from=stage-webui /build/dist ./dist
 RUN cargo build --release --locked --package i0721-server
 
 # Stage 3 keeps only the binary — the frontend is inside it.
-FROM debian:bookworm-slim AS stage-runtime
+FROM ${BASE_IMAGE} AS stage-runtime
 
 # curl stays in the runtime image: the compose healthcheck probes
 # /api/health through it.
