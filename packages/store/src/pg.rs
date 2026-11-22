@@ -16,9 +16,10 @@ use uuid::Uuid;
 use i0721_proto::{NewShare, ShareRecord};
 
 use crate::entity::{
-    file_model_from_new, file_model_to_record, share_model_to_record, user_model_from_new,
-    user_model_to_record, FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel,
-    SettingColumn, SettingModel, ShareColumn, ShareModel, UserColumn, UserModel,
+    api_key_model_to_record, file_model_from_new, file_model_to_record, share_model_to_record,
+    user_model_from_new, user_model_to_record, ApiKeyColumn, ApiKeyModel, FileColumn, FileModel,
+    OAuthIdentityColumn, OAuthIdentityModel, SettingColumn, SettingModel, ShareColumn, ShareModel,
+    UserColumn, UserModel,
 };
 use crate::{migrations, CreateUser, Store, StoreError};
 
@@ -475,6 +476,103 @@ impl Store for PgStore {
         Ok(self.query_all::<FileModel>(cmd).await?.len() as u64)
     }
 
+    async fn create_api_key(&self, record: &i0721_proto::ApiKeyRecord) -> Result<(), StoreError> {
+        let model = ApiKeyModel {
+            id: record.id,
+            user_id: record.user_id,
+            name: record.name.clone(),
+            key_prefix: record.key_prefix.clone(),
+            key_hash: record.key_hash.clone(),
+            // Parse the record's JSON text into a REAL JSONB value:
+            // wrapping the string would store a JSON *string* and the
+            // read path's `.to_string()` would then hand back a quoted
+            // copy (the double-encode the round-trip test pins).
+            // FAIL-CLOSED on a bad payload: a permissions column must not
+            // silently degrade to the "empty = full" set, so an
+            // unparseable scopes string is rejected at the write.
+            scopes: serde_json::from_str(&record.scopes).map_err(|err| {
+                StoreError::Db(format!(
+                    "api key scopes must be valid JSON ({err}): {scopes:?}",
+                    scopes = record.scopes
+                ))
+            })?,
+            last_used_at: record.last_used_at.clone(),
+            revoked_at: record.revoked_at.clone(),
+            created_at: record.created_at,
+        };
+        let _ = self
+            .query_one::<ApiKeyModel>(insert_command::<ApiKeyModel>(&model))
+            .await?;
+        Ok(())
+    }
+
+    async fn list_api_keys(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::ApiKeyRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ApiKeyModel::TABLE.to_owned(),
+            filter: Some(ApiKeyColumn::UserId.eq(user_id).into_inner()),
+            order_by: vec![("created_at".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_all::<ApiKeyModel>(cmd)
+            .await?
+            .into_iter()
+            .map(api_key_model_to_record)
+            .collect())
+    }
+
+    async fn revoke_api_key(&self, id: Uuid) -> Result<bool, StoreError> {
+        let cmd = update_command::<ApiKeyModel>(
+            vec![("revoked_at", Value::Text(Timestamp::now().to_string()))],
+            ApiKeyColumn::Id
+                .eq(id)
+                .into_inner()
+                .and(ApiKeyColumn::RevokedAt.is_null().into_inner()),
+        )?;
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Affected(n) = reply else {
+            return Err(StoreError::Db("expected an affected count".to_owned()));
+        };
+        Ok(n > 0)
+    }
+
+    async fn find_api_key_by_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ApiKeyModel::TABLE.to_owned(),
+            filter: Some(
+                ApiKeyColumn::KeyHash
+                    .eq(key_hash)
+                    .into_inner()
+                    .and(ApiKeyColumn::RevokedAt.is_null().into_inner()),
+            ),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_one::<ApiKeyModel>(cmd)
+            .await?
+            .map(api_key_model_to_record))
+    }
+
+    async fn touch_api_key(&self, id: Uuid) -> Result<(), StoreError> {
+        let cmd = update_command::<ApiKeyModel>(
+            vec![("last_used_at", Value::Text(Timestamp::now().to_string()))],
+            ApiKeyColumn::Id.eq(id).into_inner(),
+        )?;
+        self.executor.execute(&cmd).await?;
+        Ok(())
+    }
+
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {
         let cmd = Command::Select {
             table: SettingModel::TABLE.to_owned(),
@@ -774,6 +872,33 @@ impl Store for PgStore {
             table: ShareModel::TABLE.to_owned(),
             filter: Some(ShareColumn::Token.eq(token).into_inner()),
             order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_one::<ShareModel>(cmd)
+            .await?
+            .map(share_model_to_record))
+    }
+
+    async fn find_share_by_file(
+        &self,
+        owner_id: Uuid,
+        file_id: Uuid,
+    ) -> Result<Option<ShareRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ShareModel::TABLE.to_owned(),
+            filter: Some(
+                ShareColumn::FileId
+                    .eq(file_id)
+                    .into_inner()
+                    .and(ShareColumn::OwnerId.eq(owner_id).into_inner()),
+            ),
+            // Newest first: `create_share`'s "return the existing row" is
+            // best-effort (the table has no unique index on `file_id`), so
+            // a raced pair of legacy rows resolves to the latest.
+            order_by: vec![("created_at".to_owned(), false)],
             limit: None,
             offset: None,
             lock: None,

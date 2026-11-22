@@ -702,3 +702,143 @@ async fn pg_create_file_honors_parent_id() {
     assert_eq!(inside.len(), 1, "the nested folder lists the file");
     assert_eq!(inside[0].name, "report.bin");
 }
+
+// ── the shares read path (the MCP link tool's reuse decision) ──────────
+
+/// `find_share_by_file` is owner-scoped, answers the file's row and has
+/// no cross-owner leak (the MCP `get_share_link` reuse path reads it).
+#[tokio::test]
+async fn pg_find_share_by_file_is_owner_scoped() {
+    let Some(store) = db().await else { return };
+    let owner = store.create_user(scratch_user()).await.expect("owner");
+    let other = store
+        .create_user(scratch_user())
+        .await
+        .expect("other owner");
+    // Same-layer uniqueness (migration 0004) forbids two live rows named
+    // alike under one owner, so each file carries its own name.
+    let file = |owner_id, name: &str| NewFile {
+        parent_id: None,
+        owner_id,
+        name: name.to_owned(),
+        kind: FileKind::Other,
+        mime: "application/octet-stream".to_owned(),
+        size: 3,
+        sha256: format!("sh{}", uuid::Uuid::new_v4().simple()),
+        storage_backend: "local".to_owned(),
+        storage_key: format!("sh{}", uuid::Uuid::new_v4().simple()),
+        thumbnail_key: None,
+        original_name: name.to_owned(),
+    };
+    let a = store
+        .create_file(file(owner.id, "share-a.bin"))
+        .await
+        .expect("file a");
+    let b = store
+        .create_file(file(owner.id, "share-b.bin"))
+        .await
+        .expect("file b");
+
+    assert!(
+        store
+            .find_share_by_file(owner.id, a.id)
+            .await
+            .expect("lookup")
+            .is_none(),
+        "a file without a share answers None"
+    );
+
+    let share = store
+        .create_share(i0721_proto::NewShare {
+            file_id: a.id,
+            owner_id: owner.id,
+            expires_at: None,
+            allow_preview: true,
+        })
+        .await
+        .expect("share");
+    let found = store
+        .find_share_by_file(owner.id, a.id)
+        .await
+        .expect("lookup")
+        .expect("the file's share is found");
+    assert_eq!(found.token, share.token);
+    assert!(
+        store
+            .find_share_by_file(owner.id, b.id)
+            .await
+            .expect("lookup")
+            .is_none(),
+        "the lookup is per file"
+    );
+    assert!(
+        store
+            .find_share_by_file(other.id, a.id)
+            .await
+            .expect("lookup")
+            .is_none(),
+        "the lookup is per owner"
+    );
+
+    cleanup_user(&store, owner.id).await;
+    cleanup_user(&store, other.id).await;
+}
+
+/// The api_keys scopes column is JSONB. The write path parses the
+/// record's JSON text and the read path serializes the value back, so
+/// the pair must be a true inverse for EVERY shape — array, object and
+/// a JSON *string* payload (a String special case on the read side
+/// would strip its quotes), and an unparseable payload must be REJECTED
+/// at the write (a permissions column may not silently become the
+/// fail-open "empty = full" set).
+#[tokio::test]
+async fn pg_api_key_scopes_round_trip_and_reject_garbage() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    for payload in [
+        "[]",
+        "[\"read\",\"write\"]",
+        "{\"share\":true}",
+        "\"openid profile\"",
+    ] {
+        let record = i0721_proto::ApiKeyRecord {
+            id: uuid::Uuid::new_v4(),
+            user_id: user.id,
+            name: format!("scopes-{payload}"),
+            key_prefix: "i0721-abcd".to_owned(),
+            key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
+            scopes: payload.to_owned(),
+            last_used_at: None,
+            revoked_at: None,
+            created_at: jiff::Timestamp::now(),
+        };
+        store.create_api_key(&record).await.expect("insert");
+        let rows = store.list_api_keys(user.id).await.expect("list");
+        let row = rows
+            .iter()
+            .find(|r| r.id == record.id)
+            .expect("the row is listed");
+        assert_eq!(
+            row.scopes, payload,
+            "the scopes payload round-trips byte-identically ({payload})"
+        );
+    }
+
+    // Garbage must be refused, not folded into the empty set.
+    let bad = i0721_proto::ApiKeyRecord {
+        id: uuid::Uuid::new_v4(),
+        user_id: user.id,
+        name: "scopes-garbage".to_owned(),
+        key_prefix: "i0721-beef".to_owned(),
+        key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
+        scopes: "not-json".to_owned(),
+        last_used_at: None,
+        revoked_at: None,
+        created_at: jiff::Timestamp::now(),
+    };
+    let refused = store.create_api_key(&bad).await;
+    assert!(
+        refused.is_err(),
+        "an unparseable scopes payload is refused (fail-closed): {refused:?}"
+    );
+}

@@ -139,5 +139,21 @@
     "preview": "Preview",
     "fileNotAvailable": "This file is no longer available",
     "breadcrumbRoot": "My files"
+  },
+  "keys": {
+    "title": "API Keys",
+    "create": "Create key",
+    "empty": "No keys yet",
+    "nameLabel": "Key name",
+    "copyOnceWarning": "This key will NOT be shown again. Copy it now.",
+    "copied": "Copied!",
+    "copyFailed": "Copy failed — select the text and copy it manually.",
+    "copyConfig": "Copy config",
+    "copyPrompt": "Copy agent prompt",
+    "configTemplate": "MCP endpoint: {endpoint}\nAPI key: {key}",
+    "promptTemplate": "Use the 0721 MCP server at {endpoint} with API key {key}. Available tools: list_files, file_info, upload_file, get_share_link, search_files.",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke key {name}?",
+    "revoked": "Revoked"
   }
 }

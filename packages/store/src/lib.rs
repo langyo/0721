@@ -226,6 +226,17 @@ pub trait Store: Send + Sync {
     /// The share a token addresses (expiry checked by the caller).
     async fn get_share(&self, token: &str) -> Result<Option<ShareRecord>, StoreError>;
 
+    /// The share row one owner's file already has, if any (newest first
+    /// when legacy duplicates exist). Expiry is the CALLER's call: the
+    /// public share lane enforces it when it resolves a token, and the
+    /// MCP link tool re-mints an expired row instead of handing a dead
+    /// token back.
+    async fn find_share_by_file(
+        &self,
+        owner_id: Uuid,
+        file_id: Uuid,
+    ) -> Result<Option<ShareRecord>, StoreError>;
+
     /// One owner's shares, newest first.
     async fn list_shares(&self, owner_id: Uuid) -> Result<Vec<ShareRecord>, StoreError>;
 
@@ -246,6 +257,30 @@ pub trait Store: Send + Sync {
         user_id: Uuid,
         quota_bytes: Option<i64>,
     ) -> Result<(), StoreError>;
+
+    // ── API keys (the MCP wave) ──────────────────────────────────────
+
+    /// Create an API key row.
+    async fn create_api_key(&self, record: &i0721_proto::ApiKeyRecord) -> Result<(), StoreError>;
+
+    /// One owner's API keys, newest first.
+    async fn list_api_keys(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::ApiKeyRecord>, StoreError>;
+
+    /// Soft-revoke by id (owner-or-admin checked by the caller).
+    async fn revoke_api_key(&self, id: Uuid) -> Result<bool, StoreError>;
+
+    /// Find a live (non-revoked) key by its hash. The caller handles
+    /// the async last_used_at refresh.
+    async fn find_api_key_by_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError>;
+
+    /// Best-effort last_used_at update (never blocks the request path).
+    async fn touch_api_key(&self, id: Uuid) -> Result<(), StoreError>;
 
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError>;
 

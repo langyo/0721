@@ -89,6 +89,9 @@ include_dir = "^0.7"
 
 futures = "^0.3"
 
+# SSE streaming for the MCP transport.
+async-stream = "^0.3"
+
 # S3-compatible blob backend (Apache-2.0; aws feature covers sigv4
 # against minio/R2/AWS).
 object_store = { version = "^0.12", features = ["aws"] }

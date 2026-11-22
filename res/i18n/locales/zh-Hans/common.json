@@ -139,5 +139,21 @@
     "preview": "预览",
     "fileNotAvailable": "该文件不再可用",
     "breadcrumbRoot": "我的文件"
+  },
+  "keys": {
+    "title": "API 密钥",
+    "create": "创建密钥",
+    "empty": "暂无密钥",
+    "nameLabel": "密钥名称",
+    "copyOnceWarning": "此密钥不会再次显示，请立即复制。",
+    "copied": "已复制！",
+    "copyFailed": "复制失败——请手动选中文本复制。",
+    "copyConfig": "复制配置",
+    "copyPrompt": "复制 Agent 提示词",
+    "configTemplate": "MCP 端点：{endpoint}\nAPI 密钥：{key}",
+    "promptTemplate": "请使用 {endpoint} 上的 0721 MCP 服务器，API 密钥为 {key}。可用工具：list_files、file_info、upload_file、get_share_link、search_files。",
+    "revoke": "吊销",
+    "revokeConfirm": "吊销密钥 {name}？",
+    "revoked": "已吊销"
   }
 }

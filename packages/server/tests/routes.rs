@@ -4546,3 +4546,1383 @@ async fn ipfs_mkdir_eexist_is_swallowed_but_faults_surface() {
         .await;
     assert!(fault.is_err(), "a genuine mkdir fault surfaces: {fault:?}");
 }
+
+// ── the API key + MCP lane ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn mcp_keys_crud_copy_once_semantics() {
+    let (state, token) = test_state_with_token().await;
+
+    // Create: the plaintext key appears EXACTLY ONCE.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "my agent key"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let key = envelope["result"]["key"].as_str().unwrap().to_owned();
+    assert!(
+        key.starts_with("i0721-"),
+        "the format is i0721-<hex>: {key}"
+    );
+    assert_eq!(key.len(), 38, "prefix + 32 hex chars: {key}");
+    let key_id = envelope["result"]["id"].as_str().unwrap().to_owned();
+
+    // List: the plaintext NEVER appears.
+    let (_, list) = rpc(&state, &token, "keys.list", serde_json::Value::Null).await;
+    let items = list["result"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(
+        !serde_json::to_string(items).unwrap().contains(&key),
+        "the LIST must NOT carry the plaintext key"
+    );
+    assert!(
+        items[0]["key_prefix"].as_str().unwrap().ends_with("****"),
+        "the list shows the masked prefix"
+    );
+
+    // Revoke.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "keys.revoke",
+        serde_json::json!({"id": key_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // Revoked key: create a second one, verify the revoked one is dead.
+    let (_, e2) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "second"}),
+    )
+    .await;
+    let key2 = e2["result"]["key"].as_str().unwrap().to_owned();
+    let record2 = state
+        .store
+        .find_api_key_by_hash(&mcp_test_helper::hash(&key2))
+        .await
+        .unwrap();
+    assert!(record2.is_some(), "the live key verifies");
+
+    let record1 = state
+        .store
+        .find_api_key_by_hash(&mcp_test_helper::hash(&key))
+        .await
+        .unwrap();
+    assert!(record1.is_none(), "the REVOKED key does not verify");
+}
+
+/// Hash helper for tests (exposes the private function).
+mod mcp_test_helper {
+    pub fn hash(key: &str) -> String {
+        i0721_server::mcp::hash_api_key(key)
+    }
+}
+
+#[tokio::test]
+async fn mcp_sse_handshake_and_tool_flow() {
+    let (state, token) = test_state_with_token().await;
+
+    // Create an API key.
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "mcp-test"}),
+    )
+    .await;
+    let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
+
+    // 1. SSE without key → 401 (oneshot).
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/mcp/sse")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "no key → 401");
+
+    // 2. SSE with key → 200 (the stream opens; we can't easily read SSE
+    // frames through oneshot — the real TCP test below covers the shape).
+    // Instead, verify the MESSAGE dispatch through oneshot by first
+    // registering a session via the SSE handshake.
+    // (The SSE stream is a long-lived response; oneshot can't complete it.
+    // The tool dispatch is exercised through the message endpoint below.)
+
+    // 3. Message with an unknown session → 401.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mcp/message?sessionId=00000000-0000-0000-0000-000000000000")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "unknown session → 401"
+    );
+
+    let _ = api_key; // (the SSE 200 is proven by the raw TCP test below)
+}
+
+/// Raw TCP: the SSE first frame carries the endpoint event + sessionId.
+#[tokio::test]
+async fn mcp_sse_first_frame_has_endpoint_event() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (state, token) = test_state_with_token().await;
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "tcp-sse"}),
+    )
+    .await;
+    let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = routes::app(state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", addr.port()))
+        .await
+        .unwrap();
+    stream
+        .write_all(
+            format!(
+        "GET /api/mcp/sse HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {api_key}\r\n\r\n"
+    )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+
+    let mut buf = [0u8; 8192];
+    let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buf))
+        .await
+        .expect("read within 5s")
+        .unwrap();
+    let sse = String::from_utf8_lossy(&buf[..n]).to_string();
+    assert!(
+        sse.starts_with("HTTP/1.1 200"),
+        "with key → 200: {}",
+        sse.lines().next().unwrap_or_default()
+    );
+    assert!(
+        sse.contains("event: endpoint"),
+        "the first frame is the endpoint event"
+    );
+    assert!(sse.contains("sessionId="), "the sessionId is in the data");
+}
+
+#[tokio::test]
+async fn mcp_revoked_key_sse_handshake_401() {
+    let (state, token) = test_state_with_token().await;
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "revoke-me"}),
+    )
+    .await;
+    let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
+    let key_id = envelope["result"]["id"].as_str().unwrap().to_owned();
+
+    // Revoke.
+    let _ = rpc(
+        &state,
+        &token,
+        "keys.revoke",
+        serde_json::json!({"id": key_id}),
+    )
+    .await;
+
+    // The revoked key cannot open an SSE stream.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/mcp/sse")
+                .header(header::AUTHORIZATION, format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "revoked key → 401"
+    );
+}
+
+#[tokio::test]
+async fn mcp_keys_admin_gate() {
+    let (state, token) = test_state_with_token().await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "keymate".to_owned(),
+            display_name: "KeyMate".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+
+    // Admin creates a key.
+    let (_, e1) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "admin-key"}),
+    )
+    .await;
+    let admin_key_id = e1["result"]["id"].as_str().unwrap().to_owned();
+
+    // Member tries to revoke the admin's key → 403.
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "keys.revoke",
+        serde_json::json!({"id": admin_key_id}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "member cannot revoke another's key"
+    );
+}
+
+// ── W7 S1: the MCP upload chain + the session lifecycle ────────────────
+
+/// Serve the real router on an ephemeral port (the raw-TCP SSE lane needs
+/// a socket) and return the port.
+async fn mcp_serve(state: &AppState) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = routes::app(state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    addr.port()
+}
+
+/// Read from a raw TCP socket until the accumulated bytes contain
+/// `needle` (5 s budget). Panics with the partial transcript instead of
+/// hanging when the frame never arrives.
+async fn sse_read_until(stream: &mut tokio::net::TcpStream, needle: &str) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut acc: Vec<u8> = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let text = String::from_utf8_lossy(&acc).to_string();
+        if text.contains(needle) {
+            return text;
+        }
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        assert!(
+            !left.is_zero(),
+            "the SSE frame carrying {needle:?} never arrived: {text}"
+        );
+        let mut buf = [0u8; 8192];
+        let n = tokio::time::timeout(left, stream.read(&mut buf))
+            .await
+            .unwrap_or_else(|_| panic!("SSE read timed out waiting for {needle:?}: {text}"))
+            .unwrap_or_else(|err| panic!("SSE read failed: {err}"));
+        assert!(n > 0, "the SSE stream closed before {needle:?}: {text}");
+        acc.extend_from_slice(&buf[..n]);
+    }
+}
+
+/// Read whatever the stream delivers within `budget` and return it. The
+/// negative-side companion of [`sse_read_until`]: used to prove that a
+/// frame does NOT arrive (a notification is never answered).
+async fn sse_drain(stream: &mut tokio::net::TcpStream, budget: std::time::Duration) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut acc: Vec<u8> = Vec::new();
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return String::from_utf8_lossy(&acc).to_string();
+        }
+        let mut buf = [0u8; 4096];
+        match tokio::time::timeout(left, stream.read(&mut buf)).await {
+            // The peer closed, or the budget elapsed with nothing new.
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return String::from_utf8_lossy(&acc).to_string(),
+            Ok(Ok(n)) => acc.extend_from_slice(&buf[..n]),
+        }
+    }
+}
+
+/// The `sessionId` carried by the handshake's first (endpoint) frame.
+fn session_id_of(frame: &str) -> String {
+    frame
+        .split("sessionId=")
+        .nth(1)
+        .expect("the endpoint frame carries the sessionId")
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect()
+}
+
+/// Mint an API key through the RPC lane and return the plaintext.
+async fn mcp_api_key(state: &AppState, token: &str, name: &str) -> String {
+    let (status, envelope) = rpc(
+        state,
+        token,
+        "keys.create",
+        serde_json::json!({"name": name}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    envelope["result"]["key"].as_str().unwrap().to_owned()
+}
+
+/// Open the SSE lane over real TCP: the socket plus its session id.
+async fn mcp_handshake(state: &AppState, api_key: &str) -> (tokio::net::TcpStream, String) {
+    use tokio::io::AsyncWriteExt;
+    let port = mcp_serve(state).await;
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+        .await
+        .unwrap();
+    stream
+        .write_all(
+            format!(
+                "GET /api/mcp/sse HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 Authorization: Bearer {api_key}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let frame = sse_read_until(&mut stream, "sessionId=").await;
+    assert!(
+        frame.contains("event: endpoint"),
+        "the first frame is the endpoint event: {frame}"
+    );
+    let session_id = session_id_of(&frame);
+    assert!(
+        !session_id.is_empty(),
+        "the frame carries a sessionId: {frame}"
+    );
+    (stream, session_id)
+}
+
+/// POST one JSON-RPC frame on the message lane (the real router) and
+/// return its HTTP answer.
+async fn mcp_post_message(
+    state: &AppState,
+    session_id: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    })
+    .to_string();
+    mcp_post_body(state, session_id, body).await
+}
+
+/// POST one raw JSON-RPC body on the message lane. Covers the shapes the
+/// typed helper cannot build: notifications (no `id`) and deliberate
+/// protocol violations.
+async fn mcp_post_body(
+    state: &AppState,
+    session_id: &str,
+    body: String,
+) -> (StatusCode, serde_json::Value) {
+    mcp_post_body_at(state, session_id, None, body).await
+}
+
+/// The same POST with an explicit `Host` header (`Some`) or none at all
+/// (`None`) — the origin-derivation lane's two inputs.
+async fn mcp_post_body_at(
+    state: &AppState,
+    session_id: &str,
+    host: Option<&str>,
+    body: String,
+) -> (StatusCode, serde_json::Value) {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/mcp/message?sessionId={session_id}"))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(host) = host {
+        request = request.header(header::HOST, host);
+    }
+    let response = app(state)
+        .oneshot(request.body(Body::from(body)).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or_default())
+}
+
+/// POST one frame with an explicit `id` and return the HTTP answer. The
+/// result itself comes back on the SSE stream, tagged with this id.
+async fn mcp_post_frame(
+    state: &AppState,
+    session_id: &str,
+    id: i64,
+    method: &str,
+    params: serde_json::Value,
+) -> StatusCode {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    })
+    .to_string();
+    mcp_post_body(state, session_id, body).await.0
+}
+
+/// `tools/call` through the message lane; returns the HTTP answer (the
+/// tool RESULT itself comes back on the SSE stream).
+async fn mcp_call_tool(
+    state: &AppState,
+    session_id: &str,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> StatusCode {
+    let (status, _) = mcp_post_message(
+        state,
+        session_id,
+        "tools/call",
+        serde_json::json!({"name": tool, "arguments": arguments}),
+    )
+    .await;
+    status
+}
+
+/// The JSON-RPC envelope of the first `data:` line that carries one (the
+/// stream also carries the endpoint frame and keepalive comments).
+fn sse_envelope(frame: &str) -> serde_json::Value {
+    frame
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .find_map(|data| {
+            serde_json::from_str::<serde_json::Value>(data.trim())
+                .ok()
+                .filter(|value| value.get("jsonrpc").is_some())
+        })
+        .unwrap_or_else(|| panic!("no JSON-RPC frame in: {frame}"))
+}
+
+/// `(isError, text)` of a `tools/call` result.
+fn mcp_tool_result(envelope: &serde_json::Value) -> (bool, String) {
+    let result = &envelope["result"];
+    let is_error = result["isError"].as_bool().unwrap_or(false);
+    let text = result["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    (is_error, text)
+}
+
+/// One tool of a `tools/list` answer, by name.
+fn tool_of<'a>(tools: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    tools
+        .as_array()
+        .unwrap_or_else(|| panic!("tools/list must answer an array: {tools}"))
+        .iter()
+        .find(|tool| tool["name"] == name)
+        .unwrap_or_else(|| panic!("no tool named {name:?} in {tools}"))
+}
+
+/// A PNG of the given shape — a DISTINCT byte string per shape, so the
+/// per-owner content dedupe does not collapse two test uploads into one
+/// row.
+fn png_of(width: u32, height: u32) -> Vec<u8> {
+    let image = image::DynamicImage::new_rgb8(width, height);
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    bytes
+}
+
+/// Base64 of the bytes, as the MCP `content_base64` argument carries them.
+fn base64_of(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// The MCP upload tool runs the REST chain: the QUOTA gate rejects an
+/// over-quota upload as a tool error (the tool used to skip quota).
+#[tokio::test]
+async fn mcp_upload_file_enforces_quota() {
+    let (state, admin) = test_state().await;
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    // A quota far below one upload.
+    state
+        .store
+        .set_user_quota(admin.id, Some(16))
+        .await
+        .unwrap();
+    let api_key = mcp_api_key(&state, &token, "quota-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let status = mcp_call_tool(
+        &state,
+        &session_id,
+        "upload_file",
+        serde_json::json!({
+            "content_base64": base64_of(&tiny_png()),
+            "name": "too-much.png",
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "the message lane accepted the frame"
+    );
+
+    let frames = sse_read_until(&mut sse, "\"isError\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(
+        is_error,
+        "an over-quota upload must be a tool error: {frames}"
+    );
+    assert!(
+        text.to_lowercase().contains("quota"),
+        "the tool text names the quota gate: {text}"
+    );
+}
+
+/// The MCP upload tool refuses a destination folder the caller does not
+/// own (the tool used to pass any folder id straight into the row).
+#[tokio::test]
+async fn mcp_upload_file_refuses_foreign_folder() {
+    let (state, admin) = test_state().await;
+    let admin_token = state.signer.sign(admin.id, Timestamp::now());
+    let admin_folder = mk_folder(&state, &admin_token, "admin-only", None).await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "mcp-member".to_owned(),
+            display_name: "MCP Member".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    let api_key = mcp_api_key(&state, &member_token, "member-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let status = mcp_call_tool(
+        &state,
+        &session_id,
+        "upload_file",
+        serde_json::json!({
+            "content_base64": base64_of(&tiny_png()),
+            "name": "intruder.png",
+            "folder_id": admin_folder,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    let frames = sse_read_until(&mut sse, "\"isError\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(is_error, "a foreign folder must be a tool error: {frames}");
+    assert!(
+        text.contains("not your folder"),
+        "the tool text names the ownership rule: {text}"
+    );
+
+    // Nothing landed anywhere in the admin's folder.
+    let folder_id = uuid::Uuid::parse_str(&admin_folder).unwrap();
+    let rows = state
+        .store
+        .list_folder(admin.id, Some(folder_id), None, 0, 100)
+        .await
+        .unwrap();
+    assert!(rows.is_empty(), "the refused upload wrote no row: {rows:?}");
+}
+
+/// The MCP upload tool records the CONFIGURED storage backend (it used to
+/// hardcode "local" while the bytes went to the configured backend).
+#[tokio::test]
+async fn mcp_upload_records_configured_backend() {
+    let (state, stub) = ipfs_stub_state().await;
+    let admin = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap();
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    let api_key = mcp_api_key(&state, &token, "ipfs-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let status = mcp_call_tool(
+        &state,
+        &session_id,
+        "upload_file",
+        serde_json::json!({
+            "content_base64": base64_of(&tiny_png()),
+            "name": "mcp-tag.png",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    let frames = sse_read_until(&mut sse, "\"result\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(
+        !is_error,
+        "the upload must succeed on the ipfs lane: {frames}"
+    );
+    let dto: serde_json::Value = serde_json::from_str(&text).expect("the tool answers a FileDto");
+    let file_id = uuid::Uuid::parse_str(dto["id"].as_str().unwrap()).unwrap();
+    let record = state.store.get_file(file_id).await.unwrap().unwrap();
+    assert_eq!(
+        record.storage_backend, "ipfs",
+        "the configured tag, not the tool's old literal"
+    );
+    assert!(
+        stub.mfs
+            .lock()
+            .unwrap()
+            .contains_key(&format!("/i0721/media/{}", record.storage_key)),
+        "the bytes flowed through the IPFS backend: {:?}",
+        stub.mfs.lock().unwrap().keys()
+    );
+}
+
+/// A key revoked AFTER the handshake kills the live session: the message
+/// lane re-checks the session's key, answers 401 naming the revocation
+/// and drops the entry, so the stream ends and the sessionId is dead.
+#[tokio::test]
+async fn mcp_revoked_key_kills_the_live_session() {
+    let (state, token) = test_state_with_token().await;
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "live-revoke"}),
+    )
+    .await;
+    let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
+    let key_id = envelope["result"]["id"].as_str().unwrap().to_owned();
+
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    // The session really is live BEFORE the revocation.
+    let (status, _) =
+        mcp_post_message(&state, &session_id, "initialize", serde_json::json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "a live session accepts a frame"
+    );
+    let frames = sse_read_until(&mut sse, "protocolVersion").await;
+    assert!(
+        frames.contains("\"result\""),
+        "the live session answered: {frames}"
+    );
+
+    // Revoke the key behind the session's back.
+    let (_, revoked) = rpc(
+        &state,
+        &token,
+        "keys.revoke",
+        serde_json::json!({"id": key_id}),
+    )
+    .await;
+    assert!(
+        revoked.get("result").is_some(),
+        "the revoke call succeeded: {revoked}"
+    );
+
+    // The next frame on the SAME session is refused: 401 whose body names
+    // the revocation (not the generic unknown-session answer).
+    let (status, body) =
+        mcp_post_message(&state, &session_id, "initialize", serde_json::json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the revoked key's live session is dead: {body}"
+    );
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("revoked"),
+        "the answer names the revocation: {body}"
+    );
+
+    // The entry is gone: a retry answers the generic unknown-session 401.
+    let (status, body) =
+        mcp_post_message(&state, &session_id, "initialize", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown"),
+        "the session left the table: {body}"
+    );
+
+    // And the SSE stream itself ends: the client cannot keep riding it.
+    // (A finished chunked body is NOT a TCP EOF — hyper keeps the
+    // connection for the next request — so the observable event is the
+    // response's terminating `0\r\n\r\n` chunk.)
+    assert!(
+        sse_read_to_end(&mut sse, std::time::Duration::from_secs(5)).await,
+        "the revoked key's SSE stream must end, not keep pinging"
+    );
+}
+
+/// Read to the end of the chunked response body (the `0\r\n\r\n`
+/// terminator) within the budget; `true` when the server finished the
+/// stream (or closed the socket) in time.
+///
+/// The terminator is matched WITHOUT its leading CRLF: the earlier
+/// `sse_read_until` reads already consumed the last data chunk's trailing
+/// CRLF, so a finished stream here reads exactly `"0\r\n\r\n"`.
+async fn sse_read_to_end(stream: &mut tokio::net::TcpStream, budget: std::time::Duration) -> bool {
+    use tokio::io::AsyncReadExt;
+    let mut acc: Vec<u8> = Vec::new();
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        if String::from_utf8_lossy(&acc).ends_with("0\r\n\r\n") {
+            return true;
+        }
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        let mut buf = [0u8; 8192];
+        match tokio::time::timeout(left, stream.read(&mut buf)).await {
+            Ok(Ok(0)) | Ok(Err(_)) => return true,
+            Ok(Ok(n)) => acc.extend_from_slice(&buf[..n]),
+            Err(_) => return false,
+        }
+    }
+}
+
+/// The disconnect hook: dropping the SSE body removes the session from
+/// the table immediately instead of squatting for the rest of the TTL.
+#[tokio::test]
+async fn mcp_session_leaves_the_table_on_disconnect() {
+    let (state, token) = test_state_with_token().await;
+    let api_key = mcp_api_key(&state, &token, "drop-key").await;
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/mcp/sse")
+                .header(header::AUTHORIZATION, format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Poll the first frame (the endpoint event) so the stream body — and
+    // with it the guard — is really alive, then drop it.
+    let mut frames = Box::pin(response.into_body().into_data_stream());
+    let first = futures::StreamExt::next(&mut frames)
+        .await
+        .expect("the endpoint frame")
+        .unwrap();
+    let text = String::from_utf8_lossy(&first).to_string();
+    assert!(
+        text.contains("event: endpoint"),
+        "the first frame is the endpoint event: {text}"
+    );
+    let session_id = session_id_of(&text);
+    drop(frames); // the client went away
+
+    // The session left the table with its stream: the message lane no
+    // longer knows it. (Without the guard it stays accepted until the
+    // TTL sweep.)
+    let (status, body) =
+        mcp_post_message(&state, &session_id, "initialize", serde_json::json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the session left the table with its stream: {body}"
+    );
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown"),
+        "{body}"
+    );
+}
+
+// ── W7 S2: the JSON-RPC envelope, the tool schemas and the share link ──
+
+/// `initialize` answers the shape a client needs before it calls
+/// anything: protocolVersion, serverInfo and capabilities.
+#[tokio::test]
+async fn mcp_initialize_answers_protocol_version_and_server_info() {
+    let (state, token) = test_state_with_token().await;
+    let api_key = mcp_api_key(&state, &token, "init-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let status = mcp_post_frame(&state, &session_id, 5, "initialize", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    let frames = sse_read_until(&mut sse, "\"serverInfo\"").await;
+    let envelope = sse_envelope(&frames);
+    assert_eq!(envelope["id"], 5, "the id rides back verbatim");
+    assert!(
+        envelope.get("error").is_none(),
+        "initialize is not an error: {envelope}"
+    );
+    let result = &envelope["result"];
+    assert_eq!(
+        result["protocolVersion"], "2024-11-05",
+        "the advertised MCP revision"
+    );
+    assert_eq!(result["serverInfo"]["name"], "0721");
+    assert_eq!(result["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
+    assert!(
+        result["capabilities"]["tools"].is_object(),
+        "the server advertises the tools capability: {result}"
+    );
+}
+
+/// Five tools, each with a REAL JSON Schema `inputSchema`: an object
+/// schema, typed properties, and a `required` list whose entries are
+/// properties. The two paging tools declare the same window their
+/// implementation honors (default 100/500, capped at 100/500).
+#[tokio::test]
+async fn mcp_tools_list_carries_a_real_input_schema_per_tool() {
+    let (state, token) = test_state_with_token().await;
+    let api_key = mcp_api_key(&state, &token, "schema-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let status = mcp_post_frame(&state, &session_id, 1, "tools/list", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"inputSchema\"").await;
+    let envelope = sse_envelope(&frames);
+    assert!(envelope.get("error").is_none(), "{envelope}");
+    let tools = &envelope["result"]["tools"];
+
+    let mut names: Vec<&str> = tools
+        .as_array()
+        .expect("tools/list answers an array of tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("each tool has a name"))
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "file_info",
+            "get_share_link",
+            "list_files",
+            "search_files",
+            "upload_file"
+        ],
+        "the five tools, each named once"
+    );
+
+    for tool in tools.as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        let schema = &tool["inputSchema"];
+        assert_eq!(
+            schema["type"], "object",
+            "{name}: inputSchema must be an object schema"
+        );
+        let properties = schema["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{name}: inputSchema has no properties object"));
+        assert!(
+            !properties.is_empty(),
+            "{name}: inputSchema properties must not be empty"
+        );
+        let required = schema["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{name}: inputSchema has no required list"));
+        for key in required {
+            let key = key.as_str().expect("required entries are strings");
+            assert!(
+                properties.contains_key(key),
+                "{name}: required {key:?} is not one of its properties"
+            );
+        }
+    }
+
+    // `list_files` really takes the two paging knobs (and says how wide).
+    let list = &tool_of(tools, "list_files")["inputSchema"]["properties"];
+    for key in ["offset", "limit"] {
+        assert_eq!(
+            list[key]["type"], "integer",
+            "list_files.{key} is an integer"
+        );
+    }
+    assert_eq!(
+        list["limit"]["maximum"], 100,
+        "list_files caps the page at 100"
+    );
+
+    // `search_files` pages too, at 500, and requires its query.
+    let search = &tool_of(tools, "search_files")["inputSchema"];
+    assert_eq!(search["properties"]["limit"]["maximum"], 500);
+    assert!(
+        search["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key == "query"),
+        "search_files requires the query: {search}"
+    );
+
+    // `get_share_link` exposes the share parameters it now honors.
+    let share = &tool_of(tools, "get_share_link")["inputSchema"]["properties"];
+    for key in ["file_id", "expires_at", "allow_preview"] {
+        assert!(
+            share.get(key).is_some(),
+            "get_share_link exposes {key}: {share}"
+        );
+    }
+    assert_eq!(share["allow_preview"]["type"], "boolean");
+}
+
+/// A notification (a valid request object WITHOUT `id`) is accepted with
+/// 202 and NEVER answered: no frame appears on the stream. The session
+/// stays usable, so the silence is the notification branch, not a dead
+/// stream.
+#[tokio::test]
+async fn mcp_notification_is_accepted_without_a_response_frame() {
+    let (state, token) = test_state_with_token().await;
+    let api_key = mcp_api_key(&state, &token, "notify-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let (status, body) = mcp_post_body(
+        &state,
+        &session_id,
+        serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "a notification is accepted: {body}"
+    );
+
+    let drained = sse_drain(&mut sse, std::time::Duration::from_millis(300)).await;
+    assert!(
+        !drained.contains("\"jsonrpc\""),
+        "a notification must NOT be answered on the stream: {drained:?}"
+    );
+
+    // Positive control: the very same session answers the next real call.
+    let status = mcp_post_frame(&state, &session_id, 2, "initialize", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"protocolVersion\"").await;
+    assert!(
+        frames.contains("\"id\":2"),
+        "the session survived the notification: {frames}"
+    );
+}
+
+/// Protocol failures ride the envelope's TOP-LEVEL `error` object — never
+/// a `result` payload that merely contains an error shape.
+#[tokio::test]
+async fn mcp_protocol_failures_use_the_top_level_error_object() {
+    let (state, token) = test_state_with_token().await;
+    let api_key = mcp_api_key(&state, &token, "fault-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    // Unknown method → -32601.
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        3,
+        "no.such.method",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "-32601").await;
+    let envelope = sse_envelope(&frames);
+    assert_eq!(envelope["id"], 3);
+    assert!(
+        envelope.get("result").is_none(),
+        "a protocol failure is not a result payload: {envelope}"
+    );
+    assert_eq!(envelope["error"]["code"], -32601, "{envelope}");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no.such.method"),
+        "the error names the method: {envelope}"
+    );
+
+    // Unknown tool → -32602, the same top-level shape.
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        4,
+        "tools/call",
+        serde_json::json!({"name": "no_such_tool", "arguments": {}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "-32602").await;
+    let envelope = sse_envelope(&frames);
+    assert_eq!(envelope["id"], 4);
+    assert!(
+        envelope.get("result").is_none(),
+        "an unknown tool is a protocol error, not a tool result: {envelope}"
+    );
+    assert_eq!(envelope["error"]["code"], -32602, "{envelope}");
+}
+
+/// A body the server cannot even read answers an HTTP error whose body
+/// carries the prescribed id-less error frame (-32700 / -32600) — and
+/// nothing leaks onto the stream.
+#[tokio::test]
+async fn mcp_message_refuses_unusable_bodies_with_the_prescribed_frames() {
+    let (state, token) = test_state_with_token().await;
+    let api_key = mcp_api_key(&state, &token, "bad-body-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    // Unparseable JSON → -32700.
+    let (status, frame) = mcp_post_body(&state, &session_id, "{".to_owned()).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "an unparseable body is an HTTP error: {frame}"
+    );
+    assert_eq!(frame["jsonrpc"], "2.0");
+    assert!(frame["id"].is_null(), "no request id existed: {frame}");
+    assert_eq!(frame["error"]["code"], -32700, "{frame}");
+
+    // A JSON value that is not an object → -32600.
+    let (status, frame) = mcp_post_body(&state, &session_id, "[]".to_owned()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(frame["error"]["code"], -32600, "{frame}");
+
+    // A non-string `method` → -32600 (Invalid Request, never "unknown
+    // method": the call never happened).
+    let (status, frame) = mcp_post_body(
+        &state,
+        &session_id,
+        serde_json::json!({"jsonrpc": "2.0", "id": 9, "method": 42}).to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(frame["error"]["code"], -32600, "{frame}");
+    assert!(
+        frame["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("string"),
+        "the error names the method rule: {frame}"
+    );
+
+    // None of it reached the stream.
+    let drained = sse_drain(&mut sse, std::time::Duration::from_millis(300)).await;
+    assert!(
+        !drained.contains("\"jsonrpc\""),
+        "unusable frames stay off the stream: {drained:?}"
+    );
+}
+
+/// A real `tools/call` (list_files) over the SSE lane: handshake →
+/// initialize → tools/call, with the result frame carrying the request's
+/// own id; `offset`/`limit` really page (they were ignored before).
+#[tokio::test]
+async fn mcp_list_files_pages_through_the_tool_over_sse() {
+    let (state, token) = test_state_with_token().await;
+    // Two DISTINCT uploads (the per-owner content dedupe would collapse
+    // two identical PNGs into one row).
+    let (_, first) = upload(&state, &token, png_of(4, 4), "a.png").await;
+    let (_, second) = upload(&state, &token, png_of(5, 4), "b.png").await;
+    let ids = [
+        first["id"].as_str().unwrap().to_owned(),
+        second["id"].as_str().unwrap().to_owned(),
+    ];
+
+    let api_key = mcp_api_key(&state, &token, "page-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    // The real client order: initialize first.
+    let status = mcp_post_frame(&state, &session_id, 1, "initialize", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"protocolVersion\"").await;
+    assert!(frames.contains("\"id\":1"), "{frames}");
+
+    // limit=1 → exactly one row, and the frame carries id 7.
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        7,
+        "tools/call",
+        serde_json::json!({"name": "list_files", "arguments": {"limit": 1}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"id\":7").await;
+    let envelope = sse_envelope(&frames);
+    assert_eq!(envelope["id"], 7, "the result frame carries its request id");
+    assert!(envelope.get("error").is_none(), "{envelope}");
+    let (is_error, text) = mcp_tool_result(&envelope);
+    assert!(!is_error, "the tool call succeeded: {text}");
+    let page: Vec<serde_json::Value> =
+        serde_json::from_str(&text).expect("the tool answers a FileDto array");
+    assert_eq!(page.len(), 1, "limit=1 returns one row: {page:?}");
+    let first_row = page[0]["id"].as_str().unwrap().to_owned();
+    assert!(ids.contains(&first_row), "it is one of the caller's files");
+
+    // offset=1 & limit=1 → the OTHER row (the offset is really applied).
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        8,
+        "tools/call",
+        serde_json::json!({"name": "list_files", "arguments": {"offset": 1, "limit": 1}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"id\":8").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(!is_error, "{text}");
+    let page: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    assert_eq!(page.len(), 1, "the second page holds one row: {page:?}");
+    let second_row = page[0]["id"].as_str().unwrap().to_owned();
+    assert_ne!(second_row, first_row, "offset skipped the first row");
+    assert!(ids.contains(&second_row));
+
+    // Past the end → an empty page.
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        9,
+        "tools/call",
+        serde_json::json!({"name": "list_files", "arguments": {"offset": 5, "limit": 100}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"id\":9").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(!is_error, "{text}");
+    let page: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    assert!(
+        page.is_empty(),
+        "offset past the end lists nothing: {page:?}"
+    );
+}
+
+/// `get_share_link` aligns with the REST share lane: a folder is refused,
+/// the link's origin follows the deployment's public origin (or the
+/// request Host) and NEVER a hardcoded localhost, and a live share is
+/// reused instead of minting a token per call.
+#[tokio::test]
+async fn mcp_get_share_link_refuses_folders_and_follows_the_public_origin() {
+    let (mut state, token) = test_state_with_token().await;
+    let origin = "https://res.example.test";
+    let base_config = (*state.config).clone();
+    let mut configured = base_config.clone();
+    configured.public_origin = Some(origin.to_owned());
+    state.config = Arc::new(configured);
+
+    let folder = mk_folder(&state, &token, "photos", None).await;
+    let (_, up) = upload(&state, &token, tiny_png(), "cat.png").await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+
+    let api_key = mcp_api_key(&state, &token, "share-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    // A folder is a TOOL error, not a link (the REST lane filters folders
+    // out of share_create for the same reason).
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        1,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": folder}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"isError\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(is_error, "a folder cannot be shared: {text}");
+    assert!(
+        text.contains("folder"),
+        "the tool text names the folder rule: {text}"
+    );
+
+    // A file gets a link under the configured public origin.
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        2,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": file_id}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"id\":2").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(!is_error, "the share link was minted: {text}");
+    let link: serde_json::Value =
+        serde_json::from_str(&text).expect("the tool answers {url, token}");
+    let share_token = link["token"].as_str().unwrap().to_owned();
+    let url = link["url"].as_str().unwrap().to_owned();
+    assert_eq!(
+        url,
+        format!("{origin}/s/{share_token}"),
+        "the URL origin is I0721_PUBLIC_ORIGIN, not a localhost literal"
+    );
+    assert!(!url.contains("localhost"), "no localhost fallback: {url}");
+    // The minted token really resolves on the public share lane.
+    let meta = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{share_token}/meta"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(meta.status(), StatusCode::OK, "the minted token resolves");
+
+    // A second call REUSES the live share: same token, no second row.
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        3,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": file_id}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"id\":3").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(!is_error, "{text}");
+    let again: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        again["token"].as_str().unwrap(),
+        share_token,
+        "the existing live share is reused, not re-minted"
+    );
+    let (_, shares) = rpc(&state, &token, "files.share_list", serde_json::json!({})).await;
+    assert_eq!(
+        shares["result"].as_array().unwrap().len(),
+        1,
+        "one share row, not one per call: {shares}"
+    );
+
+    // Without I0721_PUBLIC_ORIGIN the Host header is the source — the
+    // same derivation the OAuth callback lane uses.
+    state.config = Arc::new(base_config.clone());
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {"name": "get_share_link", "arguments": {"file_id": file_id}},
+    })
+    .to_string();
+    let (status, _) = mcp_post_body_at(&state, &session_id, Some("mcp.example.test"), body).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"id\":4").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(!is_error, "{text}");
+    let link: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        link["url"].as_str().unwrap(),
+        format!("http://mcp.example.test/s/{share_token}"),
+        "the Host header is the origin when the env pin is unset"
+    );
+
+    // With NEITHER the env pin NOR a Host header there is no origin at
+    // all: an explicit error, never a localhost link.
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "tools/call",
+        "params": {"name": "get_share_link", "arguments": {"file_id": file_id}},
+    })
+    .to_string();
+    let (status, _) = mcp_post_body(&state, &session_id, body).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"id\":5").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(
+        is_error,
+        "no derivable origin must be an error, not a localhost link: {text}"
+    );
+    assert!(
+        text.contains("I0721_PUBLIC_ORIGIN"),
+        "the error names the fix: {text}"
+    );
+    assert!(!text.contains("localhost"), "no localhost fallback: {text}");
+}
+
+#[tokio::test]
+async fn mcp_reupload_of_own_bytes_still_faces_the_quota_gate() {
+    let (state, admin) = test_state().await;
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    let api_key = mcp_api_key(&state, &token, "reupload-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+    let payload = serde_json::json!({
+        "content_base64": base64_of(&tiny_png()),
+        "name": "twice.png",
+    });
+
+    // First upload succeeds under the default (unlimited) quota.
+    mcp_call_tool(&state, &session_id, "upload_file", payload.clone()).await;
+    let frames = sse_read_until(&mut sse, "\"id\":1").await;
+    let first = sse_envelope(&frames);
+    assert!(
+        first["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("twice.png"),
+        "the first upload succeeds: {frames}"
+    );
+
+    // Squeeze the quota, then re-upload the SAME bytes: dedupe runs after
+    // the gates, so the shortcut must not answer 200 past the quota.
+    state.store.set_user_quota(admin.id, Some(1)).await.unwrap();
+    mcp_call_tool(&state, &session_id, "upload_file", payload).await;
+    let frames = sse_read_until(&mut sse, "\"isError\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(
+        is_error && text.contains("quota"),
+        "an over-quota re-upload must NOT ride the dedupe shortcut: {text}"
+    );
+}

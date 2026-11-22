@@ -14,6 +14,7 @@
 //!      └─────────────────────────────▲
 //! ```
 
+pub mod api_key;
 pub mod config;
 pub mod file;
 pub mod page;
@@ -21,6 +22,7 @@ pub mod share;
 pub mod size;
 pub mod user;
 
+pub use api_key::{ApiKeyCreated, ApiKeyPublic, ApiKeyRecord};
 pub use config::{
     default_site_config, FooterBanner, SiteConfig, SiteConfigStrict, CONFIG_SETTING_KEY,
 };

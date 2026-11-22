@@ -139,5 +139,21 @@
     "preview": "미리보기",
     "fileNotAvailable": "이 파일은 더 이상 사용할 수 없습니다",
     "breadcrumbRoot": "내 파일"
+  },
+  "keys": {
+    "title": "API 키",
+    "create": "키 만들기",
+    "empty": "키 없음",
+    "nameLabel": "키 이름",
+    "copyOnceWarning": "이 키는 다시 표시되지 않습니다. 지금 복사하세요.",
+    "copied": "복사됨!",
+    "copyFailed": "복사하지 못했습니다 — 텍스트를 선택해 직접 복사하세요.",
+    "copyConfig": "설정 복사",
+    "copyPrompt": "에이전트 프롬프트 복사",
+    "configTemplate": "MCP 엔드포인트: {endpoint}\nAPI 키: {key}",
+    "promptTemplate": "{endpoint}의 0721 MCP 서버를 API 키 {key}로 사용하세요. 사용 가능한 도구: list_files, file_info, upload_file, get_share_link, search_files.",
+    "revoke": "취소",
+    "revokeConfirm": "키 {name}을(를) 취소할까요?",
+    "revoked": "취소됨"
   }
 }

@@ -125,6 +125,25 @@ export function putPasswordLogin(enabled: boolean): Promise<void> {
   return wsCall<void>("auth.password.put", { enabled });
 }
 
+// ── API keys (the MCP wave) ─────────────────────────────────────────
+
+// The wire shapes are the ts-rs bindings — never hand-written here
+// (AGENTS 「类型单向」): the generated barrel is the single source.
+// (Re-export AND import: `export ... from` does not bind the local
+// names these functions below reference.)
+import type { ApiKeyCreated, ApiKeyPublic } from "@/types";
+export type { ApiKeyCreated, ApiKeyPublic } from "@/types";
+
+export function createKey(name: string): Promise<ApiKeyCreated> {
+  return wsCall<ApiKeyCreated>('keys.create', { name });
+}
+export function listKeys(): Promise<ApiKeyPublic[]> {
+  return wsCall<ApiKeyPublic[]>('keys.list');
+}
+export function revokeKey(id: string): Promise<void> {
+  return wsCall<void>('keys.revoke', { id });
+}
+
 export function health(): Promise<HealthReport> {
   return apiFetch<HealthReport>("/api/health");
 }

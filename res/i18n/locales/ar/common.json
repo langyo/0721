@@ -139,5 +139,21 @@
     "preview": "معاينة",
     "fileNotAvailable": "هذا الملف لم يعد متاحاً",
     "breadcrumbRoot": "ملفاتي"
+  },
+  "keys": {
+    "title": "مفاتيح API",
+    "create": "إنشاء مفتاح",
+    "empty": "لا مفاتيح",
+    "nameLabel": "اسم المفتاح",
+    "copyOnceWarning": "لن يظهر هذا المفتاح مرة أخرى. انسخه الآن!",
+    "copied": "تم النسخ!",
+    "copyFailed": "تعذّر النسخ — حدّد النص وانسخه يدويًا.",
+    "copyConfig": "نسخ الإعداد",
+    "copyPrompt": "نسخ موجه الوكيل",
+    "configTemplate": "نقطة نهاية MCP: {endpoint}\nمفتاح API: {key}",
+    "promptTemplate": "استخدم خادم MCP 0721 على {endpoint} بمفتاح API {key}. الأدوات المتاحة: list_files وfile_info وupload_file وget_share_link وsearch_files.",
+    "revoke": "إلغاء",
+    "revokeConfirm": "إلغاء المفتاح {name}؟",
+    "revoked": "ملغى"
   }
 }

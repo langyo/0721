@@ -269,3 +269,24 @@ pub fn share_model_to_record(model: ShareModel) -> i0721_proto::ShareRecord {
         created_at: model.created_at,
     }
 }
+
+/// Convert an [`ApiKeyModel`] into its record form.
+#[must_use]
+pub fn api_key_model_to_record(model: ApiKeyModel) -> i0721_proto::ApiKeyRecord {
+    i0721_proto::ApiKeyRecord {
+        id: model.id,
+        user_id: model.user_id,
+        name: model.name,
+        key_prefix: model.key_prefix,
+        key_hash: model.key_hash,
+        // `to_string()` on a serde_json::Value IS the inverse of the
+        // write path's `from_str`: every value (arrays, objects, and a
+        // JSON string alike) serializes back to the exact text that
+        // produced it. No special case — a String arm would strip the
+        // quotes and break the round trip for quoted payloads.
+        scopes: model.scopes.to_string(),
+        last_used_at: model.last_used_at,
+        revoked_at: model.revoked_at,
+        created_at: model.created_at,
+    }
+}

@@ -33,6 +33,8 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// In-process OIDC discovery cache (positive + negative).
     pub discovery: Arc<DiscoveryCache>,
+    /// MCP SSE sessions (in-memory, TTL-pruned).
+    pub mcp_sessions: crate::mcp::McpSessions,
 }
 
 impl AppState {
@@ -51,6 +53,7 @@ impl AppState {
             ws_tickets: Arc::new(WsTicketStore::new()),
             http_client: reqwest::Client::new(),
             discovery: Arc::new(DiscoveryCache::new()),
+            mcp_sessions: crate::mcp::McpSessions::new(),
         }
     }
 }

@@ -203,6 +203,18 @@ pub fn migrations() -> Vec<Migration> {
                 MIGRATION_0004_DEDUPE_SQL
             ),
         ),
+        Migration::new(
+            "20261122000005",
+            "api_keys: unique index on key_hash for the MCP verify path",
+            // Unique is correct: the same key (same bytes) produces the
+            // same SHA-256 hash; two rows with the same hash would be
+            // the same key, which find_api_key_by_hash would resolve
+            // ambiguously. Idempotent via IF NOT EXISTS.
+            r#"
+            CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_hash_key
+                ON api_keys (key_hash);
+            "#,
+        ),
     ]
 }
 
