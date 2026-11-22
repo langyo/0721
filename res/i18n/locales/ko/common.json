@@ -37,7 +37,9 @@
   "auth": {
     "title": "로그인",
     "subtitle": "0721으로 이동",
-    "failed": "사용자 이름 또는 비밀번호가 틀렸습니다"
+    "failed": "사용자 이름 또는 비밀번호가 틀렸습니다",
+    "orContinue": "또는 아래로 계속",
+    "passwordDisabled": "비밀번호 로그인이 비활성화되었습니다. 아래 제공자를 사용하세요."
   },
   "portal": {
     "title": "이미지",
@@ -78,7 +80,9 @@
     "useSourceFileName": "원본 파일 이름 사용",
     "bannerText": "텍스트",
     "bannerUrl": "링크(선택)",
-    "addBanner": "배너 항목 추가"
+    "addBanner": "배너 항목 추가",
+    "passwordLogin": "비밀번호 로그인 허용",
+    "passwordLoginHint": "OAuth 제공자 구성 후 끄기를 권장."
   },
   "chrome": {
     "settings": "설정",
@@ -86,5 +90,22 @@
     "language": "언어",
     "about": "정보",
     "signOut": "로그아웃"
+  },
+  "providers": {
+    "title": "로그인 제공자",
+    "empty": "제공자 없음",
+    "create": "제공자 추가",
+    "id": "ID",
+    "displayName": "표시 이름",
+    "type": "유형",
+    "clientId": "클라이언트 ID",
+    "clientSecret": "클라이언트 시크릿",
+    "secretHint": "비워 두면 저장된 시크릿 유지",
+    "secretSet": "시크릿 설정됨",
+    "noSecret": "시크릿 없음",
+    "baseUrl": "기본 URL(ERP)",
+    "issuerUrl": "발급자 URL(OIDC)",
+    "enabled": "활성",
+    "deleteConfirm": "제공자 {id}을(를) 삭제할까요?"
   }
 }

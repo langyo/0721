@@ -37,7 +37,9 @@
   "auth": {
     "title": "Accedi",
     "subtitle": "Continua su 0721",
-    "failed": "Nome utente o password non validi"
+    "failed": "Nome utente o password non validi",
+    "orContinue": "oppure continua con",
+    "passwordDisabled": "Login con password disattivato: usa un provider qui sotto."
   },
   "portal": {
     "title": "Immagini",
@@ -78,7 +80,9 @@
     "useSourceFileName": "Usa il nome del file sorgente",
     "bannerText": "Testo",
     "bannerUrl": "Link (opzionale)",
-    "addBanner": "Aggiungi voce banner"
+    "addBanner": "Aggiungi voce banner",
+    "passwordLogin": "Consenti login con password",
+    "passwordLoginHint": "Da disattivare dopo la configurazione OAuth."
   },
   "chrome": {
     "settings": "Impostazioni",
@@ -86,5 +90,22 @@
     "language": "Lingua",
     "about": "Informazioni",
     "signOut": "Esci"
+  },
+  "providers": {
+    "title": "Provider di accesso",
+    "empty": "Nessun provider configurato",
+    "create": "Aggiungi provider",
+    "id": "ID",
+    "displayName": "Nome visualizzato",
+    "type": "Tipo",
+    "clientId": "ID client",
+    "clientSecret": "Segreto client",
+    "secretHint": "Lascia vuoto per mantenere il segreto",
+    "secretSet": "Segreto impostato",
+    "noSecret": "Nessun segreto",
+    "baseUrl": "URL di base (ERP)",
+    "issuerUrl": "URL dell'emittente (OIDC)",
+    "enabled": "Attivo",
+    "deleteConfirm": "Eliminare il provider {id}?"
   }
 }

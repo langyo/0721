@@ -25,6 +25,9 @@ A simple engine for image hosting written in Rust.
 - Automatic image compression via WebP (animated GIF included)
 - Netdisk-ready metadata schema (kinds, directories, soft delete, shares)
 - Basic account system (admin-gated user management)
+- OAuth dual-mode login: provider registry (GitHub / Feishu / ERP
+  templates + generic OIDC discovery), PKCE S256 authorization-code
+  flow, optional password login with a kill-switch
 - Site configuration stored in the database — no restart to apply
 - hikari web UI (Vue 3 + TypeScript): portal timeline with upload
   progress, user roster, strict site settings, theme (light/dark/auto +
@@ -139,6 +142,35 @@ Two caveats worth knowing:
   default `Referer` header. It is a courtesy gate, not technical
   protection: any client that omits the header passes it. Hard
   access control is what permissions and share tokens are for.
+
+## Login (dual mode)
+
+The service offers two login modes, driven by configuration:
+
+1. **OAuth providers** (the open-source default): the admin registers
+   providers on the webui's "Login providers" page (or the
+   `providers.*` RPC) — a built-in endpoint template (`builtin:github`,
+   `builtin:feishu`, `builtin:erp` with its `base_url`) or a generic
+   OIDC issuer (endpoints via `/.well-known/openid-configuration`,
+   cached 10 min). Each provider row carries its `client_secret`
+   server-side; every public shape shows only `has_secret` + the last
+   four characters. The browser flow is a standard authorization-code
+   round trip with **PKCE S256** and a 600 s HttpOnly state cookie; a
+   first login mints a local account (`{provider}_{subject[0..8]}`,
+   no password) bound through the `oauth_identities` table — the same
+   (provider, subject) always signs into the same account.
+2. **Password login** (optional): on unless turned off. The switch
+   lives in the admin settings ("Allow password login") or the
+   settings row `auth_password_login`; the env pin
+   `I0721_PASSWORD_LOGIN=true|false` sits between the row and the
+   default (row > env > on). **Turn it off once OAuth is configured** —
+   a fresh deployment stays on so it cannot lock itself out.
+
+Security notes: the session credential is an httpOnly cookie (never in
+page-readable storage or URLs); the OAuth `client_secret` never leaves
+the server; the state cookie is strictly compared against the
+provider's echo (CSRF); no email-domain restriction ships in this first
+version (the admin gate + provider choice are the boundary).
 
 ## API sketch
 

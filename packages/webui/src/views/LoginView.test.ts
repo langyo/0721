@@ -7,7 +7,11 @@ import { createRouter, createMemoryHistory } from "vue-router";
 // VIEW's contract (loading state, error surface, redirect), not the
 // network. The mock's login reply carries the real AuthSession shape.
 const loginMock = vi.fn();
-vi.mock("@/api", () => ({ login: (...args: unknown[]) => loginMock(...args) }));
+const loginMethodsMock = vi.fn();
+vi.mock("@/api", () => ({
+  login: (...args: unknown[]) => loginMock(...args),
+  loginMethods: (...args: unknown[]) => loginMethodsMock(...args),
+}));
 vi.mock("@/api/client", () => ({
   ApiError: class ApiError extends Error {
     status: number;
@@ -52,11 +56,17 @@ async function mountView() {
   const wrapper = mount(LoginView, {
     global: { plugins: [i18n, router, createPinia()] },
   });
+  // The login-methods descriptor resolves async — the card mounts after.
+  await flushPromises();
+  await flushPromises();
   return { wrapper, router };
 }
 
 beforeEach(() => {
   loginMock.mockReset();
+  loginMethodsMock.mockReset();
+  // The login-methods descriptor: the classic password-on shape.
+  loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
 });
 
 afterEach(() => {
@@ -108,5 +118,60 @@ describe("LoginView", () => {
     (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
     await flushPromises();
     expect(wrapper.find('[role="alert"]').text()).toBe("network unreachable");
+  });
+});
+
+describe("LoginView dual-mode (W4)", () => {
+  it("renders provider buttons that navigate to the OAuth entry", async () => {
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [
+        { id: "erp", display_name: "ERP", type: "builtin:erp" },
+        { id: "gh", display_name: "GitHub", type: "builtin:github" },
+      ],
+    });
+    const { wrapper } = await mountView();
+    const buttons = wrapper.findAll(".provider-button");
+    expect(buttons.length).toBe(2);
+    expect(buttons[0]!.text()).toContain("ERP");
+
+    // Navigation is a FULL page load (the flow sets an httpOnly cookie +
+    // 302s) — pin the href, not a router push.
+    const original = window.location.href;
+    const hrefSetter = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, href: original },
+      writable: false,
+    });
+    // jsdom-style href write throws on read-only; assert via click side
+    // effect instead: patch then click.
+    try {
+      Object.defineProperty(window.location, "href", {
+        set: (v: string) => hrefSetter(v),
+        get: () => original,
+        configurable: true,
+      });
+      await buttons[0]!.trigger("click");
+      expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
+    } finally {
+      // restore a plain href
+      Object.defineProperty(window.location, "href", {
+        value: original,
+        writable: true,
+        configurable: true,
+      });
+    }
+  });
+
+  it("hides the password form when the kill-switch is off", async () => {
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [{ id: "erp", display_name: "ERP", type: "builtin:erp" }],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+    // No credential inputs — the providers-only page.
+    expect(wrapper.find(".s-auth-card").exists()).toBe(false);
+    expect(wrapper.findAll(".provider-button").length).toBe(1);
   });
 });

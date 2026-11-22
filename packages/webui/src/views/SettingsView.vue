@@ -29,6 +29,8 @@ const { t } = useI18n();
 
 const loading = ref(false);
 const loadError = ref<string | null>(null);
+const passwordLogin = ref(true);
+const passwordBusy = ref(false);
 const savedFlash = ref(false);
 const saveBusy = ref(false);
 const saveError = ref<string | null>(null);
@@ -89,7 +91,30 @@ async function load() {
 
 onMounted(() => {
   void load();
+  // The password kill-switch (admin): rides its own lane so a broken
+  // settings document cannot take the toggle down with it.
+  void api.getPasswordLogin().then((enabled) => {
+    passwordLogin.value = enabled;
+  }).catch(() => undefined);
 });
+
+async function savePasswordLogin(enabled: boolean) {
+  passwordBusy.value = true;
+  const previous = passwordLogin.value;
+  passwordLogin.value = enabled;
+  try {
+    await api.putPasswordLogin(enabled);
+    savedFlash.value = true;
+    window.setTimeout(() => {
+      savedFlash.value = false;
+    }, 2400);
+  } catch (err) {
+    passwordLogin.value = previous;
+    saveError.value = err instanceof Error ? err.message : t("common.settings.saveFailed");
+  } finally {
+    passwordBusy.value = false;
+  }
+}
 
 usePageRefresh(() => load(), { loading });
 
@@ -267,6 +292,22 @@ async function save() {
         </div>
       </HkSectionCard>
 
+      <HkSectionCard :title="t('common.settings.passwordLogin')">
+        <div class="field switch-field password-switch">
+          <div>
+            <span>{{ t("common.settings.passwordLogin") }}</span>
+            <small class="password-hint">{{ t("common.settings.passwordLoginHint") }}</small>
+          </div>
+          <HkSwitch
+            :model-value="passwordLogin"
+            :disabled="passwordBusy"
+            :aria-label="t('common.settings.passwordLogin')"
+            data-testid="password-login-switch"
+            @update:model-value="(v: boolean) => savePasswordLogin(v)"
+          />
+        </div>
+      </HkSectionCard>
+
       <footer class="save-row">
         <HkButton variant="primary" :disabled="!valid" :aria-label="t('common.actions.save')" @click="save">
           <template #icon><RefreshCw v-if="saveBusy" :size="14" /><Plus v-else :size="14" /></template>
@@ -313,6 +354,19 @@ async function save() {
 .switch-field {
   justify-content: flex-end;
   gap: 0.6rem;
+}
+
+.password-switch {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.password-hint {
+  display: block;
+  opacity: 0.65;
+  font-size: 0.72rem;
+  margin-top: 0.15rem;
 }
 
 .banner-list {

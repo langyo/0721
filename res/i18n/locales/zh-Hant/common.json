@@ -37,7 +37,9 @@
   "auth": {
     "title": "登入",
     "subtitle": "前往 0721",
-    "failed": "用戶名或密碼錯誤"
+    "failed": "用戶名或密碼錯誤",
+    "orContinue": "或使用以下方式繼續",
+    "passwordDisabled": "密碼登入已停用——請使用下方提供者登入。"
   },
   "portal": {
     "title": "圖片",
@@ -78,7 +80,9 @@
     "useSourceFileName": "使用原始檔名",
     "bannerText": "文字",
     "bannerUrl": "連結（可選）",
-    "addBanner": "新增頁腳條目"
+    "addBanner": "新增頁腳條目",
+    "passwordLogin": "允許密碼登入",
+    "passwordLoginHint": "設定好 OAuth 提供者後建議關閉。"
   },
   "chrome": {
     "settings": "設定",
@@ -86,5 +90,22 @@
     "language": "語言",
     "about": "關於",
     "signOut": "登出"
+  },
+  "providers": {
+    "title": "登入提供者",
+    "empty": "尚未設定提供者",
+    "create": "新增提供者",
+    "id": "識別",
+    "displayName": "顯示名稱",
+    "type": "類型",
+    "clientId": "用戶端 ID",
+    "clientSecret": "用戶端密鑰",
+    "secretHint": "留空表示保留已存密鑰",
+    "secretSet": "已設密鑰",
+    "noSecret": "未設密鑰",
+    "baseUrl": "基礎 URL（ERP）",
+    "issuerUrl": "簽發方 URL（OIDC）",
+    "enabled": "啟用",
+    "deleteConfirm": "刪除提供者 {id}？"
   }
 }

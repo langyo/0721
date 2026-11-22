@@ -10,6 +10,9 @@ import type {
   FileDto,
   HealthReport,
   LoginRequest,
+  LoginMethods,
+  OAuthProviderPublic,
+  OAuthProviderUpsert,
   PageResult,
   SiteConfig,
   SiteConfigStrict,
@@ -90,6 +93,36 @@ export function putSiteConfig(strict: SiteConfigStrict): Promise<void> {
     "settings.put",
     strict as unknown as Record<string, unknown>,
   );
+}
+
+// ── login methods & providers (the dual-mode surface) ───────────────
+
+/** The public login-page descriptor (no secret material). */
+export function loginMethods(): Promise<LoginMethods> {
+  return apiFetch<LoginMethods>("/api/v1/auth/login-methods");
+}
+
+export function listProviders(): Promise<OAuthProviderPublic[]> {
+  return wsCall<OAuthProviderPublic[]>("providers.list");
+}
+
+export function upsertProvider(row: OAuthProviderUpsert): Promise<OAuthProviderPublic> {
+  return wsCall<OAuthProviderPublic>(
+    "providers.upsert",
+    row as unknown as Record<string, unknown>,
+  );
+}
+
+export function deleteProvider(id: string): Promise<void> {
+  return wsCall<void>("providers.delete", { id });
+}
+
+export function getPasswordLogin(): Promise<boolean> {
+  return wsCall<boolean>("auth.password.get");
+}
+
+export function putPasswordLogin(enabled: boolean): Promise<void> {
+  return wsCall<void>("auth.password.put", { enabled });
 }
 
 export function health(): Promise<HealthReport> {

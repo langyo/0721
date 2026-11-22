@@ -37,7 +37,9 @@
   "auth": {
     "title": "Sign in",
     "subtitle": "Continue to 0721",
-    "failed": "Invalid username or password"
+    "failed": "Invalid username or password",
+    "orContinue": "or continue with",
+    "passwordDisabled": "Password login is disabled — use a provider below."
   },
   "portal": {
     "title": "Portal",
@@ -78,7 +80,9 @@
     "useSourceFileName": "Keep the source file name",
     "bannerText": "Text",
     "bannerUrl": "Link (optional)",
-    "addBanner": "Add banner entry"
+    "addBanner": "Add banner entry",
+    "passwordLogin": "Allow password login",
+    "passwordLoginHint": "Turn off once OAuth providers are configured."
   },
   "chrome": {
     "settings": "Settings",
@@ -86,5 +90,22 @@
     "language": "Language",
     "about": "About",
     "signOut": "Sign out"
+  },
+  "providers": {
+    "title": "Login providers",
+    "empty": "No providers configured",
+    "create": "Add provider",
+    "id": "ID",
+    "displayName": "Display name",
+    "type": "Type",
+    "clientId": "Client ID",
+    "clientSecret": "Client secret",
+    "secretHint": "Leave empty to keep the stored secret",
+    "secretSet": "Secret set",
+    "noSecret": "No secret",
+    "baseUrl": "Base URL (ERP)",
+    "issuerUrl": "Issuer URL (OIDC)",
+    "enabled": "Enabled",
+    "deleteConfirm": "Delete provider {id}?"
   }
 }

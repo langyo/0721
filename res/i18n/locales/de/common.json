@@ -37,7 +37,9 @@
   "auth": {
     "title": "Anmelden",
     "subtitle": "Weiter zu 0721",
-    "failed": "Ungültiger Benutzername oder falsches Passwort"
+    "failed": "Ungültiger Benutzername oder falsches Passwort",
+    "orContinue": "oder fortfahren mit",
+    "passwordDisabled": "Passwort-Login ist deaktiviert — nutzen Sie unten einen Anbieter."
   },
   "portal": {
     "title": "Bilder",
@@ -78,7 +80,9 @@
     "useSourceFileName": "Quelldateinamen beibehalten",
     "bannerText": "Text",
     "bannerUrl": "Link (optional)",
-    "addBanner": "Banner-Eintrag hinzufügen"
+    "addBanner": "Banner-Eintrag hinzufügen",
+    "passwordLogin": "Passwort-Login erlauben",
+    "passwordLoginHint": "Nach OAuth-Einrichtung empfehlen wir Deaktivieren."
   },
   "chrome": {
     "settings": "Einstellungen",
@@ -86,5 +90,22 @@
     "language": "Sprache",
     "about": "Über",
     "signOut": "Abmelden"
+  },
+  "providers": {
+    "title": "Login-Anbieter",
+    "empty": "Keine Anbieter konfiguriert",
+    "create": "Anbieter hinzufügen",
+    "id": "ID",
+    "displayName": "Anzeigename",
+    "type": "Typ",
+    "clientId": "Client-ID",
+    "clientSecret": "Client-Secret",
+    "secretHint": "Leer lassen = gespeichertes Secret behalten",
+    "secretSet": "Secret gesetzt",
+    "noSecret": "Kein Secret",
+    "baseUrl": "Basis-URL (ERP)",
+    "issuerUrl": "Issuer-URL (OIDC)",
+    "enabled": "Aktiv",
+    "deleteConfirm": "Anbieter {id} löschen?"
   }
 }
