@@ -870,6 +870,33 @@ impl Store for PgStore {
             .map(share_model_to_record))
     }
 
+    async fn find_share_by_file(
+        &self,
+        owner_id: Uuid,
+        file_id: Uuid,
+    ) -> Result<Option<ShareRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ShareModel::TABLE.to_owned(),
+            filter: Some(
+                ShareColumn::FileId
+                    .eq(file_id)
+                    .into_inner()
+                    .and(ShareColumn::OwnerId.eq(owner_id).into_inner()),
+            ),
+            // Newest first: `create_share`'s "return the existing row" is
+            // best-effort (the table has no unique index on `file_id`), so
+            // a raced pair of legacy rows resolves to the latest.
+            order_by: vec![("created_at".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_one::<ShareModel>(cmd)
+            .await?
+            .map(share_model_to_record))
+    }
+
     async fn list_shares(&self, owner_id: Uuid) -> Result<Vec<ShareRecord>, StoreError> {
         let cmd = Command::Select {
             table: ShareModel::TABLE.to_owned(),

@@ -606,6 +606,20 @@ impl Store for MemoryStore {
         Ok(inner.shares.iter().find(|s| s.token == token).cloned())
     }
 
+    async fn find_share_by_file(
+        &self,
+        owner_id: Uuid,
+        file_id: Uuid,
+    ) -> Result<Option<ShareRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .shares
+            .iter()
+            .filter(|s| s.file_id == file_id && s.owner_id == owner_id)
+            .max_by_key(|s| s.created_at)
+            .cloned())
+    }
+
     async fn list_shares(&self, owner_id: Uuid) -> Result<Vec<ShareRecord>, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let mut rows: Vec<ShareRecord> = inner
@@ -782,6 +796,56 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "unknown ids answer None too"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_share_by_file_is_owner_scoped_and_answers_the_newest() {
+        let store = MemoryStore::new();
+        let owner = store.create_user(new_user("owner")).await.unwrap();
+        let other = store.create_user(new_user("other")).await.unwrap();
+        let a = store.create_file(new_file(owner.id, "aa")).await.unwrap();
+        let b = store.create_file(new_file(owner.id, "bb")).await.unwrap();
+
+        assert!(
+            store
+                .find_share_by_file(owner.id, a.id)
+                .await
+                .unwrap()
+                .is_none(),
+            "a file without a share answers None"
+        );
+
+        let share = store
+            .create_share(i0721_proto::NewShare {
+                file_id: a.id,
+                owner_id: owner.id,
+                expires_at: None,
+                allow_preview: true,
+            })
+            .await
+            .unwrap();
+        let found = store
+            .find_share_by_file(owner.id, a.id)
+            .await
+            .unwrap()
+            .expect("the file's share is found");
+        assert_eq!(found.token, share.token);
+        assert!(
+            store
+                .find_share_by_file(owner.id, b.id)
+                .await
+                .unwrap()
+                .is_none(),
+            "the lookup is per file"
+        );
+        assert!(
+            store
+                .find_share_by_file(other.id, a.id)
+                .await
+                .unwrap()
+                .is_none(),
+            "the lookup is per owner (no cross-owner token leak)"
         );
     }
 

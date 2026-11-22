@@ -702,3 +702,76 @@ async fn pg_create_file_honors_parent_id() {
     assert_eq!(inside.len(), 1, "the nested folder lists the file");
     assert_eq!(inside[0].name, "report.bin");
 }
+
+// ── the shares read path (the MCP link tool's reuse decision) ──────────
+
+/// `find_share_by_file` is owner-scoped, answers the file's row and has
+/// no cross-owner leak (the MCP `get_share_link` reuse path reads it).
+#[tokio::test]
+async fn pg_find_share_by_file_is_owner_scoped() {
+    let Some(store) = db().await else { return };
+    let owner = store.create_user(scratch_user()).await.expect("owner");
+    let other = store
+        .create_user(scratch_user())
+        .await
+        .expect("other owner");
+    let file = |owner_id| NewFile {
+        parent_id: None,
+        owner_id,
+        name: "share.bin".to_owned(),
+        kind: FileKind::Other,
+        mime: "application/octet-stream".to_owned(),
+        size: 3,
+        sha256: format!("sh{}", uuid::Uuid::new_v4().simple()),
+        storage_backend: "local".to_owned(),
+        storage_key: format!("sh{}", uuid::Uuid::new_v4().simple()),
+        thumbnail_key: None,
+        original_name: "share.bin".to_owned(),
+    };
+    let a = store.create_file(file(owner.id)).await.expect("file a");
+    let b = store.create_file(file(owner.id)).await.expect("file b");
+
+    assert!(
+        store
+            .find_share_by_file(owner.id, a.id)
+            .await
+            .expect("lookup")
+            .is_none(),
+        "a file without a share answers None"
+    );
+
+    let share = store
+        .create_share(i0721_proto::NewShare {
+            file_id: a.id,
+            owner_id: owner.id,
+            expires_at: None,
+            allow_preview: true,
+        })
+        .await
+        .expect("share");
+    let found = store
+        .find_share_by_file(owner.id, a.id)
+        .await
+        .expect("lookup")
+        .expect("the file's share is found");
+    assert_eq!(found.token, share.token);
+    assert!(
+        store
+            .find_share_by_file(owner.id, b.id)
+            .await
+            .expect("lookup")
+            .is_none(),
+        "the lookup is per file"
+    );
+    assert!(
+        store
+            .find_share_by_file(other.id, a.id)
+            .await
+            .expect("lookup")
+            .is_none(),
+        "the lookup is per owner"
+    );
+
+    cleanup_user(&store, owner.id).await;
+    cleanup_user(&store, other.id).await;
+}

@@ -226,6 +226,17 @@ pub trait Store: Send + Sync {
     /// The share a token addresses (expiry checked by the caller).
     async fn get_share(&self, token: &str) -> Result<Option<ShareRecord>, StoreError>;
 
+    /// The share row one owner's file already has, if any (newest first
+    /// when legacy duplicates exist). Expiry is the CALLER's call: the
+    /// public share lane enforces it when it resolves a token, and the
+    /// MCP link tool re-mints an expired row instead of handing a dead
+    /// token back.
+    async fn find_share_by_file(
+        &self,
+        owner_id: Uuid,
+        file_id: Uuid,
+    ) -> Result<Option<ShareRecord>, StoreError>;
+
     /// One owner's shares, newest first.
     async fn list_shares(&self, owner_id: Uuid) -> Result<Vec<ShareRecord>, StoreError>;
 
