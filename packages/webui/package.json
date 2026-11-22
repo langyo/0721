@@ -29,7 +29,7 @@
     "@vue/test-utils": "^2",
     "happy-dom": "^20",
     "sass": "^1",
-    "typescript": "~6.0",
+    "typescript": "^*",
     "vite": "^8",
     "vitest": "^5",
     "vue-tsc": "^3"
