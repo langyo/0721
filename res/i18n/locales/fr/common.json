@@ -147,8 +147,11 @@
     "nameLabel": "Nom de la clé",
     "copyOnceWarning": "Cette clé ne sera plus jamais affichée. Copiez-la maintenant !",
     "copied": "Copié !",
+    "copyFailed": "Échec de la copie — sélectionnez le texte et copiez-le à la main.",
     "copyConfig": "Copier la config",
     "copyPrompt": "Copier le prompt",
+    "configTemplate": "Point de terminaison MCP : {endpoint}\nClé d'API : {key}",
+    "promptTemplate": "Utilisez le serveur MCP 0721 à l'adresse {endpoint} avec la clé d'API {key}. Outils disponibles : list_files, file_info, upload_file, get_share_link, search_files.",
     "revoke": "Révoquer",
     "revokeConfirm": "Révoquer la clé {name} ?",
     "revoked": "Révoquée"

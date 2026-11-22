@@ -147,8 +147,11 @@
     "nameLabel": "Nome da chave",
     "copyOnceWarning": "Esta chave não será exibida novamente. Copie agora!",
     "copied": "Copiado!",
+    "copyFailed": "Falha ao copiar — selecione o texto e copie manualmente.",
     "copyConfig": "Copiar config",
     "copyPrompt": "Copiar prompt",
+    "configTemplate": "Endpoint MCP: {endpoint}\nChave de API: {key}",
+    "promptTemplate": "Use o servidor MCP 0721 em {endpoint} com a chave de API {key}. Ferramentas disponíveis: list_files, file_info, upload_file, get_share_link, search_files.",
     "revoke": "Revogar",
     "revokeConfirm": "Revogar chave {name}?",
     "revoked": "Revogada"

@@ -16,7 +16,11 @@ const created = ref<ApiKeyCreated | null>(null);
 const createOpen = ref(false);
 const newName = ref("");
 const createBusy = ref(false);
-const copyState = ref<null | boolean>(null);
+/// Which copy button most recently succeeded (the tri-state: a target,
+/// or nothing). A FAILED copy is its own flag so the failure is visible.
+type CopyTarget = "key" | "config" | "prompt";
+const copied = ref<CopyTarget | null>(null);
+const copyFailed = ref(false);
 const pendingRevoke = ref<ApiKeyPublic | null>(null);
 const revokeBusy = ref(false);
 
@@ -41,24 +45,36 @@ async function doCreate() {
   } catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { createBusy.value = false; }
 }
 
-function copyKey() {
-  if (created.value) {
-    void navigator.clipboard.writeText(created.value.key)
-      .then(() => { copyState.value = true; setTimeout(() => copyState.value = null, 3000); })
-      .catch(() => { copyState.value = false; });
+/// The MCP endpoint an agent connects to (the SSE lane).
+function mcpEndpoint(): string {
+  return `${window.location.origin}/api/mcp/sse`;
+}
+
+/// Copy one of the copy-once card's payloads. Success is echoed on the
+/// button that copied; a FAILURE is never silent (a denied clipboard
+/// permission used to leave the button unchanged).
+async function copyText(target: CopyTarget, text: string) {
+  copyFailed.value = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    copied.value = target;
+    setTimeout(() => { if (copied.value === target) copied.value = null; }, 3000);
+  } catch {
+    copied.value = null;
+    copyFailed.value = true;
   }
 }
 
+function copyKey() {
+  if (created.value) void copyText("key", created.value.key);
+}
+
 function copyConfig() {
-  const origin = window.location.origin;
-  const config = `MCP endpoint: ${origin}/api/mcp/sse\nAPI key: ${created.value?.key ?? ""}`;
-  void navigator.clipboard.writeText(config).catch(() => undefined);
+  void copyText("config", t("common.keys.configTemplate", { endpoint: mcpEndpoint(), key: created.value?.key ?? "" }));
 }
 
 function copyPrompt() {
-  const origin = window.location.origin;
-  const prompt = `Use the 0721 MCP server at ${origin}/api/mcp/sse with API key ${created.value?.key ?? ""}.\nAvailable tools: list_files, file_info, upload_file, get_share_link, search_files.`;
-  void navigator.clipboard.writeText(prompt).catch(() => undefined);
+  void copyText("prompt", t("common.keys.promptTemplate", { endpoint: mcpEndpoint(), key: created.value?.key ?? "" }));
 }
 
 async function doRevoke() {
@@ -81,11 +97,16 @@ async function doRevoke() {
       <div class="actions">
         <HkButton variant="primary" @click="copyKey">
           <template #icon><Copy :size="14" /></template>
-          {{ copyState === true ? t("common.keys.copied") : t("common.actions.copyLink") }}
+          {{ copied === "key" ? t("common.keys.copied") : t("common.actions.copyLink") }}
         </HkButton>
-        <HkButton variant="ghost" @click="copyConfig">{{ t("common.keys.copyConfig") }}</HkButton>
-        <HkButton variant="ghost" @click="copyPrompt">{{ t("common.keys.copyPrompt") }}</HkButton>
+        <HkButton variant="ghost" @click="copyConfig">
+          {{ copied === "config" ? t("common.keys.copied") : t("common.keys.copyConfig") }}
+        </HkButton>
+        <HkButton variant="ghost" @click="copyPrompt">
+          {{ copied === "prompt" ? t("common.keys.copied") : t("common.keys.copyPrompt") }}
+        </HkButton>
       </div>
+      <p v-if="copyFailed" role="alert" class="copy-failed">{{ t("common.keys.copyFailed") }}</p>
     </div>
 
     <ul v-if="keys.length > 0" class="key-list">
@@ -122,6 +143,7 @@ async function doRevoke() {
 .err { color: rgb(220 38 38); }
 .copy-once { padding: 1rem; border: 2px solid rgb(217 138 43); border-radius: 0.75rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .warning { color: rgb(217 138 43); font-size: 0.85rem; margin: 0; }
+.copy-failed { color: rgb(220 38 38); font-size: 0.8rem; margin: 0; }
 .key-text { font-size: 0.9rem; padding: 0.5rem; border-radius: 0.4rem; background: color-mix(in srgb, currentColor 6%, transparent); word-break: break-all; }
 .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .key-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }

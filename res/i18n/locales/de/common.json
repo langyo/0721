@@ -147,8 +147,11 @@
     "nameLabel": "Schlüsselname",
     "copyOnceWarning": "Dieser Schlüssel wird nie wieder angezeigt. Jetzt kopieren!",
     "copied": "Kopiert!",
+    "copyFailed": "Kopieren fehlgeschlagen — markiere den Text und kopiere ihn von Hand.",
     "copyConfig": "Konfiguration kopieren",
     "copyPrompt": "Agent-Prompt kopieren",
+    "configTemplate": "MCP-Endpunkt: {endpoint}\nAPI-Schlüssel: {key}",
+    "promptTemplate": "Verwende den 0721-MCP-Server unter {endpoint} mit dem API-Schlüssel {key}. Verfügbare Werkzeuge: list_files, file_info, upload_file, get_share_link, search_files.",
     "revoke": "Widerrufen",
     "revokeConfirm": "Schlüssel {name} widerrufen?",
     "revoked": "Widerrufen"

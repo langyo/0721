@@ -147,8 +147,11 @@
     "nameLabel": "キー名",
     "copyOnceWarning": "このキーは二度と表示されません。今すぐコピーしてください。",
     "copied": "コピーしました！",
+    "copyFailed": "コピーに失敗しました — テキストを選択して手動でコピーしてください。",
     "copyConfig": "設定をコピー",
     "copyPrompt": "エージェントプロンプトをコピー",
+    "configTemplate": "MCP エンドポイント: {endpoint}\nAPI キー: {key}",
+    "promptTemplate": "0721 MCP サーバー（{endpoint}）を API キー {key} で使用してください。利用可能なツール: list_files、file_info、upload_file、get_share_link、search_files。",
     "revoke": "取り消し",
     "revokeConfirm": "キー {name} を取り消しますか？",
     "revoked": "取り消しました"

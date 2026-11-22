@@ -147,8 +147,11 @@
     "nameLabel": "Имя ключа",
     "copyOnceWarning": "Этот ключ больше не будет показан. Скопируйте сейчас!",
     "copied": "Скопировано!",
+    "copyFailed": "Не удалось скопировать — выделите текст и скопируйте вручную.",
     "copyConfig": "Копировать конфиг",
     "copyPrompt": "Копировать промпт",
+    "configTemplate": "Конечная точка MCP: {endpoint}\nКлюч API: {key}",
+    "promptTemplate": "Используйте MCP-сервер 0721 по адресу {endpoint} с ключом API {key}. Доступные инструменты: list_files, file_info, upload_file, get_share_link, search_files.",
     "revoke": "Отозвать",
     "revokeConfirm": "Отозвать ключ {name}?",
     "revoked": "Отозван"

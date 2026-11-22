@@ -147,8 +147,11 @@
     "nameLabel": "密鑰名稱",
     "copyOnceWarning": "此密鑰不會再次顯示，請立即複製。",
     "copied": "已複製！",
+    "copyFailed": "複製失敗——請手動選取文字複製。",
     "copyConfig": "複製配置",
     "copyPrompt": "複製 Agent 提示詞",
+    "configTemplate": "MCP 端點：{endpoint}\nAPI 金鑰：{key}",
+    "promptTemplate": "請使用 {endpoint} 上的 0721 MCP 伺服器，API 金鑰為 {key}。可用工具：list_files、file_info、upload_file、get_share_link、search_files。",
     "revoke": "撤銷",
     "revokeConfirm": "撤銷密鑰 {name}？",
     "revoked": "已撤銷"
