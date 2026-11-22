@@ -36,8 +36,6 @@ use i0721_proto::{
 };
 use i0721_store::CreateUser;
 
-use crate::api::auth::AuthSession;
-
 /// The create-user wire form (the former REST body; the ts-rs binding
 /// keeps feeding the webui).
 #[derive(Debug, Clone, serde::Deserialize, ts_rs::TS)]
@@ -73,6 +71,9 @@ pub mod rpc_error_codes {
     pub const CONFLICT: i64 = -32007;
     /// Payload too large (413).
     pub const TOO_LARGE: i64 = -32008;
+    /// The deferred-ops collection surface is disabled on this instance
+    /// (the `ops.*` guard; see `build_server`).
+    pub const OPS_DISABLED: i64 = -32009;
 }
 
 /// The per-connection identity the auth hook establishes: the verified,
@@ -261,7 +262,6 @@ pub fn router(state: AppState) -> Router {
 /// POST fallback through the full axum router (`routes::router` already
 /// mounts it; this is for focused JSON-RPC frame tests).
 pub fn build_server(state: AppState) -> RpcServer {
-    let state_refresh = state.clone();
     let state_files_list = state.clone();
     let state_files_update = state.clone();
     let state_files_delete = state.clone();
@@ -277,23 +277,29 @@ pub fn build_server(state: AppState) -> RpcServer {
             let uri = uri.clone();
             async move { auth_hook(state, headers, uri).await }
         })
+        // Deferred-ops collection (`ops.result` / `ops.cancel`) ships
+        // built-in with the framework — this instance runs NO deferred
+        // operations, so the surface is refused before dispatch. A
+        // dedicated code (not the framework's -32052 unknown-op, not
+        // -32601 method-not-found) keeps the refusal distinguishable
+        // from "unknown op id" and "no such method" in client logs.
+        .guard(
+            |_ctx: plana_rpc_server::AuthContext, method: &str, _params: &Value| {
+                let method = method.to_owned();
+                async move {
+                    if method.starts_with("ops.") {
+                        Err(JsonRpcError::new(
+                            rpc_error_codes::OPS_DISABLED,
+                            "deferred ops are not served on this instance",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        )
         .method_ctx("auth.verify", |ctx: RpcRequestCtx| async move {
             to_value(UserDto::from(user_of(&ctx)))
-        })
-        .method_ctx("auth.refresh", move |ctx: RpcRequestCtx| {
-            let state = state_refresh.clone();
-            async move {
-                let user = user_of(&ctx);
-                let now = jiff::Timestamp::now();
-                let token = state.signer.sign(user.id, now);
-                // Refresh keeps the current session alive: no watermark
-                // bump (the REST handler's deliberate semantics).
-                to_value(AuthSession {
-                    token,
-                    expires_at: expiry_rfc3339(now),
-                    user: UserDto::from(user),
-                })
-            }
         })
         .method_ctx("files.list", move |ctx: RpcRequestCtx| {
             let state = state_files_list.clone();
@@ -561,11 +567,4 @@ pub fn build_server(state: AppState) -> RpcServer {
             }
         })
         .build()
-}
-
-fn expiry_rfc3339(now: jiff::Timestamp) -> String {
-    let exp = now
-        .checked_add(jiff::Span::new().hours(crate::auth::TOKEN_TTL_DAYS * 24))
-        .unwrap_or(now);
-    exp.to_string()
 }

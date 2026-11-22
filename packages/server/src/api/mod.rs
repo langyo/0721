@@ -1,6 +1,8 @@
 //! The slim `/api/v1` whitelist: everything else moved to the RPC lane
 //! (`crate::rpc`). What stays is what cannot or should not ride a
-//! JSON control lane — the login bootstrap and the multipart binary
+//! JSON control lane: the session lifecycle (login plants the httpOnly
+//! cookie, refresh rotates it, logout expires it — Set-Cookie needs
+//! HTTP headers a WS method cannot carry) and the multipart binary
 //! upload.
 
 pub mod auth;
@@ -17,5 +19,7 @@ pub fn router() -> Router<AppState> {
     let files_api = Router::new().route("/", post(files::upload));
     Router::new()
         .route("/auth/login", post(auth::login))
+        .route("/auth/refresh", post(auth::refresh))
+        .route("/auth/logout", post(auth::logout))
         .nest("/files", files_api)
 }

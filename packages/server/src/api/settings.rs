@@ -1,4 +1,5 @@
-//! `/api/v1/settings` — the site configuration, admin-gated.
+//! `/api/health` + the site-config read the RPC settings methods
+//! (`settings.get` / `settings.put` in `crate::rpc`) share.
 //!
 //! The legacy engine read a mutable `Config.toml` and restarted the
 //! process to apply it. The rewrite stores the same shape in the

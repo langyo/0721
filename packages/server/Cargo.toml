@@ -47,6 +47,8 @@ include_dir = { workspace = true, optional = true }
 [dev-dependencies]
 i0721-proto = { workspace = true }
 i0721-store = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures = { workspace = true }
 async-trait = { workspace = true }
 sha2 = { workspace = true }
 tower = { workspace = true }

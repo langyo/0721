@@ -188,8 +188,8 @@ impl SiteConfig {
     }
 }
 
-/// The strict wire form of [`SiteConfig`] — what `PUT /api/v1/settings`
-/// accepts. Unlike the storage form (whose serde defaults make partial
+/// The strict wire form of [`SiteConfig`] — the `settings.put` RPC
+/// params. Unlike the storage form (whose serde defaults make partial
 /// rows readable), every section and every leaf is **required** and
 /// unknown fields are rejected: a PUT is a full replacement, so a
 /// missing section would silently wipe live configuration back to the

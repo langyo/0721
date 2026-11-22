@@ -1,5 +1,5 @@
-//! `/api/v1/files` — timeline list, multipart upload (the legacy
-//! pipeline), rename, soft delete.
+//! The multipart upload lane (`POST /api/v1/files`) — the binary
+//! REST-whitelist twin of the RPC file methods (`crate::rpc`).
 
 use axum::extract::{Multipart, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -29,9 +29,10 @@ pub async fn upload(
     State(state): State<AppState>,
     Query(args): Query<UploadQuery>,
     headers: HeaderMap,
+    uri: axum::http::Uri,
     mut multipart: Multipart,
 ) -> Result<axum::response::Response, ApiError> {
-    let (_, user) = require_auth(&state, &headers).await?;
+    let (_, user) = require_auth(&state, &headers, &uri).await?;
 
     let field = multipart
         .next_field()

@@ -90,18 +90,44 @@ fn app(state: &AppState) -> Router {
     )))
 }
 
+/// Login and return the session cookie's JWT (the credential now
+/// lives ONLY in the httpOnly cookie — the body must not carry it).
 async fn login(state: &AppState, username: &str, password: &str) -> String {
     let response = ServiceExt::oneshot(app(state), login_request(username, password))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .expect("login plants the session cookie")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        cookie.contains("HttpOnly"),
+        "the cookie must be HttpOnly: {cookie}"
+    );
+    assert!(
+        cookie.contains("SameSite=Strict"),
+        "the cookie must be Strict: {cookie}"
+    );
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .strip_prefix("i0721-token=")
+        .expect("the cookie carries the JWT")
+        .to_owned();
     let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
         .await
         .unwrap();
-    serde_json::from_slice::<serde_json::Value>(&body).unwrap()["token"]
-        .as_str()
-        .unwrap()
-        .to_owned()
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json.get("token").is_none(),
+        "the session body must NOT carry the token (HttpOnly would be moot)"
+    );
+    token
 }
 
 fn login_request(username: &str, password: &str) -> Request<Body> {
@@ -295,9 +321,31 @@ async fn rpc_auth_flow_verify_refresh() {
     assert_eq!(user["role"], "admin");
     assert!(user.get("password_hash").is_none());
 
+    // auth.refresh retired from the WS table: rotating the httpOnly
+    // cookie needs Set-Cookie, which a WS method cannot carry. The REST
+    // refresh owns it; the RPC table refuses the name outright.
     let (status, envelope) = rpc(&state, &token, "auth.refresh", serde_json::Value::Null).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(rpc_result(&envelope)["token"].is_string());
+    assert_eq!(rpc_error_code(&envelope), -32601);
+    let refreshed = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/refresh")
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(refreshed.status(), StatusCode::OK);
+    let cookie = refreshed
+        .headers()
+        .get(header::SET_COOKIE)
+        .expect("refresh rotates the cookie")
+        .to_str()
+        .unwrap();
+    assert!(cookie.starts_with("i0721-token="));
 
     // Tampered token: the auth hook refuses the request outright.
     let tampered = format!("{token}x");
@@ -1382,4 +1430,187 @@ async fn post_fallback_accepts_the_cookie_channel() {
     let (status, envelope) = rpc_request(&state, request).await;
     assert_eq!(status, StatusCode::OK, "{envelope}");
     assert_eq!(rpc_result(&envelope)["username"], "admin");
+}
+
+// ── the cookie session lane (the production browser path) ──────────────
+
+/// THE main pin: a real WebSocket, authenticated by the httpOnly
+/// cookie, carrying a real JSON-RPC frame end-to-end. This exercises
+/// the exact production path (handshake auth hook → dispatch → reply
+/// frame), not just the HTTP POST fallback.
+#[tokio::test]
+async fn ws_cookie_channel_carries_a_real_frame_round_trip() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let addr = spawn_listener(state).await;
+
+    // connect_async cannot add headers; the cookie rides a raw request.
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = format!("ws://{addr}/api/rpc")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        header::COOKIE,
+        header::HeaderValue::from_str(&format!("i0721-token={token}")).unwrap(),
+    );
+    let (mut ws, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        101,
+        "the cookie channel must upgrade (the browser production path)"
+    );
+
+    ws.send(Message::Text(
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 41,
+            "method": "auth.verify",
+            "params": null,
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    let reply = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+        .await
+        .expect("a reply frame within 5s")
+        .expect("the stream stays open")
+        .expect("a text frame");
+    let Message::Text(text) = reply else {
+        panic!("expected a text frame, got {reply:?}");
+    };
+    let envelope: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(envelope["id"], 41, "the reply carries the request id");
+    assert_eq!(envelope["result"]["username"], "admin");
+    assert!(
+        envelope["result"].get("password_hash").is_none(),
+        "the user projection never carries the hash"
+    );
+    ws.close(None).await.ok();
+}
+
+/// The deferred-ops collection surface is refused BEFORE dispatch, with
+/// the dedicated OPS_DISABLED code — distinguishable from the
+/// framework's unknown-op (-32052) and method-not-found (-32601).
+#[tokio::test]
+async fn deferred_ops_collection_is_refused_with_a_dedicated_code() {
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    for method in ["ops.result", "ops.cancel"] {
+        let (status, envelope) = rpc(
+            &state,
+            &token,
+            method,
+            serde_json::json!({"op_id": "whatever"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{method}: {envelope}");
+        let code = rpc_error_code(&envelope);
+        assert_eq!(code, -32009, "{method} refused by the ops guard");
+        assert_ne!(code, -32052, "not the framework's unknown-op");
+        assert_ne!(code, -32601, "not method-not-found");
+    }
+}
+
+/// The multipart upload rides the cookie (the browser cannot set
+/// Authorization on an XHR it does not own headers for — same-origin
+/// cookies ride automatically).
+#[tokio::test]
+async fn upload_accepts_the_cookie_channel_and_refuses_without_any() {
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+
+    // Cookie channel: created.
+    let (status, dto) = upload_with_cookie(&state, &token, tiny_png(), "cat.png").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    assert_eq!(dto["kind"], "image");
+
+    // No credential at all: refused.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/files")
+                .header(
+                    header::CONTENT_TYPE,
+                    "multipart/form-data; boundary=X-BOUNDARY-X",
+                )
+                .body(Body::from("--X-BOUNDARY-X--\r\n"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The upload helper's cookie-channel twin.
+async fn upload_with_cookie(
+    state: &AppState,
+    token: &str,
+    bytes: Vec<u8>,
+    name: &str,
+) -> (StatusCode, serde_json::Value) {
+    let boundary = "X-BOUNDARY-X";
+    let b = boundary;
+    let body = format!(
+        "--{b}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"{name}\"\r\ncontent-type: application/octet-stream\r\n\r\n"
+    );
+    let mut body = body.into_bytes();
+    body.extend_from_slice(&bytes);
+    body.extend_from_slice(format!("\r\n--{b}--\r\n").as_bytes());
+    let response = app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/files")
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .header(header::COOKIE, format!("i0721-token={token}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 32 * 1024 * 1024)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+/// Logout expires the cookie AND supersedes the token at the watermark:
+/// the next request with the old credential is refused.
+#[tokio::test]
+async fn logout_expires_the_cookie_and_kills_the_session() {
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/logout")
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let cookie = response.headers().get(header::SET_COOKIE).unwrap();
+    assert!(cookie.to_str().unwrap().contains("Max-Age=0"));
+
+    let (status, _) = rpc(&state, &token, "auth.verify", serde_json::Value::Null).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the watermark bump kills the pre-logout token everywhere"
+    );
 }
