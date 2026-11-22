@@ -51,6 +51,24 @@ async fn resolve(
     Ok((share, file))
 }
 
+/// Whether a share row still resolves to its file: no expiry at all, or
+/// an expiry that parses into the future.
+///
+/// A malformed expiry counts as NOT live — a caller deciding whether to
+/// reuse a link (the MCP `get_share_link` tool) must never hand back a
+/// token the public lane cannot resolve. The public lane itself answers
+/// such a row as corrupt data (500) rather than a 404; this helper is for
+/// the reuse decision, not a second enforcement point.
+#[must_use]
+pub(crate) fn is_live(share: &i0721_proto::ShareRecord) -> bool {
+    match share.expires_at.as_deref() {
+        None => true,
+        Some(raw) => raw
+            .parse::<jiff::Timestamp>()
+            .is_ok_and(|exp| jiff::Timestamp::now() < exp),
+    }
+}
+
 /// RFC 5987 percent-encode for filename* parameters.
 fn urlencode_rfc5987(value: &str) -> String {
     let mut out = String::with_capacity(value.len() * 3);

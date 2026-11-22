@@ -21,6 +21,14 @@
 //! multipart lane ([`crate::api::upload_core::run_upload`]) — quota,
 //! folder ownership, the upload semaphore, the configured pipeline
 //! parameters and the configured storage tag included.
+//!
+//! JSON-RPC 2.0 shape (the chest `mcp_media` precedent): a body the
+//! server cannot accept at all (unparseable, not an object, no string
+//! `method`) answers an HTTP error whose body carries the prescribed
+//! error frame with `id: null`; a request WITHOUT `id` is a notification
+//! (`notifications/initialized`) — 202 and NO frame; protocol failures
+//! (-32601 unknown method, -32602 unknown tool) ride the envelope's
+//! TOP-LEVEL `error` object, never a `result` payload.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,7 +42,7 @@ use sha2::Digest;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use i0721_proto::{FileDto, NewShare};
+use i0721_proto::{FileDto, FileKind, NewShare};
 
 use crate::api::upload_core::{run_upload, UploadInput};
 use crate::error::ApiError;
@@ -308,10 +316,61 @@ pub async fn sse(State(state): State<AppState>, headers: HeaderMap) -> Response 
     axum::response::sse::Sse::new(stream).into_response()
 }
 
+/// A protocol-level JSON-RPC failure. It becomes the response envelope's
+/// TOP-LEVEL `error` object — the spec's `-32600` / `-32601` / `-32602` /
+/// `-32700` family is about the REQUEST, never a `result` payload that
+/// merely happens to contain an error shape.
+struct RpcFault {
+    code: i64,
+    message: String,
+}
+
+impl RpcFault {
+    fn new(code: i64, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+/// The JSON-RPC response frame for one dispatched request: `result` on
+/// success, the top-level `error` object otherwise. `id` rides verbatim so
+/// a numeric id stays a number.
+fn response_frame(id: &Value, outcome: Result<Value, RpcFault>) -> String {
+    match outcome {
+        Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        Err(fault) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {"code": fault.code, "message": fault.message},
+        }),
+    }
+    .to_string()
+}
+
+/// Answer a frame the server could not accept at all.
+///
+/// JSON-RPC 2.0 prescribes `id: null` there (no usable request id
+/// existed), and the SSE transport's message lane is an HTTP request of
+/// its own: an HTTP error whose body carries the error frame is what both
+/// the spec ("the response body SHOULD contain a JSON-RPC error
+/// response") and the chest `mcp_media` precedent do — the stream stays
+/// clean instead of carrying an id-less frame a reader has to attribute.
+fn protocol_error(code: i64, message: impl Into<String>) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        [(header::CONTENT_TYPE, "application/json")],
+        response_frame(&Value::Null, Err(RpcFault::new(code, message))),
+    )
+        .into_response()
+}
+
 /// `POST /api/mcp/message?sessionId=` — the JSON-RPC call lane.
 pub async fn message(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     body: String,
 ) -> Response {
     let Some(session_id) = params.get("sessionId") else {
@@ -360,40 +419,41 @@ pub async fn message(
         Err(err) => return ApiError::from(err).into_response(),
     }
 
-    // Parse and dispatch the JSON-RPC request.
+    // Parse and validate the request shape. A body the server cannot even
+    // read answers an HTTP error with the id-less error frame; a VALID
+    // request without `id` is a notification and is never answered.
     let request: Value = match serde_json::from_str(&body) {
-        Ok(v) => v,
-        Err(err) => {
-            let response = json!({
-                "jsonrpc": "2.0", "id": null,
-                "error": {"code": -32700, "message": format!("parse error: {err}")}
-            });
-            let _ = session.tx.send(response.to_string()).await;
-            return StatusCode::ACCEPTED.into_response();
-        }
+        Ok(value) => value,
+        Err(err) => return protocol_error(-32700, format!("Parse error: {err}")),
     };
-
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let method = request
-        .get("method")
-        .and_then(|m| m.as_str())
-        .unwrap_or_default()
-        .to_owned();
-    let params = request.get("params").cloned().unwrap_or(json!({}));
-    drop(request); // the spawn owns method + params
+    if !request.is_object() {
+        return protocol_error(-32600, "Invalid Request: the body must be a JSON object");
+    }
+    let Some(method) = request.get("method").and_then(Value::as_str) else {
+        return protocol_error(-32600, "Invalid Request: method must be a string");
+    };
+    let method = method.to_owned();
+    // JSON-RPC 2.0: a request WITHOUT `id` is a notification (e.g.
+    // `notifications/initialized`) — accepted, and the server MUST NOT
+    // answer it (no frame, no response body).
+    let Some(id) = request.get("id") else {
+        return StatusCode::ACCEPTED.into_response();
+    };
+    let id = id.clone();
+    let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+    // The share tool emits an absolute URL: derive the origin ONCE here,
+    // where the request headers are still in hand, and hand it to the
+    // dispatch (the same derivation the OAuth callback lane uses).
+    let origin = crate::origin::public_origin(&state, &headers);
+    drop(request); // the spawn owns method + params + origin
 
     // Dispatch in a background task; the response goes through the SSE.
     let state = state.clone();
     let user_id = session.user_id;
     let tx = session.tx.clone();
     tokio::spawn(async move {
-        let result = dispatch_tool(&state, user_id, &method, &params).await;
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": result,
-        });
-        let _ = tx.send(response.to_string()).await;
+        let outcome = dispatch_tool(&state, user_id, origin, &method, &params).await;
+        let _ = tx.send(response_frame(&id, outcome)).await;
     });
 
     StatusCode::ACCEPTED.into_response()
@@ -401,41 +461,215 @@ pub async fn message(
 
 // ── the tool dispatch ──────────────────────────────────────────────────
 
-async fn dispatch_tool(state: &AppState, user_id: Uuid, method: &str, params: &Value) -> Value {
+/// `list_files` page width: default and cap (the tool's description and
+/// its `inputSchema` say exactly this).
+const LIST_FILES_LIMIT: u64 = 100;
+/// `search_files` scan width: default and cap (same contract with the
+/// client).
+const SEARCH_FILES_LIMIT: u64 = 500;
+
+/// A non-negative integer argument; absent or malformed → `default`.
+fn uint_arg(args: &Value, key: &str, default: u64) -> u64 {
+    args.get(key).and_then(Value::as_u64).unwrap_or(default)
+}
+
+/// One paged window out of the tool arguments: `offset` (default 0) and
+/// `limit` (default `cap`, clamped into `1..=cap`). Both tools state the
+/// same numbers in their schema, so a client can compute the pages.
+fn page_args(args: &Value, cap: u64) -> (u64, u64) {
+    (
+        uint_arg(args, "offset", 0),
+        uint_arg(args, "limit", cap).clamp(1, cap),
+    )
+}
+
+/// The five tools, each with a REAL JSON Schema `inputSchema` (an object
+/// with typed `properties` and the `required` list) — a client cannot
+/// build a call from a name and a prose line alone.
+fn tool_specs() -> Value {
+    json!([
+        {
+            "name": "list_files",
+            "description": "List one folder of the caller's own netdisk tree, newest first. \
+                `folder_id` omitted lists the root folder. Paged: `offset` defaults to 0; \
+                `limit` defaults to and is capped at 100.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "folder_id": {
+                        "type": "string",
+                        "description": "folder UUID; omit for the root folder"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "rows to skip (default 0)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": LIST_FILES_LIMIT,
+                        "description": "rows to return (default 100, capped at 100)"
+                    }
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "file_info",
+            "description": "One file's metadata (own tree; a soft-deleted or foreign row \
+                answers an error).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "file UUID"}
+                },
+                "required": ["id"]
+            }
+        },
+        {
+            "name": "upload_file",
+            "description": "Upload one file from base64 content through the SAME chain as the \
+                REST upload lane — quota, folder ownership, the configured WebP pipeline and \
+                the configured storage backend all apply. Returns the created file.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "content_base64": {
+                        "type": "string",
+                        "description": "the file bytes, standard base64"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "source file name (the MIME hint and the original name)"
+                    },
+                    "folder_id": {
+                        "type": "string",
+                        "description": "destination folder UUID; omit for the root folder"
+                    }
+                },
+                "required": ["content_base64", "name"]
+            }
+        },
+        {
+            "name": "get_share_link",
+            "description": "Return the public share link of one file, reusing the live share \
+                when the file already has one (folders cannot be shared). Returns \
+                {url, token}. `expires_at` is an RFC 3339 instant (omitted = never expires); \
+                `allow_preview` defaults to true. Reuse keeps the existing link's settings — \
+                delete the share first to change them; an expired share is replaced.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_id": {
+                        "type": "string",
+                        "description": "file UUID (a folder is refused)"
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "description": "RFC 3339 expiry instant; omit for a link that never expires"
+                    },
+                    "allow_preview": {
+                        "type": "boolean",
+                        "description": "inline preview instead of download-only (default true)"
+                    }
+                },
+                "required": ["file_id"]
+            }
+        },
+        {
+            "name": "search_files",
+            "description": "Search the caller's own netdisk tree by a name substring (the \
+                display name or the original upload name). Scans one page of the own-tree \
+                timeline — `offset` defaults to 0, `limit` (rows scanned) defaults to and is \
+                capped at 500, so a deeper match needs the next page. `kind` narrows the scan \
+                (image / document / media / folder).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "substring to match against the file name"
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "optional kind filter: image, document, media or folder"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "rows to skip before matching (default 0)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": SEARCH_FILES_LIMIT,
+                        "description": "rows scanned (default 500, capped at 500)"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    ])
+}
+
+async fn dispatch_tool(
+    state: &AppState,
+    user_id: Uuid,
+    origin: Option<String>,
+    method: &str,
+    params: &Value,
+) -> Result<Value, RpcFault> {
     match method {
-        "initialize" => json!({
+        "initialize" => Ok(json!({
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "0721", "version": env!("CARGO_PKG_VERSION")},
-        }),
-        "tools/list" => json!({"tools": [
-            {"name": "list_files", "description": "List files in a folder (or root). Params: folder_id (optional), offset, limit"},
-            {"name": "file_info", "description": "Get one file's metadata. Params: id"},
-            {"name": "upload_file", "description": "Upload a file. Params: content_base64, name, folder_id (optional)"},
-            {"name": "get_share_link", "description": "Get or create a public share link. Params: file_id"},
-            {"name": "search_files", "description": "Search files by name substring. Params: query, kind (optional), limit"},
-        ]}),
+        })),
+        "tools/list" => Ok(json!({"tools": tool_specs()})),
         "tools/call" => {
             let tool = params
                 .get("name")
                 .and_then(|n| n.as_str())
                 .unwrap_or_default();
-            let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            match call_tool(state, user_id, tool, &args).await {
-                Ok(result) => json!({"content": [{"type": "text", "text": result.to_string()}]}),
-                Err(err) => json!({
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            // An unknown tool is a PROTOCOL error (-32602: the request's
+            // params name something the server does not have); a tool that
+            // runs and fails is a RESULT with `isError` — the two are
+            // different layers and must not share the `result` slot.
+            if !is_known_tool(tool) {
+                return Err(RpcFault::new(-32602, format!("no such tool: {tool:?}")));
+            }
+            match call_tool(state, user_id, origin.as_deref(), tool, &args).await {
+                Ok(result) => {
+                    Ok(json!({"content": [{"type": "text", "text": result.to_string()}]}))
+                }
+                Err(err) => Ok(json!({
                     "content": [{"type": "text", "text": err}],
                     "isError": true,
-                }),
+                })),
             }
         }
-        _ => json!({"error": {"code": -32601, "message": format!("method not found: {method}")}}),
+        _ => Err(RpcFault::new(-32601, format!("method not found: {method}"))),
     }
+}
+
+/// The tool names [`call_tool`] serves (the `-32602` check above and the
+/// dispatcher stay in one place).
+fn is_known_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "list_files" | "file_info" | "upload_file" | "get_share_link" | "search_files"
+    )
 }
 
 async fn call_tool(
     state: &AppState,
     user_id: Uuid,
+    origin: Option<&str>,
     tool: &str,
     args: &Value,
 ) -> Result<Value, String> {
@@ -445,9 +679,10 @@ async fn call_tool(
                 .get("folder_id")
                 .and_then(|v| v.as_str())
                 .and_then(|s| Uuid::parse_str(s).ok());
+            let (offset, limit) = page_args(args, LIST_FILES_LIMIT);
             let rows = state
                 .store
-                .list_folder(user_id, folder_id, None, 0, 100)
+                .list_folder(user_id, folder_id, None, offset, limit)
                 .await
                 .map_err(|e| e.to_string())?;
             let items: Vec<FileDto> = rows.into_iter().map(FileDto::from).collect();
@@ -521,42 +756,94 @@ async fn call_tool(
                 .and_then(|v| v.as_str())
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .ok_or("missing or invalid 'file_id'")?;
+            // A link nobody can open is worse than an error: the origin
+            // comes from the deployment's own configuration (or the
+            // request Host), never from a hardcoded localhost.
+            let origin = origin.ok_or(
+                "cannot derive the deployment's public origin: set I0721_PUBLIC_ORIGIN \
+                 (or send a Host header) so the share link is reachable",
+            )?;
             let file = state
                 .store
                 .get_file(file_id)
                 .await
                 .map_err(|e| e.to_string())?
-                .filter(|r| r.deleted_at.is_none() && r.owner_id == user_id)
+                .filter(|r| r.deleted_at.is_none())
                 .ok_or("file not found")?;
-            let share = state
+            // Owner-scoped, exactly like the REST share lane: no admin
+            // elevation through an API key.
+            if file.owner_id != user_id {
+                return Err("not your file".to_owned());
+            }
+            // `files.share_create` refuses folders for the same reason: a
+            // share token resolves to ONE file's bytes.
+            if file.kind == FileKind::Folder {
+                return Err("a folder cannot be shared — only files get a public link".to_owned());
+            }
+            let wanted = NewShare {
+                file_id: file.id,
+                owner_id: user_id,
+                expires_at: args
+                    .get("expires_at")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                allow_preview: args
+                    .get("allow_preview")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+            };
+            let share = match state
                 .store
-                .create_share(NewShare {
-                    file_id: file.id,
-                    owner_id: user_id,
-                    expires_at: None,
-                    allow_preview: true,
-                })
+                .find_share_by_file(user_id, file.id)
                 .await
-                .map_err(|e| e.to_string())?;
-            let origin = state
-                .config
-                .public_origin
-                .clone()
-                .unwrap_or_else(|| "http://localhost".to_owned());
-            Ok(json!({"url": format!("{origin}/s/{}", share.token)}))
+                .map_err(|e| e.to_string())?
+            {
+                // Reuse the LIVE share: a repeated call answers the same
+                // link instead of piling up tokens (and breaking the links
+                // the agent already handed out).
+                Some(existing) if crate::share::is_live(&existing) => existing,
+                // An expired row is not a link. Drop it first — the
+                // store's create path returns an existing row for the same
+                // file, which would hand the dead token straight back.
+                Some(stale) => {
+                    state
+                        .store
+                        .delete_share(&stale.token)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    state
+                        .store
+                        .create_share(wanted)
+                        .await
+                        .map_err(|e| e.to_string())?
+                }
+                None => state
+                    .store
+                    .create_share(wanted)
+                    .await
+                    .map_err(|e| e.to_string())?,
+            };
+            Ok(json!({
+                "url": format!("{origin}/s/{}", share.token),
+                "token": share.token,
+            }))
         }
         "search_files" => {
             let query = args
                 .get("query")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
+                .and_then(Value::as_str)
+                .ok_or("missing 'query'")?;
             let kind = args
                 .get("kind")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_owned());
+            let (offset, limit) = page_args(args, SEARCH_FILES_LIMIT);
+            // The name filter runs on the page the store returns (the
+            // timeline has no name-indexed query), so `offset`/`limit`
+            // page the SCAN — the schema says so.
             let rows = state
                 .store
-                .list_folder(user_id, None, kind, 0, 500)
+                .list_folder(user_id, None, kind, offset, limit)
                 .await
                 .map_err(|e| e.to_string())?;
             let items: Vec<FileDto> = rows
