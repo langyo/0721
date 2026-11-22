@@ -37,7 +37,7 @@ const KEEPALIVE: Duration = Duration::from_secs(25);
 /// The API key prefix.
 pub const KEY_PREFIX: &str = "i0721-";
 
-/// Mint a fresh API key: `i0721-<32 hex>` (122 random bits).
+/// Mint a fresh API key: `i0721-<32 hex>` (~122 random bits from a v4 UUID).
 #[must_use]
 pub fn mint_api_key() -> String {
     format!("{KEY_PREFIX}{}", Uuid::new_v4().simple())
