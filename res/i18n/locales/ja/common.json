@@ -15,11 +15,9 @@
     "copied": "リンクをコピーしました",
     "cancel": "キャンセル",
     "save": "保存",
-    "saved": "保存しました",
     "create": "作成",
     "confirm": "確認",
     "retry": "再試行",
-    "close": "閉じる",
     "loadMore": "さらに読み込む",
     "logout": "ログアウト",
     "add": "追加",
@@ -83,7 +81,9 @@
     "bannerUrl": "リンク（任意）",
     "addBanner": "バナー項目を追加",
     "passwordLogin": "パスワードログインを許可",
-    "passwordLoginHint": "OAuth プロバイダー設定後は無効化を推奨。"
+    "passwordLoginHint": "OAuth プロバイダー設定後は無効化を推奨。",
+    "defaultQuota": "デフォルトのストレージクォータ（バイト）",
+    "defaultQuotaHint": "空欄 = 無制限。ユーザーごとの上書きがない場合に適用されます。"
   },
   "chrome": {
     "settings": "設定",
@@ -110,5 +110,34 @@
     "deleteConfirm": "プロバイダー {id} を削除しますか？",
     "scopes": "スコープ",
     "scopesHint": "スペース区切り。内蔵タイプはこの値を無視します（テンプレート固有のスコープを使用）。"
+  },
+  "files": {
+    "title": "ファイル",
+    "newFolder": "新規フォルダー",
+    "uploadHere": "このフォルダーにアップロード",
+    "timeline": "タイムライン",
+    "empty": "空のフォルダー",
+    "folderDeleteWarning": "内部のすべてが再帰的に削除されます",
+    "move": "移動先…",
+    "moveTarget": "移動先フォルダー",
+    "share": "共有",
+    "shareCreated": "リンクをクリップボードにコピーしました",
+    "shareLink": "共有リンク",
+    "shareExpires": "有効期限（任意）",
+    "sharePreview": "プレビューを許可",
+    "myShares": "マイ共有",
+    "revoke": "取り消し",
+    "revoked": "取り消しました",
+    "noShares": "共有はありません",
+    "quota": "ストレージ",
+    "quotaOf": "{used} / {quota} 使用中",
+    "unlimited": "無制限",
+    "rename": "名前変更",
+    "folderName": "フォルダー名",
+    "sharedFile": "共有ファイル",
+    "download": "ダウンロード",
+    "preview": "プレビュー",
+    "fileNotAvailable": "このファイルは利用できません",
+    "breadcrumbRoot": "マイファイル"
   }
 }

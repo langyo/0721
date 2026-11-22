@@ -15,11 +15,9 @@
     "copied": "تم نسخ الرابط",
     "cancel": "إلغاء",
     "save": "حفظ",
-    "saved": "تم الحفظ",
     "create": "إنشاء",
     "confirm": "تأكيد",
     "retry": "إعادة المحاولة",
-    "close": "إغلاق",
     "loadMore": "تحميل المزيد",
     "logout": "تسجيل الخروج",
     "add": "إضافة",
@@ -83,7 +81,9 @@
     "bannerUrl": "الرابط (اختياري)",
     "addBanner": "إضافة إدخال بانر",
     "passwordLogin": "السماح بتسجيل الدخول بكلمة المرور",
-    "passwordLoginHint": "عطّله بعد إعداد مزوّدي OAuth."
+    "passwordLoginHint": "عطّله بعد إعداد مزوّدي OAuth.",
+    "defaultQuota": "حصة التخزين الافتراضية (بايت)",
+    "defaultQuotaHint": "فارغ = غير محدود. يطبق عندما لا يكون لدى المستخدم تجاوز فردي."
   },
   "chrome": {
     "settings": "الإعدادات",
@@ -110,5 +110,34 @@
     "deleteConfirm": "حذف المزوّد {id}؟",
     "scopes": "النطاقات",
     "scopesHint": "مفصولة بمسافات. الأنواع المدمجة تتجاهل هذه القيمة (قوالبها تحمل نطاقاتها الخاصة)."
+  },
+  "files": {
+    "title": "الملفات",
+    "newFolder": "مجلد جديد",
+    "uploadHere": "رفع إلى هذا المجلد",
+    "timeline": "الخط الزمني",
+    "empty": "مجلد فارغ",
+    "folderDeleteWarning": "سيتم حذف كل المحتوى بشكل تكراري",
+    "move": "نقل إلى…",
+    "moveTarget": "المجلد الهدف",
+    "share": "مشاركة",
+    "shareCreated": "تم نسخ الرابط إلى الحافظة",
+    "shareLink": "رابط المشاركة",
+    "shareExpires": "انتهاء الصلاحية (اختياري)",
+    "sharePreview": "السماح بالمعاينة",
+    "myShares": "مشاركاتي",
+    "revoke": "إلغاء",
+    "revoked": "تم الإلغاء",
+    "noShares": "لا مشاركات",
+    "quota": "التخزين",
+    "quotaOf": "{used} من {quota}",
+    "unlimited": "غير محدود",
+    "rename": "إعادة تسمية",
+    "folderName": "اسم المجلد",
+    "sharedFile": "ملف مشترك",
+    "download": "تحميل",
+    "preview": "معاينة",
+    "fileNotAvailable": "هذا الملف لم يعد متاحاً",
+    "breadcrumbRoot": "ملفاتي"
   }
 }

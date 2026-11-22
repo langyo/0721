@@ -15,4 +15,8 @@ export type UploadConfigStrict = {
 /**
  * Keep the original file name as the display name.
  */
-"use-source-file-name": boolean, };
+"use-source-file-name": boolean, 
+/**
+ * Global default storage quota; None = unlimited.
+ */
+"default-quota-bytes"?: bigint | null, };

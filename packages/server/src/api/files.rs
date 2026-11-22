@@ -11,13 +11,15 @@ use crate::blob::BlobSlot;
 use crate::error::ApiError;
 use crate::pipeline::{process_upload, UploadRules};
 use crate::state::AppState;
-use i0721_proto::{validate_file_name, FileDto, NewFile};
+use i0721_proto::{validate_file_name, FileDto, NewFile, Role};
 
 /// Optional query of the upload endpoint (the legacy `?name=`).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UploadQuery {
     /// Force the display name of the uploaded file.
     pub name: Option<String>,
+    /// The destination folder (validated: exists, live, folder, owner).
+    pub folder_id: Option<uuid::Uuid>,
 }
 
 /// `POST /api/v1/files` (multipart, field `file`)
@@ -105,6 +107,46 @@ pub async fn upload(
             .await?;
     }
 
+    // Destination folder: must be the caller's live folder (admins may
+    // target any).
+    if let Some(folder_id) = args.folder_id {
+        let folder = state
+            .store
+            .get_file(folder_id)
+            .await?
+            .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
+            .ok_or_else(|| ApiError::bad_request("folder not found"))?;
+        if user.role != Role::Admin && folder.owner_id != user.id {
+            return Err(ApiError::forbidden("not your folder"));
+        }
+    }
+
+    // Quota: the caller's live bytes + this upload against their limit
+    // (user override ?? the global default; None = unlimited).
+    // TOCTOU boundary: the check-then-write window is bounded by the
+    // upload semaphore (≤ upload_concurrency concurrent slots × the
+    // per-file limit); a burst at the exact boundary can overshoot by
+    // at most that many files' worth — accepted as the transition-era
+    // trade-off, documented here so the next reader knows.
+    // The SAME resolver as files.quota_get: user row ?? site default.
+    let quota = match user.quota_bytes {
+        Some(q) => Some(q),
+        None => {
+            crate::api::settings::site_config(&state)
+                .await?
+                .upload
+                .default_quota_bytes
+        }
+    };
+    if let Some(quota) = quota {
+        let used = state.store.sum_live_sizes(user.id).await?;
+        if used + data.len() as i64 > quota {
+            return Err(ApiError::too_large(format!(
+                "quota exceeded: {used} bytes used, the limit is {quota}"
+            )));
+        }
+    }
+
     let name = args
         .name
         .clone()
@@ -120,6 +162,7 @@ pub async fn upload(
 
     let new_file = NewFile {
         owner_id: user.id,
+        parent_id: args.folder_id,
         name,
         kind: processed.kind,
         mime: processed.mime.clone(),
@@ -132,12 +175,16 @@ pub async fn upload(
     };
     let record = match state.store.create_file(new_file).await {
         Ok(record) => record,
-        // Lost the per-owner dedupe race: return the winner's record.
+        // A Conflict is either the per-owner content dedupe (return the
+        // winner's record) or, with folders live, the same-layer name
+        // unique index -- distinguish by looking the content up.
         Err(i0721_store::StoreError::Conflict(_)) => state
             .store
             .get_file_by_owner_and_sha256(user.id, &processed.sha256)
             .await?
-            .ok_or_else(|| ApiError::conflict("content already uploaded"))?,
+            .ok_or_else(|| {
+                ApiError::conflict("a row with this name already exists in this folder")
+            })?,
         Err(err) => return Err(err.into()),
     };
     Ok((StatusCode::CREATED, Json(FileDto::from(record))).into_response())

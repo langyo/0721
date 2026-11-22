@@ -15,11 +15,9 @@
     "copied": "链接已复制",
     "cancel": "取消",
     "save": "保存",
-    "saved": "已保存",
     "create": "创建",
     "confirm": "确认",
     "retry": "重试",
-    "close": "关闭",
     "loadMore": "加载更多",
     "logout": "退出登录",
     "add": "添加",
@@ -83,7 +81,9 @@
     "bannerUrl": "链接（可选）",
     "addBanner": "添加页脚条目",
     "passwordLogin": "允许密码登录",
-    "passwordLoginHint": "配置好 OAuth 提供方后建议关闭。"
+    "passwordLoginHint": "配置好 OAuth 提供方后建议关闭。",
+    "defaultQuota": "默认存储配额（字节）",
+    "defaultQuotaHint": "留空 = 不限。仅对未设置个人覆盖的用户生效。"
   },
   "chrome": {
     "settings": "设置",
@@ -110,5 +110,34 @@
     "deleteConfirm": "删除提供方 {id}？",
     "scopes": "作用域",
     "scopesHint": "空格分隔。内置类型忽略此值（模板自带作用域）。"
+  },
+  "files": {
+    "title": "文件",
+    "newFolder": "新建文件夹",
+    "uploadHere": "上传到当前文件夹",
+    "timeline": "时间线",
+    "empty": "空文件夹",
+    "folderDeleteWarning": "将递归删除其中所有内容",
+    "move": "移动到…",
+    "moveTarget": "目标文件夹",
+    "share": "分享",
+    "shareCreated": "链接已复制到剪贴板",
+    "shareLink": "分享链接",
+    "shareExpires": "过期时间（可选）",
+    "sharePreview": "允许预览",
+    "myShares": "我的分享",
+    "revoke": "吊销",
+    "revoked": "已吊销",
+    "noShares": "暂无分享",
+    "quota": "存储",
+    "quotaOf": "已用 {used} / {quota}",
+    "unlimited": "不限",
+    "rename": "重命名",
+    "folderName": "文件夹名称",
+    "sharedFile": "共享文件",
+    "download": "下载",
+    "preview": "预览",
+    "fileNotAvailable": "该文件不再可用",
+    "breadcrumbRoot": "我的文件"
   }
 }

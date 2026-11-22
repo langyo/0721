@@ -15,11 +15,9 @@
     "copied": "Link copied",
     "cancel": "Cancel",
     "save": "Save",
-    "saved": "Saved",
     "create": "Create",
     "confirm": "Confirm",
     "retry": "Retry",
-    "close": "Close",
     "loadMore": "Load more",
     "logout": "Sign out",
     "add": "Add",
@@ -83,7 +81,9 @@
     "bannerUrl": "Link (optional)",
     "addBanner": "Add banner entry",
     "passwordLogin": "Allow password login",
-    "passwordLoginHint": "Turn off once OAuth providers are configured."
+    "passwordLoginHint": "Turn off once OAuth providers are configured.",
+    "defaultQuota": "Default storage quota (bytes)",
+    "defaultQuotaHint": "Empty = unlimited. Applies when a user has no per-user override."
   },
   "chrome": {
     "settings": "Settings",
@@ -110,5 +110,34 @@
     "deleteConfirm": "Delete provider {id}?",
     "scopes": "Scopes",
     "scopesHint": "Space-separated. Built-in types ignore this value (their templates carry their own)."
+  },
+  "files": {
+    "title": "Files",
+    "newFolder": "New folder",
+    "uploadHere": "Upload to this folder",
+    "timeline": "Timeline",
+    "empty": "Empty folder",
+    "folderDeleteWarning": "This will recursively delete everything inside",
+    "move": "Move to…",
+    "moveTarget": "Target folder",
+    "share": "Share",
+    "shareCreated": "Link copied to clipboard",
+    "shareLink": "Share link",
+    "shareExpires": "Expires (optional)",
+    "sharePreview": "Allow preview",
+    "myShares": "My shares",
+    "revoke": "Revoke",
+    "revoked": "Share revoked",
+    "noShares": "No shares yet",
+    "quota": "Storage",
+    "quotaOf": "{used} of {quota} used",
+    "unlimited": "unlimited",
+    "rename": "Rename",
+    "folderName": "Folder name",
+    "sharedFile": "Shared file",
+    "download": "Download",
+    "preview": "Preview",
+    "fileNotAvailable": "This file is no longer available",
+    "breadcrumbRoot": "My files"
   }
 }

@@ -17,6 +17,7 @@
 pub mod config;
 pub mod file;
 pub mod page;
+pub mod share;
 pub mod size;
 pub mod user;
 
@@ -25,6 +26,7 @@ pub use config::{
 };
 pub use file::{classify_kind, validate_file_name, FileDto, FileKind, FileRecord, NewFile};
 pub use page::{PageArgs, PageResult};
+pub use share::{NewShare, QuotaInfo, ShareDto, ShareRecord};
 pub use size::parse_size_limit;
 pub use user::{validate_display_name, validate_username, NewUser, Role, UserDto, UserRecord};
 

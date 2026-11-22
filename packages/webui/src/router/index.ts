@@ -29,6 +29,30 @@ export const router = createRouter({
           meta: { titleKey: "common.portal.title" },
         },
         {
+          path: "files",
+          name: "files",
+          component: () => import("@/views/FilesView.vue"),
+          meta: { titleKey: "common.files.title" },
+        },
+        {
+          path: "files/:folderId",
+          name: "files-folder",
+          component: () => import("@/views/FilesView.vue"),
+          meta: { titleKey: "common.files.title" },
+        },
+        {
+          path: "timeline",
+          name: "timeline",
+          component: () => import("@/views/TimelineView.vue"),
+          meta: { titleKey: "common.files.timeline" },
+        },
+        {
+          path: "shares",
+          name: "shares",
+          component: () => import("@/views/SharesView.vue"),
+          meta: { titleKey: "common.files.myShares" },
+        },
+        {
           path: "users",
           name: "users",
           component: () => import("@/views/UsersView.vue"),
@@ -47,6 +71,12 @@ export const router = createRouter({
           meta: { titleKey: "common.providers.title", admin: true },
         },
       ],
+    },
+    {
+      path: "/s/:token",
+      name: "shared-file",
+      component: () => import("@/views/SharedFileView.vue"),
+      meta: { public: true, titleKey: "common.files.sharedFile" },
     },
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],

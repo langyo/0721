@@ -23,6 +23,8 @@ pub fn router() -> Router<AppState> {
         .route("/auth/logout", post(auth::logout))
         .route("/auth/ws-ticket", post(auth::ws_ticket))
         .route("/auth/login-methods", get(auth::login_methods))
+        .route("/share/{token}/meta", get(crate::share::meta))
+        .route("/share/{token}/download", get(crate::share::download))
         .route("/auth/oauth/{provider}", get(crate::oauth::redirect))
         .route(
             "/auth/oauth/{provider}/callback",

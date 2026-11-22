@@ -5,7 +5,7 @@ import {
   HkIconButton,
   useChromeActionSize,
 } from "@celestia-island/hikari";
-import { Settings, Users as UsersIcon, Images, SlidersHorizontal, Unplug } from "lucide-vue-next";
+import { Settings, Users as UsersIcon, Images, SlidersHorizontal, Unplug, FolderOpen, Clock, Link2 } from "lucide-vue-next";
 import { computed, ref, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -56,6 +56,9 @@ interface NavTab {
 
 const navTabs = computed<NavTab[]>(() => [
   { key: "/", label: t("common.nav.portal"), icon: Images, adminOnly: false },
+  { key: "/files", label: t("common.files.title"), icon: FolderOpen, adminOnly: false },
+  { key: "/timeline", label: t("common.files.timeline"), icon: Clock, adminOnly: false },
+  { key: "/shares", label: t("common.files.myShares"), icon: Link2, adminOnly: false },
   { key: "/users", label: t("common.nav.users"), icon: UsersIcon, adminOnly: true },
   { key: "/settings", label: t("common.nav.settings"), icon: SlidersHorizontal, adminOnly: true },
   { key: "/providers", label: t("common.providers.title"), icon: Unplug, adminOnly: true },

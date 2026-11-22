@@ -15,11 +15,9 @@
     "copied": "Link copiato",
     "cancel": "Annulla",
     "save": "Salva",
-    "saved": "Salvato",
     "create": "Crea",
     "confirm": "Conferma",
     "retry": "Riprova",
-    "close": "Chiudi",
     "loadMore": "Carica altro",
     "logout": "Esci",
     "add": "Aggiungi",
@@ -83,7 +81,9 @@
     "bannerUrl": "Link (opzionale)",
     "addBanner": "Aggiungi voce banner",
     "passwordLogin": "Consenti login con password",
-    "passwordLoginHint": "Da disattivare dopo la configurazione OAuth."
+    "passwordLoginHint": "Da disattivare dopo la configurazione OAuth.",
+    "defaultQuota": "Quota di archiviazione predefinita (byte)",
+    "defaultQuotaHint": "Vuoto = illimitato. Si applica quando un utente non ha un override individuale."
   },
   "chrome": {
     "settings": "Impostazioni",
@@ -110,5 +110,34 @@
     "deleteConfirm": "Eliminare il provider {id}?",
     "scopes": "Scope",
     "scopesHint": "Separati da spazi. I tipi integrati ignorano questo valore (i loro template hanno scope propri)."
+  },
+  "files": {
+    "title": "File",
+    "newFolder": "Nuova cartella",
+    "uploadHere": "Carica in questa cartella",
+    "timeline": "Cronologia",
+    "empty": "Cartella vuota",
+    "folderDeleteWarning": "Tutto il contenuto verrà eliminato ricorsivamente",
+    "move": "Sposta in…",
+    "moveTarget": "Cartella di destinazione",
+    "share": "Condividi",
+    "shareCreated": "Link copiato negli appunti",
+    "shareLink": "Link di condivisione",
+    "shareExpires": "Scadenza (opzionale)",
+    "sharePreview": "Consenti anteprima",
+    "myShares": "Miei condivisi",
+    "revoke": "Revoca",
+    "revoked": "Revocato",
+    "noShares": "Nessuna condivisione",
+    "quota": "Archiviazione",
+    "quotaOf": "{used} di {quota} utilizzati",
+    "unlimited": "illimitato",
+    "rename": "Rinomina",
+    "folderName": "Nome cartella",
+    "sharedFile": "File condiviso",
+    "download": "Scarica",
+    "preview": "Anteprima",
+    "fileNotAvailable": "Questo file non è più disponibile",
+    "breadcrumbRoot": "I miei file"
   }
 }

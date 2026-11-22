@@ -14,6 +14,7 @@ use jiff::Timestamp;
 use uuid::Uuid;
 
 use crate::{CreateUser, Store, StoreError};
+use i0721_proto::ShareRecord;
 
 #[derive(Debug, Default)]
 struct Inner {
@@ -21,6 +22,7 @@ struct Inner {
     files: Vec<FileRecord>,
     settings: HashMap<String, serde_json::Value>,
     oauth_identities: Vec<(String, String, Uuid)>,
+    shares: Vec<i0721_proto::ShareRecord>,
 }
 
 /// The in-memory [`Store`].
@@ -103,6 +105,7 @@ impl Store for MemoryStore {
             display_name: user.display_name,
             role: user.role,
             password_hash: user.password_hash,
+            quota_bytes: None,
             created_at: Timestamp::now(),
         };
         inner.users.push(record.clone());
@@ -204,10 +207,21 @@ impl Store for MemoryStore {
                 sha = file.sha256
             )));
         }
+        if inner.files.iter().any(|f| {
+            f.deleted_at.is_none()
+                && f.owner_id == file.owner_id
+                && f.parent_id == file.parent_id
+                && f.name == file.name
+        }) {
+            return Err(conflict(format!(
+                "a row with the name {name} already exists in this folder",
+                name = file.name
+            )));
+        }
         let record = FileRecord {
             id: Uuid::new_v4(),
             owner_id: file.owner_id,
-            parent_id: None,
+            parent_id: file.parent_id,
             name: file.name,
             kind: file.kind,
             mime: file.mime,
@@ -225,6 +239,32 @@ impl Store for MemoryStore {
     }
 
     async fn rename_file(&self, id: Uuid, name: &str) -> Result<Option<FileRecord>, StoreError> {
+        {
+            // Same-layer uniqueness (the PG partial unique index's
+            // mirror — the memory lane must refuse what the index would
+            // reject, excluding the row itself).
+            let inner = self.inner.lock().map_err(lock_err)?;
+            if let Some(current) = inner
+                .files
+                .iter()
+                .find(|f| f.id == id && f.deleted_at.is_none())
+            {
+                let owner = current.owner_id;
+                let parent = current.parent_id;
+                let taken = inner.files.iter().any(|f| {
+                    f.deleted_at.is_none()
+                        && f.owner_id == owner
+                        && f.parent_id == parent
+                        && f.name == name
+                        && f.id != id
+                });
+                if taken {
+                    return Err(conflict(format!(
+                        "name {name:?} already exists in this folder"
+                    )));
+                }
+            }
+        }
         let mut inner = self.inner.lock().map_err(lock_err)?;
         let Some(file) = inner
             .files
@@ -285,6 +325,15 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .files
+            .iter()
+            .filter(|f| f.deleted_at.is_none() && f.thumbnail_key.as_deref() == Some(key))
+            .count() as u64)
+    }
+
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {
         Ok(self
             .inner
@@ -301,6 +350,256 @@ impl Store for MemoryStore {
             .map_err(lock_err)?
             .settings
             .insert(key.to_owned(), value);
+        Ok(())
+    }
+
+    // ── netdisk lane ─────────────────────────────────────────────────
+
+    async fn count_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+    ) -> Result<u64, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let n = inner
+            .files
+            .iter()
+            .filter(|f| {
+                f.deleted_at.is_none()
+                    && f.owner_id == owner_id
+                    && f.parent_id == parent_id
+                    && kind.as_deref().is_none_or(|k| f.kind.as_str() == k)
+            })
+            .count();
+        Ok(n as u64)
+    }
+
+    async fn list_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let mut rows: Vec<FileRecord> = inner
+            .files
+            .iter()
+            .filter(|f| {
+                f.deleted_at.is_none()
+                    && f.owner_id == owner_id
+                    && f.parent_id == parent_id
+                    && kind.as_ref().is_none_or(|k| *k == f.kind.as_str())
+            })
+            .cloned()
+            .collect();
+        rows.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+        Ok(rows
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect())
+    }
+
+    async fn folder_name_taken(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        name: &str,
+        exclude: Option<Uuid>,
+    ) -> Result<bool, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner.files.iter().any(|f| {
+            f.deleted_at.is_none()
+                && f.owner_id == owner_id
+                && f.parent_id == parent_id
+                && f.name == name
+                && Some(f.id) != exclude
+        }))
+    }
+
+    async fn create_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        name: &str,
+    ) -> Result<FileRecord, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        if inner.files.iter().any(|f| {
+            f.deleted_at.is_none()
+                && f.owner_id == owner_id
+                && f.parent_id == parent_id
+                && f.name == name
+        }) {
+            return Err(conflict(format!(
+                "name {name:?} already exists in this folder"
+            )));
+        }
+        let record = FileRecord {
+            id: Uuid::new_v4(),
+            owner_id,
+            parent_id,
+            name: name.to_owned(),
+            kind: i0721_proto::FileKind::Folder,
+            mime: "inode/directory".to_owned(),
+            size: 0,
+            sha256: format!("dir:{}", Uuid::new_v4().simple()),
+            storage_backend: "local".to_owned(),
+            storage_key: String::new(),
+            thumbnail_key: None,
+            original_name: name.to_owned(),
+            created_at: Timestamp::now(),
+            deleted_at: None,
+        };
+        inner.files.push(record.clone());
+        Ok(record)
+    }
+
+    async fn set_parent(&self, id: Uuid, parent_id: Option<Uuid>) -> Result<(), StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let row = inner
+            .files
+            .iter_mut()
+            .find(|f| f.id == id && f.deleted_at.is_none())
+            .ok_or_else(|| conflict("file not found".to_owned()))?;
+        row.parent_id = parent_id;
+        Ok(())
+    }
+
+    async fn ancestor_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let mut chain = Vec::new();
+        let mut visited = std::collections::HashSet::from([id]);
+        let mut cursor = id;
+        while let Some(row) = inner.files.iter().find(|f| f.id == cursor) {
+            let Some(parent) = row.parent_id else {
+                break;
+            };
+            // Cycle guard: corrupted parent chains (a loop) must not
+            // spin forever — bail on a revisited node.
+            if !visited.insert(parent) {
+                break;
+            }
+            chain.push(parent);
+            cursor = parent;
+        }
+        Ok(chain)
+    }
+
+    async fn subtree_live_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let mut ids = vec![id];
+        let mut frontier = vec![id];
+        while let Some(current) = frontier.pop() {
+            for row in &inner.files {
+                if row.deleted_at.is_none() && row.parent_id == Some(current) {
+                    ids.push(row.id);
+                    frontier.push(row.id);
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    async fn soft_delete_many(&self, ids: &[Uuid]) -> Result<u64, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let stamp = Timestamp::now().to_string();
+        let mut touched = 0_u64;
+        for row in inner.files.iter_mut() {
+            if ids.contains(&row.id) && row.deleted_at.is_none() {
+                row.deleted_at = Some(stamp.clone());
+                touched += 1;
+            }
+        }
+        Ok(touched)
+    }
+
+    async fn get_files_by_ids(&self, ids: &[Uuid]) -> Result<Vec<FileRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .files
+            .iter()
+            .filter(|f| ids.contains(&f.id))
+            .cloned()
+            .collect())
+    }
+
+    async fn create_share(&self, share: i0721_proto::NewShare) -> Result<ShareRecord, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        if let Some(existing) = inner
+            .shares
+            .iter()
+            .find(|s| s.file_id == share.file_id && s.owner_id == share.owner_id)
+        {
+            return Ok(existing.clone());
+        }
+        let record = ShareRecord {
+            token: crate::new_share_token(),
+            file_id: share.file_id,
+            owner_id: share.owner_id,
+            expires_at: share.expires_at,
+            allow_preview: share.allow_preview,
+            created_at: Timestamp::now(),
+        };
+        inner.shares.push(record.clone());
+        Ok(record)
+    }
+
+    async fn get_share(&self, token: &str) -> Result<Option<ShareRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner.shares.iter().find(|s| s.token == token).cloned())
+    }
+
+    async fn list_shares(&self, owner_id: Uuid) -> Result<Vec<ShareRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let mut rows: Vec<ShareRecord> = inner
+            .shares
+            .iter()
+            .filter(|s| s.owner_id == owner_id)
+            .cloned()
+            .collect();
+        rows.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+        Ok(rows)
+    }
+
+    async fn delete_share(&self, token: &str) -> Result<bool, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let before = inner.shares.len();
+        inner.shares.retain(|s| s.token != token);
+        Ok(inner.shares.len() != before)
+    }
+
+    async fn delete_shares_for_files(&self, file_ids: &[Uuid]) -> Result<u64, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let before = inner.shares.len();
+        inner.shares.retain(|s| !file_ids.contains(&s.file_id));
+        Ok((before - inner.shares.len()) as u64)
+    }
+
+    async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .files
+            .iter()
+            .filter(|f| f.deleted_at.is_none() && f.owner_id == owner_id)
+            .map(|f| f.size)
+            .sum())
+    }
+
+    async fn set_user_quota(
+        &self,
+        user_id: Uuid,
+        quota_bytes: Option<i64>,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let row = inner
+            .users
+            .iter_mut()
+            .find(|u| u.id == user_id)
+            .ok_or_else(|| conflict("user not found".to_owned()))?;
+        row.quota_bytes = quota_bytes;
         Ok(())
     }
 }
@@ -323,6 +622,7 @@ mod tests {
 
     fn new_file(owner: Uuid, sha: &str) -> NewFile {
         NewFile {
+            parent_id: None,
             owner_id: owner,
             name: sha.to_owned(),
             kind: FileKind::Image,

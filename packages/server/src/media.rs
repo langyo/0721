@@ -24,6 +24,31 @@ pub struct MediaQuery {
     pub thumbnail: Option<bool>,
 }
 
+/// The referrer allow-list check shared by the media and share lanes.
+pub(crate) async fn referer_allows(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<bool, ApiError> {
+    let config = site_config(state).await?;
+    if config.router.limit_referrer_host.is_empty() {
+        return Ok(true);
+    }
+    let Some(referer) = headers
+        .get(header::REFERER)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Ok(true);
+    };
+    let referer = url::Url::parse(referer)
+        .map_err(|err| ApiError::bad_request(format!("bad referer: {err}")))?;
+    let host = referer.host_str().unwrap_or_default();
+    Ok(config
+        .router
+        .limit_referrer_host
+        .iter()
+        .any(|allowed| allowed == host))
+}
+
 /// `GET /media/{key}`
 pub async fn download(
     State(state): State<AppState>,

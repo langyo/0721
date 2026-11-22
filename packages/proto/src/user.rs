@@ -53,6 +53,8 @@ pub struct UserRecord {
     /// Argon2id hash; `None` = no password login for this user.
     #[serde(skip_serializing)]
     pub password_hash: Option<String>,
+    /// Per-user storage quota (bytes); `None` = the global default.
+    pub quota_bytes: Option<i64>,
     /// Account creation time.
     pub created_at: Timestamp,
 }
@@ -195,6 +197,7 @@ mod tests {
             display_name: "Admin".to_owned(),
             role: Role::Admin,
             password_hash: Some("argon2id$secret".to_owned()),
+            quota_bytes: None,
             created_at: Timestamp::now(),
         };
         let json = serde_json::to_value(UserDto::from(record)).unwrap();

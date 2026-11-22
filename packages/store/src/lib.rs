@@ -22,8 +22,20 @@ pub use memory::MemoryStore;
 pub use migrate::migrations;
 pub use pg::PgStore;
 
-use i0721_proto::{FileRecord, Role, UserRecord};
+use i0721_proto::{FileRecord, NewShare, Role, ShareRecord, UserRecord};
 use uuid::Uuid;
+
+/// Mint a share token: 22 base62 characters (~131 bits of entropy —
+/// enough that enumeration is hopeless against a 30-char online space).
+#[must_use]
+pub fn new_share_token() -> String {
+    const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let mut raw = [0u8; 22];
+    getrandom::fill(&mut raw).expect("the system RNG is available");
+    raw.iter()
+        .map(|b| ALPHABET[(*b as usize) % ALPHABET.len()] as char)
+        .collect()
+}
 
 /// Everything a user-creation call needs; the plaintext password never
 /// reaches this layer — the caller hashes it first.
@@ -116,6 +128,11 @@ pub trait Store: Send + Sync {
     /// netdisk-wave concern).
     async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError>;
 
+    /// Live rows referencing a thumbnail key (the Cache-slot blob's
+    /// liveness signal — distinct from storage_key because thumbnails
+    /// are shared across owners whose blobs dedupe by content).
+    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError>;
+
     /// Record a freshly uploaded file; `(owner_id, sha256)` must be
     /// unique among that owner's live files ([`StoreError::Conflict`]
     /// otherwise). The storage key may be shared with other owners' rows
@@ -147,6 +164,87 @@ pub trait Store: Send + Sync {
         provider: &str,
         subject: &str,
         user_id: Uuid,
+    ) -> Result<(), StoreError>;
+
+    // ── netdisk: scoped listing, folders, moves, shares, quota ──────
+
+    /// Count the live rows in a folder listing without fetching them.
+    async fn count_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+    ) -> Result<u64, StoreError>;
+
+    /// List one folder's live children (own-tree scope): the caller's
+    /// files whose parent is `parent_id` (None = root).
+    async fn list_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError>;
+
+    /// Whether a name is already taken in one owner's folder layer
+    /// (live rows; `exclude` lets a rename/move keep its own name).
+    async fn folder_name_taken(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        name: &str,
+        exclude: Option<Uuid>,
+    ) -> Result<bool, StoreError>;
+
+    /// Create a folder row (sha256 = `dir:` placeholder).
+    async fn create_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        name: &str,
+    ) -> Result<FileRecord, StoreError>;
+
+    /// Move a row to a new parent (caller pre-validates name/cycles).
+    async fn set_parent(&self, id: Uuid, parent_id: Option<Uuid>) -> Result<(), StoreError>;
+
+    /// The chain of ancestors of `id` (nearest first, excluding self).
+    async fn ancestor_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError>;
+
+    /// All live row ids in `id`'s subtree, `id` included.
+    async fn subtree_live_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError>;
+
+    /// Soft-delete a batch of rows (the subtree cascade).
+    async fn soft_delete_many(&self, ids: &[Uuid]) -> Result<u64, StoreError>;
+
+    /// Live rows by ids (the cascade's blob-reclaim input).
+    async fn get_files_by_ids(&self, ids: &[Uuid]) -> Result<Vec<FileRecord>, StoreError>;
+
+    /// Create (or return the existing) share for a file.
+    async fn create_share(&self, share: NewShare) -> Result<ShareRecord, StoreError>;
+
+    /// The share a token addresses (expiry checked by the caller).
+    async fn get_share(&self, token: &str) -> Result<Option<ShareRecord>, StoreError>;
+
+    /// One owner's shares, newest first.
+    async fn list_shares(&self, owner_id: Uuid) -> Result<Vec<ShareRecord>, StoreError>;
+
+    /// Revoke a share by token.
+    async fn delete_share(&self, token: &str) -> Result<bool, StoreError>;
+
+    /// Drop every share row pointing at any of these files (used when a
+    /// file or subtree is deleted — the tokens stop resolving and the
+    /// "my shares" list stops listing orphans).
+    async fn delete_shares_for_files(&self, file_ids: &[Uuid]) -> Result<u64, StoreError>;
+
+    /// Sum of live file sizes for an owner (folders count 0).
+    async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError>;
+
+    /// Set a user's per-user quota (None = the global default).
+    async fn set_user_quota(
+        &self,
+        user_id: Uuid,
+        quota_bytes: Option<i64>,
     ) -> Result<(), StoreError>;
 
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError>;

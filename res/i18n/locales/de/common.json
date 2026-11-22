@@ -15,11 +15,9 @@
     "copied": "Link kopiert",
     "cancel": "Abbrechen",
     "save": "Speichern",
-    "saved": "Gespeichert",
     "create": "Erstellen",
     "confirm": "Bestätigen",
     "retry": "Erneut versuchen",
-    "close": "Schließen",
     "loadMore": "Mehr laden",
     "logout": "Abmelden",
     "add": "Hinzufügen",
@@ -83,7 +81,9 @@
     "bannerUrl": "Link (optional)",
     "addBanner": "Banner-Eintrag hinzufügen",
     "passwordLogin": "Passwort-Login erlauben",
-    "passwordLoginHint": "Nach OAuth-Einrichtung empfehlen wir Deaktivieren."
+    "passwordLoginHint": "Nach OAuth-Einrichtung empfehlen wir Deaktivieren.",
+    "defaultQuota": "Standard-Speicherkontingent (Bytes)",
+    "defaultQuotaHint": "Leer = unbegrenzt. Gilt, wenn ein Benutzer keine eigene Überschreitung hat."
   },
   "chrome": {
     "settings": "Einstellungen",
@@ -110,5 +110,34 @@
     "deleteConfirm": "Anbieter {id} löschen?",
     "scopes": "Scopes",
     "scopesHint": "Leerzeichengetrennt. Eingebaute Typen ignorieren diesen Wert (ihre Vorlagen bringen eigene Scopes mit)."
+  },
+  "files": {
+    "title": "Dateien",
+    "newFolder": "Neuer Ordner",
+    "uploadHere": "In diesen Ordner hochladen",
+    "timeline": "Zeitleiste",
+    "empty": "Leerer Ordner",
+    "folderDeleteWarning": "Alle Inhalte werden rekursiv gelöscht",
+    "move": "Verschieben nach…",
+    "moveTarget": "Zielordner",
+    "share": "Teilen",
+    "shareCreated": "Link in die Zwischenablage kopiert",
+    "shareLink": "Share-Link",
+    "shareExpires": "Ablauf (optional)",
+    "sharePreview": "Vorschau erlauben",
+    "myShares": "Meine Freigaben",
+    "revoke": "Widerrufen",
+    "revoked": "Widerrufen",
+    "noShares": "Noch keine Freigaben",
+    "quota": "Speicher",
+    "quotaOf": "{used} von {quota} belegt",
+    "unlimited": "unbegrenzt",
+    "rename": "Umbenennen",
+    "folderName": "Ordnername",
+    "sharedFile": "Geteilte Datei",
+    "download": "Herunterladen",
+    "preview": "Vorschau",
+    "fileNotAvailable": "Diese Datei ist nicht mehr verfügbar",
+    "breadcrumbRoot": "Meine Dateien"
   }
 }

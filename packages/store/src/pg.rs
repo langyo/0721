@@ -13,17 +13,23 @@ use lacrymira::{Command, Condition, Entity, Reply, TypedColumnOps, Value};
 use lacrymira_pg::{MigrationResult, MigrationRunner, PgExecutor};
 use uuid::Uuid;
 
+use i0721_proto::{NewShare, ShareRecord};
+
 use crate::entity::{
-    file_model_from_new, file_model_to_record, user_model_from_new, user_model_to_record,
-    FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel, SettingColumn, SettingModel,
-    UserColumn, UserModel,
+    file_model_from_new, file_model_to_record, share_model_to_record, user_model_from_new,
+    user_model_to_record, FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel,
+    SettingColumn, SettingModel, ShareColumn, ShareModel, UserColumn, UserModel,
 };
 use crate::{migrations, CreateUser, Store, StoreError};
 
 /// A [`Store`] over a PostgreSQL connection pool.
 #[derive(Debug, Clone)]
 pub struct PgStore {
-    executor: PgExecutor,
+    /// The underlying PostgreSQL executor. PUB for the pg_lane tests'
+    /// escape hatch (hand-planted pre-migration rows, index drops).
+    /// Business code must go through the Store trait — raw SQL is the
+    /// documented escape hatch (`Command::Sql`), never `executor`.
+    pub executor: PgExecutor,
 }
 
 impl PgStore {
@@ -162,6 +168,26 @@ fn live_file_by(column: FileColumn, value: impl Into<Value>) -> Command {
         offset: None,
         lock: None,
     }
+}
+
+/// The live-rows filter shared by the folder listing and its count.
+fn folder_filter(
+    owner_id: Uuid,
+    parent_id: Option<Uuid>,
+    kind: Option<String>,
+) -> lacrymira::Condition {
+    let mut filter = FileColumn::DeletedAt
+        .is_null()
+        .into_inner()
+        .and(FileColumn::OwnerId.eq(owner_id).into_inner());
+    filter = match parent_id {
+        Some(pid) => filter.and(FileColumn::ParentId.eq(pid).into_inner()),
+        None => filter.and(FileColumn::ParentId.is_null().into_inner()),
+    };
+    if let Some(kind) = kind {
+        filter = filter.and(FileColumn::Kind.eq(kind).into_inner());
+    }
+    filter
 }
 
 #[async_trait::async_trait]
@@ -322,6 +348,18 @@ impl Store for PgStore {
     }
 
     async fn rename_file(&self, id: Uuid, name: &str) -> Result<Option<FileRecord>, StoreError> {
+        // Same-layer uniqueness (the partial unique index's mirror —
+        // exclude self; friendly Conflict instead of a raw 23505).
+        if let Some(current) = self.get_file(id).await? {
+            if self
+                .folder_name_taken(current.owner_id, current.parent_id, name, Some(id))
+                .await?
+            {
+                return Err(StoreError::Conflict(format!(
+                    "name {name:?} already exists in this folder"
+                )));
+            }
+        }
         // Single guarded UPDATE: `WHERE id = $1 AND deleted_at IS NULL`.
         // No read-then-write window — a concurrent soft delete makes this
         // answer `None` (0 rows) instead of resurrecting the row.
@@ -420,6 +458,23 @@ impl Store for PgStore {
         }
     }
 
+    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError> {
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(
+                FileColumn::DeletedAt
+                    .is_null()
+                    .into_inner()
+                    .and(FileColumn::ThumbnailKey.eq(key).into_inner()),
+            ),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self.query_all::<FileModel>(cmd).await?.len() as u64)
+    }
+
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {
         let cmd = Command::Select {
             table: SettingModel::TABLE.to_owned(),
@@ -449,6 +504,364 @@ impl Store for PgStore {
             .execute(&cmd)
             .await
             .map_err(StoreError::from)?;
+        Ok(())
+    }
+
+    // ── netdisk lane ─────────────────────────────────────────────────
+
+    async fn count_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+    ) -> Result<u64, StoreError> {
+        let filter = folder_filter(owner_id, parent_id, kind);
+        let cmd = Command::Count {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(filter),
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        match reply {
+            lacrymira::Reply::Value(Some(lacrymira::Value::I64(count))) => Ok(count as u64),
+            other => Err(StoreError::Db(format!(
+                "expected a count reply from the files table, got {other:?}"
+            ))),
+        }
+    }
+
+    async fn list_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError> {
+        let filter = folder_filter(owner_id, parent_id, kind);
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(filter),
+            order_by: vec![("created_at".to_owned(), false)],
+            limit: Some(limit),
+            offset: Some(offset),
+            lock: None,
+        };
+        Ok(self
+            .query_all::<FileModel>(cmd)
+            .await?
+            .into_iter()
+            .map(file_model_to_record)
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    async fn folder_name_taken(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        name: &str,
+        exclude: Option<Uuid>,
+    ) -> Result<bool, StoreError> {
+        // Entity-layer read (the raw COALESCE SQL hit the driver's
+        // binary-decoding path for UUID params); the root/NULL folding
+        // that COALESCE expressed happens here in Rust.
+        let mut filter = FileColumn::DeletedAt
+            .is_null()
+            .into_inner()
+            .and(FileColumn::OwnerId.eq(owner_id).into_inner())
+            .and(FileColumn::Name.eq(name).into_inner());
+        filter = match parent_id {
+            Some(pid) => filter.and(FileColumn::ParentId.eq(pid).into_inner()),
+            None => filter.and(FileColumn::ParentId.is_null().into_inner()),
+        };
+        if let Some(exclude_id) = exclude {
+            filter = filter.and(FileColumn::Id.ne(exclude_id).into_inner());
+        }
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(filter),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(!self.query_all::<FileModel>(cmd).await?.is_empty())
+    }
+
+    async fn create_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        name: &str,
+    ) -> Result<FileRecord, StoreError> {
+        if self
+            .folder_name_taken(owner_id, parent_id, name, None)
+            .await?
+        {
+            return Err(StoreError::Conflict(format!(
+                "name {name:?} already exists in this folder"
+            )));
+        }
+        let model = FileModel {
+            id: Uuid::new_v4(),
+            owner_id,
+            parent_id,
+            name: name.to_owned(),
+            kind: "folder".to_owned(),
+            mime: "inode/directory".to_owned(),
+            size: 0,
+            sha256: format!("dir:{}", Uuid::new_v4().simple()),
+            storage_backend: "local".to_owned(),
+            storage_key: String::new(),
+            thumbnail_key: None,
+            original_name: name.to_owned(),
+            created_at: Timestamp::now(),
+            deleted_at: None,
+        };
+        let stored = self
+            .query_one::<FileModel>(insert_command::<FileModel>(&model))
+            .await?
+            .ok_or_else(|| StoreError::Db("INSERT returned no row".to_owned()))?;
+        file_model_to_record(stored)
+    }
+
+    async fn set_parent(&self, id: Uuid, parent_id: Option<Uuid>) -> Result<(), StoreError> {
+        // Same-layer uniqueness at the TARGET (the RPC pre-checks too;
+        // the store layer is the final gate against a raw 23505).
+        if let Some(current) = self.get_file(id).await? {
+            if self
+                .folder_name_taken(current.owner_id, parent_id, &current.name, Some(id))
+                .await?
+            {
+                return Err(StoreError::Conflict(format!(
+                    "name {:?} already exists in the target folder",
+                    current.name
+                )));
+            }
+        }
+        let cmd = update_command::<FileModel>(
+            vec![(
+                "parent_id",
+                parent_id
+                    .map(|p| Value::Uuid(p.to_string()))
+                    .unwrap_or(Value::Null),
+            )],
+            FileColumn::DeletedAt
+                .is_null()
+                .into_inner()
+                .and(FileColumn::Id.eq(id).into_inner()),
+        )?;
+        self.executor.execute(&cmd).await?;
+        Ok(())
+    }
+
+    async fn ancestor_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
+        // Iterative walk through the entity layer (the raw recursive
+        // CTE hits the driver's binary-decoding path for UUID columns).
+        let mut chain = Vec::new();
+        let mut visited = std::collections::HashSet::from([id]);
+        let mut cursor = id;
+        loop {
+            let Some(row) = self.get_file(cursor).await? else {
+                break;
+            };
+            let Some(parent) = row.parent_id else {
+                break;
+            };
+            // Cycle guard (corrupted parent chains).
+            if !visited.insert(parent) {
+                break;
+            }
+            chain.push(parent);
+            cursor = parent;
+        }
+        Ok(chain)
+    }
+
+    async fn subtree_live_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
+        // Iterative BFS through the entity layer (see ancestor_ids).
+        let mut ids = vec![id];
+        let mut frontier = vec![id];
+        while let Some(current) = frontier.pop() {
+            let cmd = Command::Select {
+                table: FileModel::TABLE.to_owned(),
+                filter: Some(
+                    FileColumn::DeletedAt
+                        .is_null()
+                        .into_inner()
+                        .and(FileColumn::ParentId.eq(current).into_inner()),
+                ),
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                lock: None,
+            };
+            for child in self.query_all::<FileModel>(cmd).await? {
+                ids.push(child.id);
+                frontier.push(child.id);
+            }
+        }
+        Ok(ids)
+    }
+
+    async fn soft_delete_many(&self, ids: &[Uuid]) -> Result<u64, StoreError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let stamp = Timestamp::now().to_string();
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: format!(
+                "UPDATE files SET deleted_at = '{}' WHERE deleted_at IS NULL AND id IN ({})",
+                stamp,
+                placeholders.join(", ")
+            ),
+            params: ids.iter().map(|id| Value::Uuid(id.to_string())).collect(),
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Affected(n) = reply else {
+            return Err(StoreError::Db("expected an affected count".to_owned()));
+        };
+        Ok(n)
+    }
+
+    async fn get_files_by_ids(&self, ids: &[Uuid]) -> Result<Vec<FileRecord>, StoreError> {
+        // Cascade batches are bounded by subtree size; N indexed reads
+        // keep the row mapping inside the entity layer (raw rows cannot
+        // be typed back without the projection).
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(record) = self.get_file(*id).await? {
+                out.push(record);
+            }
+        }
+        Ok(out)
+    }
+
+    async fn create_share(&self, share: NewShare) -> Result<ShareRecord, StoreError> {
+        if let Some(existing) = self
+            .query_one::<ShareModel>(Command::Select {
+                table: ShareModel::TABLE.to_owned(),
+                filter: Some(ShareColumn::FileId.eq(share.file_id).into_inner()),
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                lock: None,
+            })
+            .await?
+        {
+            if existing.owner_id == share.owner_id {
+                return Ok(share_model_to_record(existing));
+            }
+        }
+        let model = ShareModel {
+            token: crate::new_share_token(),
+            file_id: share.file_id,
+            owner_id: share.owner_id,
+            expires_at: share.expires_at,
+            allow_preview: share.allow_preview,
+            created_at: Timestamp::now(),
+        };
+        let stored = self
+            .query_one::<ShareModel>(insert_command::<ShareModel>(&model))
+            .await?
+            .ok_or_else(|| StoreError::Db("INSERT returned no row".to_owned()))?;
+        Ok(share_model_to_record(stored))
+    }
+
+    async fn get_share(&self, token: &str) -> Result<Option<ShareRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ShareModel::TABLE.to_owned(),
+            filter: Some(ShareColumn::Token.eq(token).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_one::<ShareModel>(cmd)
+            .await?
+            .map(share_model_to_record))
+    }
+
+    async fn list_shares(&self, owner_id: Uuid) -> Result<Vec<ShareRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ShareModel::TABLE.to_owned(),
+            filter: Some(ShareColumn::OwnerId.eq(owner_id).into_inner()),
+            order_by: vec![("created_at".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_all::<ShareModel>(cmd)
+            .await?
+            .into_iter()
+            .map(share_model_to_record)
+            .collect())
+    }
+
+    async fn delete_share(&self, token: &str) -> Result<bool, StoreError> {
+        let removed = self
+            .executor
+            .delete::<ShareModel>(Some(ShareColumn::Token.eq(token).into_inner()))
+            .await?;
+        Ok(removed > 0)
+    }
+
+    async fn delete_shares_for_files(&self, file_ids: &[Uuid]) -> Result<u64, StoreError> {
+        if file_ids.is_empty() {
+            return Ok(0);
+        }
+        let filter = ShareColumn::FileId.in_(file_ids.to_vec()).into_inner();
+        let cmd = Command::Delete {
+            table: ShareModel::TABLE.to_owned(),
+            filter: Some(filter),
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        match reply {
+            lacrymira::Reply::Affected(n) => Ok(n),
+            other => Err(StoreError::Db(format!(
+                "expected an affected-rows reply from the shares table, got {other:?}"
+            ))),
+        }
+    }
+
+    async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) AS used FROM files                    WHERE deleted_at IS NULL AND owner_id = $1 AND kind <> 'folder'"
+                .to_owned(),
+            params: vec![Value::Uuid(owner_id.to_string())],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a SUM".to_owned()));
+        };
+        Ok(rows
+            .first()
+            .and_then(|row| row.iter().next())
+            .and_then(|v| match v {
+                Value::I64(n) => Some(*n),
+                Value::I32(n) => Some(i64::from(*n)),
+                _ => None,
+            })
+            .unwrap_or(0))
+    }
+
+    async fn set_user_quota(
+        &self,
+        user_id: Uuid,
+        quota_bytes: Option<i64>,
+    ) -> Result<(), StoreError> {
+        let cmd = update_command::<UserModel>(
+            vec![(
+                "quota_bytes",
+                quota_bytes.map(Value::I64).unwrap_or(Value::Null),
+            )],
+            UserColumn::Id.eq(user_id).into_inner(),
+        )?;
+        self.executor.execute(&cmd).await?;
         Ok(())
     }
 }

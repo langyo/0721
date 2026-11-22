@@ -15,11 +15,9 @@
     "copied": "連結已複製",
     "cancel": "取消",
     "save": "儲存",
-    "saved": "已儲存",
     "create": "建立",
     "confirm": "確認",
     "retry": "重試",
-    "close": "關閉",
     "loadMore": "載入更多",
     "logout": "登出",
     "add": "新增",
@@ -83,7 +81,9 @@
     "bannerUrl": "連結（可選）",
     "addBanner": "新增頁腳條目",
     "passwordLogin": "允許密碼登入",
-    "passwordLoginHint": "設定好 OAuth 提供者後建議關閉。"
+    "passwordLoginHint": "設定好 OAuth 提供者後建議關閉。",
+    "defaultQuota": "預設儲存配額（位元組）",
+    "defaultQuotaHint": "留空 = 不限。僅對未設定個人覆蓋的用戶生效。"
   },
   "chrome": {
     "settings": "設定",
@@ -110,5 +110,34 @@
     "deleteConfirm": "刪除提供者 {id}？",
     "scopes": "作用域",
     "scopesHint": "空格分隔。內建類型忽略此值（範本自帶作用域）。"
+  },
+  "files": {
+    "title": "檔案",
+    "newFolder": "新增資料夾",
+    "uploadHere": "上傳到目前資料夾",
+    "timeline": "時間線",
+    "empty": "空資料夾",
+    "folderDeleteWarning": "將遞迴刪除其中所有內容",
+    "move": "移動到…",
+    "moveTarget": "目標資料夾",
+    "share": "分享",
+    "shareCreated": "連結已複製到剪貼板",
+    "shareLink": "分享連結",
+    "shareExpires": "到期時間（可選）",
+    "sharePreview": "允許預覽",
+    "myShares": "我的分享",
+    "revoke": "撤銷",
+    "revoked": "已撤銷",
+    "noShares": "暫無分享",
+    "quota": "儲存",
+    "quotaOf": "已用 {used} / {quota}",
+    "unlimited": "不限",
+    "rename": "重新命名",
+    "folderName": "資料夾名稱",
+    "sharedFile": "共享檔案",
+    "download": "下載",
+    "preview": "預覽",
+    "fileNotAvailable": "該檔案不再可用",
+    "breadcrumbRoot": "我的檔案"
   }
 }

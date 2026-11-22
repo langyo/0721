@@ -3,4 +3,4 @@
 /**
  * The coarse content class of a file.
  */
-export type FileKind = "image" | "document" | "media" | "archive" | "other";
+export type FileKind = "folder" | "image" | "document" | "media" | "archive" | "other";

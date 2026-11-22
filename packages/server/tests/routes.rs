@@ -1064,6 +1064,7 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     // delete handler reaches the unlink.
     *racy.payload.lock().unwrap() = Some((
         i0721_proto::NewFile {
+            parent_id: None,
             owner_id: other.id,
             name: "raced.png".to_owned(),
             kind: i0721_proto::FileKind::Image,
@@ -2754,4 +2755,1276 @@ async fn provider_scopes_round_trip_through_the_masked_list() {
     )
     .await;
     assert_eq!(envelope["result"]["scopes"], serde_json::Value::Null);
+}
+
+// ── the netdisk negative-control matrix (W5) ────────────────────────────
+
+/// A login + rpc shorthand for the matrix tests.
+async fn matrix_setup() -> (AppState, String) {
+    let (state, admin) = test_state().await;
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    (state, token)
+}
+
+/// Create a folder via RPC; returns its id.
+async fn mk_folder(state: &AppState, token: &str, name: &str, parent: Option<String>) -> String {
+    let (status, envelope) = rpc(
+        state,
+        token,
+        "files.create_folder",
+        serde_json::json!({"name": name, "parent_id": parent}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "folder {name}: {envelope}");
+    envelope["result"]["id"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn netdisk_move_into_own_subtree_is_refused() {
+    let (state, token) = matrix_setup().await;
+    let a = mk_folder(&state, &token, "a", None).await;
+    let b = mk_folder(&state, &token, "b", Some(a.clone())).await;
+    // Move "a" INTO its own child "b" — a cycle.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.move",
+        serde_json::json!({"id": a, "parent_id": b}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(rpc_error_code(&envelope), -32602);
+    assert!(envelope["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("own subtree"));
+    // Deeper: a → b → c, move a into c.
+    let c = mk_folder(&state, &token, "c", Some(b)).await;
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.move",
+        serde_json::json!({"id": a, "parent_id": c}),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32602, "deep cycles refuse too");
+    // A LEGAL move still works: c to root.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.move",
+        serde_json::json!({"id": c, "parent_id": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+}
+
+#[tokio::test]
+async fn netdisk_same_layer_duplicate_names_refuse_at_root_and_nested() {
+    let (state, token) = matrix_setup().await;
+    // Root layer.
+    let _a = mk_folder(&state, &token, "photos", None).await;
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.create_folder",
+        serde_json::json!({"name": "photos", "parent_id": null}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32007,
+        "root duplicate → conflict"
+    );
+
+    // Nested layer: same name in a DIFFERENT folder is fine.
+    let sub = mk_folder(&state, &token, "sub", None).await;
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.create_folder",
+        serde_json::json!({"name": "photos", "parent_id": sub}),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "same name, different layer: {envelope}"
+    );
+
+    // Nested duplicate.
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.create_folder",
+        serde_json::json!({"name": "photos", "parent_id": sub}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32007,
+        "nested duplicate → conflict"
+    );
+
+    // A MOVE into a layer holding the same name refuses too.
+    let other = mk_folder(&state, &token, "other", None).await;
+    let (status, _) = rpc(
+        &state,
+        &token,
+        "files.move",
+        serde_json::json!({"id": other, "parent_id": sub}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a distinct-name move is legal");
+    let photos_root = state
+        .store
+        .list_folder(
+            state
+                .store
+                .get_user_by_username("admin")
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            None,
+            None,
+            0,
+            100,
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.name == "photos")
+        .unwrap()
+        .id;
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.move",
+        serde_json::json!({"id": photos_root, "parent_id": sub}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32007,
+        "moving into a same-name layer refuses"
+    );
+}
+
+#[tokio::test]
+async fn netdisk_quota_exceeded_reports_used_and_limit() {
+    let (state, token) = matrix_setup().await;
+    let (_, admin) = test_state().await;
+    let _ = admin;
+
+    // Set a tiny quota (2 KiB) via the admin RPC.
+    let user = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap();
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.quota_put",
+        serde_json::json!({"user_id": user.id.to_string(), "quota_bytes": 2048}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // Upload past it: a 4 KiB PNG payload.
+    let oversized = vec![0u8; 4096];
+    let response = upload_raw(&state, &token, oversized, "big.png", None).await;
+    assert_eq!(response.0, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        response.1.contains("quota exceeded"),
+        "the message names the quota: {}",
+        response.1
+    );
+    assert!(response.1.contains("2048"), "the message carries the limit");
+
+    // quota_get answers the pair.
+    let (_, envelope) = rpc(&state, &token, "files.quota_get", serde_json::json!({})).await;
+    assert_eq!(envelope["result"]["quota_bytes"], 2048);
+
+    assert!(envelope["result"]["used_bytes"].as_i64().unwrap() >= 0);
+}
+
+/// A raw multipart upload returning (status, error-text).
+async fn upload_raw(
+    state: &AppState,
+    token: &str,
+    bytes: Vec<u8>,
+    name: &str,
+    folder_id: Option<String>,
+) -> (StatusCode, String) {
+    upload_raw_query(state, token, bytes, name, folder_id, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upload_raw_query(
+    state: &AppState,
+    token: &str,
+    bytes: Vec<u8>,
+    name: &str,
+    folder_id: Option<String>,
+    display_name: Option<&str>,
+) -> (StatusCode, String) {
+    let boundary = "X-BOUNDARY-X";
+    let b = boundary;
+    let mut body = format!(
+        "--{b}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"{name}\"\r\ncontent-type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(&bytes);
+    body.extend_from_slice(format!("\r\n--{b}--\r\n").as_bytes());
+    let mut query = folder_id
+        .map(|f| format!("?folder_id={f}"))
+        .unwrap_or_default();
+    if let (Some(display), true) = (display_name, query.is_empty()) {
+        query = format!("?name={display}");
+    } else if let Some(display) = display_name {
+        query.push_str(&format!("&name={display}"));
+    }
+    let response = app(state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/files{query}"))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+            token,
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
+#[tokio::test]
+async fn netdisk_share_expiry_and_revocation_answer_404() {
+    let (state, token) = matrix_setup().await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "cat.png").await;
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+
+    // Create a share expiring in the past: the public lane 404s.
+    let past = (Timestamp::now() - jiff::Span::new().hours(1)).to_string();
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "expires_at": past, "allow_preview": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let expired_token = envelope["result"]["token"].as_str().unwrap().to_owned();
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{expired_token}/meta"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND, "expired → 404");
+
+    // A live share: meta reads WITHOUT credentials; revocation 404s it.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "allow_preview": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // Same file → returns the EXISTING (expired) share — the idempotent
+    // path re-answers the first token. Revoke it, then create fresh.
+    let shared_token = envelope["result"]["token"].as_str().unwrap().to_owned();
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.share_delete",
+        serde_json::json!({"token": shared_token}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "allow_preview": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let live = envelope["result"]["token"].as_str().unwrap().to_owned();
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{live}/meta"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "live share reads with no auth"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !json["file_name"].as_str().unwrap().is_empty(),
+        "the display name answers"
+    );
+    assert_eq!(json["allow_preview"], true);
+    assert_eq!(json["kind"], "image");
+
+    // Download follows: inline for previewable.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{live}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("inline"));
+
+    // Revoke → both endpoints 404.
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.share_delete",
+        serde_json::json!({"token": live}),
+    )
+    .await;
+    let _ = envelope;
+    for path in [
+        format!("/api/v1/share/{live}/meta"),
+        format!("/api/v1/share/{live}/download"),
+    ] {
+        let response = app(&state)
+            .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{path} revoked → 404"
+        );
+    }
+}
+
+#[tokio::test]
+async fn netdisk_upload_into_folder_gates_ownership() {
+    let (state, token) = matrix_setup().await;
+    // Another user's folder.
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "member".to_owned(),
+            display_name: "Member".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_folder = state
+        .store
+        .create_folder(member.id, None, "theirs")
+        .await
+        .unwrap();
+
+    // The admin CAN upload into any folder (owner-or-admin).
+    let (status, _) = upload_raw(
+        &state,
+        &token,
+        tiny_png(),
+        "ok.png",
+        Some(member_folder.id.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "admin may target any folder");
+
+    // A MEMBER cannot upload into another user's folder.
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    let member2 = state
+        .store
+        .create_user(CreateUser {
+            username: "member2".to_owned(),
+            display_name: "Member2".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let _ = member2;
+    let admin_folder = state
+        .store
+        .create_folder(
+            state
+                .store
+                .get_user_by_username("admin")
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            None,
+            "mine",
+        )
+        .await
+        .unwrap();
+    let (status, text) = upload_raw(
+        &state,
+        &member_token,
+        tiny_png(),
+        "hijack.png",
+        Some(admin_folder.id.to_string()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "member → admin's folder: {text}"
+    );
+}
+
+#[tokio::test]
+async fn netdisk_folder_list_scope_and_timeline() {
+    let (state, token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    // Admin's own tree.
+    let _folder = state
+        .store
+        .create_folder(admin_id, None, "mine")
+        .await
+        .unwrap();
+    let (_, dto) = upload(&state, &token, tiny_png(), "own.png").await;
+    let admin_file_id = dto["id"].as_str().unwrap().to_owned();
+
+    // A member's tree (invisible to the admin's own scope).
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "scoped".to_owned(),
+            display_name: "Scoped".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    state
+        .store
+        .create_folder(member.id, None, "theirs")
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+
+    // member's own scope: THEIR tree only.
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.list",
+        serde_json::json!({"scope": "own", "folder_id": null}),
+    )
+    .await;
+    let items = envelope["result"]["items"].as_array().unwrap();
+    assert!(
+        items.iter().all(|i| i["name"] != "mine"),
+        "no admin rows in the member's own tree"
+    );
+    assert!(items.iter().any(|i| i["name"] == "theirs"));
+
+    // member asking for timeline: FORCE-scoped to own (member pin).
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.list",
+        serde_json::json!({"scope": "timeline"}),
+    )
+    .await;
+    let items = envelope["result"]["items"].as_array().unwrap();
+    assert!(
+        items.iter().all(|i| i["id"] != admin_file_id),
+        "the admin's upload stays invisible to the member's forced-own scope"
+    );
+
+    // Admin timeline: the global stream (both users' images).
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "timeline", "limit": 100}),
+    )
+    .await;
+    let items = envelope["result"]["items"].as_array().unwrap();
+    assert!(
+        items.iter().any(|i| i["id"] == admin_file_id),
+        "admin timeline sees the global stream"
+    );
+}
+
+#[tokio::test]
+async fn netdisk_folder_delete_cascades_and_reclaims_blobs() {
+    let (state, token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    // Tree: f/ → a.png + sub/ → b.png (two DIFFERENT payloads so both
+    // rows exist — tiny_png dedupes per owner).
+    let f = state
+        .store
+        .create_folder(admin_id, None, "f")
+        .await
+        .unwrap();
+    let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
+    state
+        .store
+        .set_parent(
+            uuid::Uuid::parse_str(a["id"].as_str().unwrap()).unwrap(),
+            Some(f.id),
+        )
+        .await
+        .unwrap();
+    let sub = state
+        .store
+        .create_folder(admin_id, Some(f.id), "sub")
+        .await
+        .unwrap();
+    let mut other_png = tiny_png();
+    other_png.extend_from_slice(b"-distinct-"); // different content → new row
+    let (status_b, b) = upload(&state, &token, other_png.clone(), "b.png").await;
+    assert!(
+        status_b == StatusCode::CREATED || status_b == StatusCode::OK,
+        "second distinct upload: {b}"
+    );
+    state
+        .store
+        .set_parent(
+            uuid::Uuid::parse_str(b["id"].as_str().unwrap()).unwrap(),
+            Some(sub.id),
+        )
+        .await
+        .unwrap();
+
+    // a.png and b.png share content (tiny_png dedupes per owner → one
+    // blob, two rows). Delete f/ → the whole subtree goes, and the
+    // SHARED blob is reclaimed exactly once.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": f.id.to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // Subtree fully soft-deleted.
+    // The single-file get filters soft-deleted rows — a soft-deleted
+    // subtree member reads as None (the LIVE view of the world).
+    for id in [
+        f.id.to_string(),
+        a["id"].as_str().unwrap().to_owned(),
+        sub.id.to_string(),
+        b["id"].as_str().unwrap().to_owned(),
+    ] {
+        let row = state
+            .store
+            .get_file(uuid::Uuid::parse_str(&id).unwrap())
+            .await
+            .unwrap();
+        assert!(row.is_none(), "{id} gone from the live view");
+    }
+
+    // Both blobs (a's and b's distinct content) were RECLAIMED — the
+    // dead rows' blobs are gone before the re-upload proves recreation.
+    let a_key = a["sha256"].as_str().unwrap().to_owned();
+    let reclaimed = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &a_key)
+        .await
+        .unwrap();
+    assert!(
+        reclaimed.is_none(),
+        "the cascade reclaimed the dead blob (it must NOT survive its last live row)"
+    );
+
+    // A fresh upload of the same content re-creates it (no orphan).
+    let (status, dto) = upload(&state, &token, tiny_png(), "again.png").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let key = dto["url"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("/media/")
+        .to_owned();
+    let blob = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap();
+    assert!(
+        blob.is_some(),
+        "the re-uploaded blob exists (the cascade reclaimed the dead copy)"
+    );
+}
+
+#[tokio::test]
+async fn netdisk_own_scope_pagination() {
+    let (state, token) = matrix_setup().await;
+    for i in 0..5 {
+        mk_folder(&state, &token, &format!("f{i}"), None).await;
+    }
+    // Page 1: 3 items.
+    let (_, e1) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "own", "offset": 0, "limit": 3}),
+    )
+    .await;
+    assert_eq!(e1["result"]["total"], 5);
+    assert_eq!(e1["result"]["items"].as_array().unwrap().len(), 3);
+    // Page 2: remaining 2.
+    let (_, e2) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "own", "offset": 3, "limit": 3}),
+    )
+    .await;
+    assert_eq!(e2["result"]["items"].as_array().unwrap().len(), 2);
+    // No overlap, no gap.
+    let ids1: Vec<&str> = e1["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap())
+        .collect();
+    let ids2: Vec<&str> = e2["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids1.iter().all(|id| !ids2.contains(id)),
+        "pages do not overlap"
+    );
+    assert_eq!(ids1.len() + ids2.len(), 5, "no gap");
+}
+
+#[tokio::test]
+async fn netdisk_files_chain_answers_ancestors() {
+    let (state, token) = matrix_setup().await;
+    let a = mk_folder(&state, &token, "a", None).await;
+    let b = mk_folder(&state, &token, "b", Some(a.clone())).await;
+
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.chain",
+        serde_json::json!({"folder_id": b}),
+    )
+    .await;
+    let chain = envelope["result"].as_array().unwrap();
+    assert_eq!(chain.len(), 2, "root → b: {chain:?}");
+    assert_eq!(chain[0]["name"], "a");
+    assert_eq!(chain[1]["name"], "b");
+}
+
+#[tokio::test]
+async fn netdisk_rename_precheck_answers_friendly_conflict() {
+    let (state, token) = matrix_setup().await;
+    let _a = mk_folder(&state, &token, "alpha", None).await;
+    let b = mk_folder(&state, &token, "beta", None).await;
+
+    // Rename "beta" to "alpha" → 409 (same-layer duplicate).
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.update",
+        serde_json::json!({"id": b, "name": "alpha"}),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32007);
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("already exists"),
+        "the friendly message names the conflict: {envelope}"
+    );
+}
+
+// ── W5 R3: mutation-survivor pins ──────────────────────────────────────
+
+/// The cascade also reclaims the CACHE slot (thumbnails): deleting a
+/// folder containing images must free both the media blob and the
+/// {key}.webp thumbnail.
+#[tokio::test]
+async fn netdisk_cascade_reclaims_thumbnail_cache_slot() {
+    let (state, token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    let f = state
+        .store
+        .create_folder(admin_id, None, "photos")
+        .await
+        .unwrap();
+    let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
+    let a_id = uuid::Uuid::parse_str(a["id"].as_str().unwrap()).unwrap();
+    state.store.set_parent(a_id, Some(f.id)).await.unwrap();
+
+    // The thumbnail exists in the Cache slot.
+    let a_key = a["sha256"].as_str().unwrap().to_owned();
+    let thumb_key = format!("{a_key}.webp");
+    let thumb = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(thumb.is_some(), "the thumbnail exists before the cascade");
+
+    // Cascade delete the folder.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": f.id.to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // BOTH the media blob AND the thumbnail are reclaimed.
+    let media = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &a_key)
+        .await
+        .unwrap();
+    assert!(media.is_none(), "the media blob is reclaimed");
+    let thumb_after = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(
+        thumb_after.is_none(),
+        "the CACHE-slot thumbnail is reclaimed too (not just the media blob)"
+    );
+}
+
+/// Content-Disposition RFC 5987: non-ASCII filenames get
+/// filename*=UTF-8'' with percent-encoding.
+#[tokio::test]
+async fn netdisk_share_download_encodes_non_ascii_filenames() {
+    let (state, token) = matrix_setup().await;
+    // Upload with a non-ASCII name (?name= overrides the display name).
+    let (_, dto) = upload(&state, &token, tiny_png(), "cat.png").await;
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+
+    // Create a share.
+    let (status, share_e) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "allow_preview": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{share_e}");
+    let share_token = share_e["result"]["token"].as_str().unwrap().to_owned();
+
+    // Rename to a non-ASCII name.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.update",
+        serde_json::json!({"id": file_id, "name": "猫照片.png"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // Download: the disposition uses filename*=UTF-8''…
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{share_token}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let disposition = response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        disposition.contains("filename*=UTF-8''"),
+        "non-ASCII → RFC 5987 form: {disposition}"
+    );
+    assert!(
+        disposition.contains('%'),
+        "the non-ASCII bytes are percent-encoded: {disposition}"
+    );
+    assert!(
+        !disposition.contains("猫"),
+        "the raw non-ASCII bytes are NOT in the header: {disposition}"
+    );
+
+    // ASCII filenames keep the simple form.
+    let (status, _) = rpc(
+        &state,
+        &token,
+        "files.update",
+        serde_json::json!({"id": file_id, "name": "cat.png"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{share_token}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let disposition = response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        disposition.contains("filename=\"cat.png\""),
+        "ASCII stays simple: {disposition}"
+    );
+    assert!(
+        !disposition.contains("filename*"),
+        "no RFC 5987 arm for ASCII: {disposition}"
+    );
+}
+
+/// Quota fallback: user row NULL → site default from settings.
+#[tokio::test]
+async fn netdisk_quota_falls_back_to_site_default() {
+    let (state, token) = matrix_setup().await;
+    let user = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap();
+    let _ = user;
+
+    // Set the site default via settings.put.
+    let strict = full_settings_json(|json| {
+        json["upload"]["default-quota-bytes"] = serde_json::json!(5_000_000);
+    });
+    let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+    let (status, envelope) = rpc(&state, &token, "settings.put", strict).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // The user's row is NULL → quota_get answers the site default.
+    let (_, envelope) = rpc(&state, &token, "files.quota_get", serde_json::json!({})).await;
+    assert_eq!(
+        envelope["result"]["quota_bytes"], 5_000_000,
+        "NULL user row falls back to the site default: {envelope}"
+    );
+
+    // A per-user override wins.
+    let (status, _) = rpc(
+        &state,
+        &token,
+        "files.quota_put",
+        serde_json::json!({"user_id": user.id.to_string(), "quota_bytes": 1000}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, envelope) = rpc(&state, &token, "files.quota_get", serde_json::json!({})).await;
+    assert_eq!(
+        envelope["result"]["quota_bytes"], 1000,
+        "per-user override wins"
+    );
+}
+
+/// Memory rename: same-layer uniqueness enforced at the store layer
+/// (mirroring the PG partial unique index).
+#[tokio::test]
+async fn netdisk_memory_store_rename_refuses_same_layer_duplicate() {
+    let (state, _token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    let a = state
+        .store
+        .create_folder(admin_id, None, "alpha")
+        .await
+        .unwrap();
+    let b = state
+        .store
+        .create_folder(admin_id, None, "beta")
+        .await
+        .unwrap();
+
+    // Direct store-layer rename (bypassing the RPC pre-check): "beta" →
+    // "alpha" must refuse at the STORE layer too.
+    let result = state.store.rename_file(b.id, "alpha").await;
+    assert!(
+        matches!(result, Err(i0721_store::StoreError::Conflict(_))),
+        "memory store refuses same-layer rename: {result:?}"
+    );
+    let _ = a;
+}
+
+/// Pagination: list_folder with offset/limit on the memory store.
+#[tokio::test]
+async fn netdisk_memory_list_folder_pagination() {
+    let (state, _token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    for i in 0..5 {
+        state
+            .store
+            .create_folder(admin_id, None, &format!("p{i}"))
+            .await
+            .unwrap();
+    }
+    let page1 = state
+        .store
+        .list_folder(admin_id, None, None, 0, 3)
+        .await
+        .unwrap();
+    let page2 = state
+        .store
+        .list_folder(admin_id, None, None, 3, 3)
+        .await
+        .unwrap();
+    assert_eq!(page1.len(), 3);
+    assert_eq!(page2.len(), 2);
+    let ids1: Vec<_> = page1.iter().map(|r| r.id).collect();
+    let ids2: Vec<_> = page2.iter().map(|r| r.id).collect();
+    assert!(ids1.iter().all(|id| !ids2.contains(id)));
+    assert_eq!(ids1.len() + ids2.len(), 5);
+}
+
+// ── W5 C1 pins ─────────────────────────────────────────────────────────
+
+/// The upload lane's quota gate uses the SAME resolver as quota_get:
+/// no per-user override + a site default → 413 on the WRITE path.
+#[tokio::test]
+async fn c1_upload_quota_gate_uses_site_default() {
+    let (state, token) = matrix_setup().await;
+    let user = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap();
+
+    // No per-user override; set a site default of 2 KiB.
+    let strict = full_settings_json(|json| {
+        json["upload"]["default-quota-bytes"] = serde_json::json!(2048);
+    });
+    let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+    let (status, _) = rpc(&state, &token, "settings.put", strict).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The user row is NULL → the SITE default gates the upload.
+    let response = upload_raw(&state, &token, vec![0u8; 4096], "big.png", None).await;
+    assert_eq!(
+        response.0,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "site default gates the upload: {}",
+        response.1
+    );
+    assert!(
+        response.1.contains("quota exceeded"),
+        "the message names the quota"
+    );
+    assert!(
+        response.1.contains("2048"),
+        "the message carries the limit: {}",
+        response.1
+    );
+    let _ = user;
+}
+
+/// Cross-owner thumbnail survival: user B's same-content upload keeps
+/// the shared thumbnail alive when admin deletes their own tree.
+#[tokio::test]
+async fn c1_cross_owner_thumbnail_survives_cascade() {
+    let (state, token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    // Member B (with a password so they can upload).
+    let _member = state
+        .store
+        .create_user(CreateUser {
+            username: "thumbmate".to_owned(),
+            display_name: "ThumbMate".to_owned(),
+            role: Role::Member,
+            password_hash: Some(hash_password("member-pass").unwrap()),
+        })
+        .await
+        .unwrap();
+    let member_token = login(&state, "thumbmate", "member-pass").await;
+
+    // Admin uploads a PNG into their folder; member uploads the SAME
+    // bytes (shared blob, per-owner rows, own thumbnail).
+    let f = state
+        .store
+        .create_folder(admin_id, None, "mine")
+        .await
+        .unwrap();
+    let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
+    let a_id = uuid::Uuid::parse_str(a["id"].as_str().unwrap()).unwrap();
+    state.store.set_parent(a_id, Some(f.id)).await.unwrap();
+
+    let (_, b) = upload(&state, &member_token, tiny_png(), "b.png").await;
+    let _ = b;
+
+    let sha = a["sha256"].as_str().unwrap().to_owned();
+    let thumb_key = format!("{sha}.webp");
+
+    // Admin deletes their folder — member's row still lives.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": f.id.to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // The member's thumbnail survives (their live row references it).
+    let thumb = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(
+        thumb.is_some(),
+        "the member's thumbnail survives the admin's cascade (thumbnail-key count, not storage-key)"
+    );
+}
+
+/// PG rename pre-check: same-layer duplicate refuses at the store layer.
+#[tokio::test]
+async fn c1_memory_rename_precheck_friendly_conflict() {
+    let (state, _token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let a = state
+        .store
+        .create_folder(admin_id, None, "one")
+        .await
+        .unwrap();
+    let b = state
+        .store
+        .create_folder(admin_id, None, "two")
+        .await
+        .unwrap();
+    let result = state.store.rename_file(b.id, "one").await;
+    assert!(
+        matches!(result, Err(i0721_store::StoreError::Conflict(ref msg)) if msg.contains("already exists")),
+        "store-layer rename pre-check: {result:?}"
+    );
+    let _ = a;
+}
+
+#[tokio::test]
+async fn upload_lands_in_the_requested_folder() {
+    let (state, token) = matrix_setup().await;
+    let folder_id = mk_folder(&state, &token, "photos", None).await;
+
+    let (status, raw) = upload_raw(
+        &state,
+        &token,
+        tiny_png(),
+        "shot.png",
+        Some(folder_id.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "upload accepted: {raw}");
+    let up: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        up["parent_id"].as_str(),
+        Some(folder_id.as_str()),
+        "the uploaded file reports its folder: {up}"
+    );
+
+    let (_, inside) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "own", "folder_id": folder_id}),
+    )
+    .await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+    let items = inside["result"]["items"].as_array().unwrap();
+    assert!(
+        items
+            .iter()
+            .any(|f| f["id"].as_str() == Some(file_id.as_str())),
+        "the file is inside the folder: {inside}"
+    );
+    let (_, root) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "own"}),
+    )
+    .await;
+    let root_items = root["result"]["items"].as_array().unwrap();
+    assert!(
+        !root_items
+            .iter()
+            .any(|f| f["id"].as_str() == Some(file_id.as_str())),
+        "the file is NOT in the root listing: {root}"
+    );
+}
+
+#[tokio::test]
+async fn upload_name_conflict_reports_the_name_message() {
+    let (state, token) = matrix_setup().await;
+    let big = {
+        let image = image::DynamicImage::new_rgb8(9, 9);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        buf.into_inner()
+    };
+    let (status, first) =
+        upload_raw_query(&state, &token, tiny_png(), "one.png", None, Some("dup.png")).await;
+    assert_eq!(status, StatusCode::CREATED, "first upload: {first}");
+    let (status, second) =
+        upload_raw_query(&state, &token, big, "two.png", None, Some("dup.png")).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "second upload conflicts: {second}"
+    );
+    let second: serde_json::Value = serde_json::from_str(&second).unwrap();
+    let body = second["error"].as_str().unwrap_or_default();
+    assert!(
+        body.contains("name") && !body.contains("content already uploaded"),
+        "the conflict names the real cause: {body}"
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_file_purges_its_share_rows() {
+    let (state, token) = matrix_setup().await;
+    let (_, up) = upload(&state, &token, tiny_png(), "shared.png").await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+
+    let (_, share) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "allow_preview": true}),
+    )
+    .await;
+    let share_token = share["result"]["token"]
+        .as_str()
+        .unwrap_or_else(|| panic!("share_create failed: {share}"))
+        .to_owned();
+    let (_, list_before) = rpc(&state, &token, "files.share_list", serde_json::json!({})).await;
+    assert_eq!(
+        list_before["result"].as_array().unwrap().len(),
+        1,
+        "the share is listed: {list_before}"
+    );
+
+    // Delete the file: the share row must die with it (the token stops
+    // resolving AND the list stops showing the orphan).
+    let (status, del) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": file_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "delete: {del}");
+
+    let (_, list_after) = rpc(&state, &token, "files.share_list", serde_json::json!({})).await;
+    assert!(
+        list_after["result"].as_array().unwrap().is_empty(),
+        "no orphaned share rows: {list_after}"
+    );
+    let meta = app(&state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/share/{share_token}/meta"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(meta.status(), StatusCode::NOT_FOUND, "the token is dead");
 }

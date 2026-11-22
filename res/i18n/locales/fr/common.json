@@ -15,11 +15,9 @@
     "copied": "Lien copié",
     "cancel": "Annuler",
     "save": "Enregistrer",
-    "saved": "Enregistré",
     "create": "Créer",
     "confirm": "Confirmer",
     "retry": "Réessayer",
-    "close": "Fermer",
     "loadMore": "Charger plus",
     "logout": "Se déconnecter",
     "add": "Ajouter",
@@ -83,7 +81,9 @@
     "bannerUrl": "Lien (facultatif)",
     "addBanner": "Ajouter une entrée de bannière",
     "passwordLogin": "Autoriser la connexion par mot de passe",
-    "passwordLoginHint": "À désactiver une fois les fournisseurs OAuth configurés."
+    "passwordLoginHint": "À désactiver une fois les fournisseurs OAuth configurés.",
+    "defaultQuota": "Quota de stockage par défaut (octets)",
+    "defaultQuotaHint": "Vide = illimité. S'applique quand un utilisateur n'a pas de remplacement individuel."
   },
   "chrome": {
     "settings": "Paramètres",
@@ -110,5 +110,34 @@
     "deleteConfirm": "Supprimer le fournisseur {id} ?",
     "scopes": "Scopes",
     "scopesHint": "Séparés par des espaces. Les types intégrés ignorent cette valeur (leurs modèles apportent leurs scopes)."
+  },
+  "files": {
+    "title": "Fichiers",
+    "newFolder": "Nouveau dossier",
+    "uploadHere": "Téléverser dans ce dossier",
+    "timeline": "Chronologie",
+    "empty": "Dossier vide",
+    "folderDeleteWarning": "Tout le contenu sera supprimé récursivement",
+    "move": "Déplacer vers…",
+    "moveTarget": "Dossier cible",
+    "share": "Partager",
+    "shareCreated": "Lien copié dans le presse-papiers",
+    "shareLink": "Lien de partage",
+    "shareExpires": "Expiration (facultatif)",
+    "sharePreview": "Autoriser l'aperçu",
+    "myShares": "Mes partages",
+    "revoke": "Révoquer",
+    "revoked": "Révoqué",
+    "noShares": "Aucun partage",
+    "quota": "Stockage",
+    "quotaOf": "{used} sur {quota} utilisés",
+    "unlimited": "illimité",
+    "rename": "Renommer",
+    "folderName": "Nom du dossier",
+    "sharedFile": "Fichier partagé",
+    "download": "Télécharger",
+    "preview": "Aperçu",
+    "fileNotAvailable": "Ce fichier n'est plus disponible",
+    "breadcrumbRoot": "Mes fichiers"
   }
 }
