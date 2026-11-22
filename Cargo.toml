@@ -1,5 +1,7 @@
 [workspace]
 members = ["packages/*"]
+# packages/webui is the pnpm (node) package — not a crate.
+exclude = ["packages/webui"]
 resolver = "2"
 
 [profile.release]
@@ -55,6 +57,11 @@ thiserror = "^2"
 uuid = { version = "^1", features = ["v4", "fast-rng", "serde"] }
 jiff = { version = "^1", features = ["serde"] }
 base64 = "^0.22"
+
+# Rust→TS contract (proto DTOs + server wire types feed the webui; the
+# generated bindings under packages/webui/src/types are committed and
+# drift-checked — never hand-write them).
+ts-rs = { version = "^12", features = ["uuid-impl"] }
 
 # auth (transition password + HS256 token)
 argon2 = "^0.5"

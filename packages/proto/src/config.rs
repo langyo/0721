@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 pub const CONFIG_SETTING_KEY: &str = "site";
 
 /// One footer banner entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 pub struct FooterBanner {
     /// Visible text.
     pub text: String,
@@ -23,7 +25,9 @@ pub struct FooterBanner {
 }
 
 /// Portal-facing presentation settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 #[serde(rename_all = "kebab-case")]
 pub struct PortalConfig {
     /// Suffix appended to the page title.
@@ -71,7 +75,9 @@ impl Default for PortalConfig {
 }
 
 /// Router-facing settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 #[serde(rename_all = "kebab-case")]
 pub struct RouterConfig {
     /// Public entry path of the media endpoint.
@@ -97,7 +103,9 @@ impl Default for RouterConfig {
 }
 
 /// Upload pipeline settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 #[serde(rename_all = "kebab-case")]
 pub struct UploadConfig {
     /// Upload size limit — `"8MiB"` style or a bare byte count string.
@@ -130,7 +138,9 @@ impl Default for UploadConfig {
 }
 
 /// The whole site configuration (legacy `Config.toml` semantics).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 #[serde(rename_all = "kebab-case")]
 pub struct SiteConfig {
     /// Portal presentation.
@@ -189,7 +199,9 @@ impl SiteConfig {
 /// unknown fields are rejected: a PUT is a full replacement, so a
 /// missing section would silently wipe live configuration back to the
 /// seed defaults instead of failing the request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct SiteConfigStrict {
     /// Portal presentation.
@@ -201,7 +213,9 @@ pub struct SiteConfigStrict {
 }
 
 /// Strict [`PortalConfig`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct PortalConfigStrict {
     /// Suffix appended to the page title.
@@ -215,7 +229,9 @@ pub struct PortalConfigStrict {
 }
 
 /// Strict [`RouterConfig`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RouterConfigStrict {
     /// Public entry path of the media endpoint (pinned to `/media` by
@@ -226,7 +242,9 @@ pub struct RouterConfigStrict {
 }
 
 /// Strict [`UploadConfig`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct UploadConfigStrict {
     /// Upload size limit — `"8MiB"` style or a bare byte count string.

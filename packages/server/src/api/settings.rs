@@ -16,7 +16,8 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 /// The health/config view of the settings source.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
 pub struct HealthReport {
     /// Always `"ok"` — a failure fails the request instead.
     pub status: &'static str,

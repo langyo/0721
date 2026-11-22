@@ -39,6 +39,7 @@ url = { workspace = true }
 uuid = { workspace = true }
 webp = { workspace = true }
 webp-animation = { workspace = true }
+ts-rs = { workspace = true }
 
 [dev-dependencies]
 i0721-proto = { workspace = true }

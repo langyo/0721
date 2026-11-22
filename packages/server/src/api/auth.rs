@@ -15,7 +15,8 @@ use crate::state::AppState;
 use i0721_proto::UserDto;
 
 /// The login request body.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
 pub struct LoginRequest {
     /// Login name.
     pub username: String,
@@ -24,7 +25,8 @@ pub struct LoginRequest {
 }
 
 /// The authenticated-session response.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
 pub struct AuthSession {
     /// The bearer token.
     pub token: String,

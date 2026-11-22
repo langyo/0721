@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// The coarse content class of a file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../webui/src/types/")]
 pub enum FileKind {
     /// Raster/vector images.
     Image,
@@ -147,7 +148,8 @@ impl FileRecord {
 }
 
 /// The public projection of a file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
 pub struct FileDto {
     /// Primary key.
     pub id: Uuid,
@@ -160,6 +162,7 @@ pub struct FileDto {
     /// MIME type of the blob.
     pub mime: String,
     /// Size in bytes.
+    #[ts(type = "number")]
     pub size: i64,
     /// Hex SHA-256 of the blob.
     pub sha256: String,
@@ -168,6 +171,7 @@ pub struct FileDto {
     /// Public URL path of the blob (`/media/<storage_key>`).
     pub url: String,
     /// Upload time.
+    #[ts(type = "string")]
     pub created_at: Timestamp,
 }
 

@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// A user role. Stored as the lowercase tag; checked in the database.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../webui/src/types/")]
 pub enum Role {
     /// Full management access.
     Admin,
@@ -57,7 +58,8 @@ pub struct UserRecord {
 }
 
 /// The public projection of a user (never leaks the password hash).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
 pub struct UserDto {
     /// Primary key.
     pub id: Uuid,
@@ -68,6 +70,7 @@ pub struct UserDto {
     /// Admin or member.
     pub role: Role,
     /// Account creation time.
+    #[ts(type = "string")]
     pub created_at: Timestamp,
 }
 

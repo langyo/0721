@@ -18,7 +18,8 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 /// The create-user request body.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
 pub struct CreateUserRequest {
     /// Login name.
     pub username: String,
