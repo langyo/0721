@@ -4394,19 +4394,15 @@ async fn upload_records_ipfs_backend_tag() {
         record.storage_backend, "ipfs",
         "the ipfs lane writes its tag (config-driven, not a literal)"
     );
-    // The blob really landed through the IPFS stub.
+    // The blob really landed through the IPFS stub (the media key is
+    // the content hash — pin the exact entry, no fallback broadening).
+    let media_key = record.storage_key.clone();
     assert!(
         stub.mfs
             .lock()
             .unwrap()
-            .contains_key("/i0721/media/tag.png")
-            || stub
-                .mfs
-                .lock()
-                .unwrap()
-                .keys()
-                .any(|k| k.starts_with("/i0721/media/")),
-        "the upload flowed through the IPFS backend: {:?}",
+            .contains_key(&format!("/i0721/media/{media_key}")),
+        "the upload flowed through the IPFS backend at its content key: {:?}",
         stub.mfs.lock().unwrap().keys()
     );
 }
