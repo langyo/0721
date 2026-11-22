@@ -4,8 +4,10 @@
   },
   "nav": {
     "portal": "포털",
-    "users": "사용자",
-    "settings": "설정"
+    "settings": "설정",
+    "groupContent": "콘텐츠",
+    "groupAccess": "연동",
+    "groupSystem": "시스템"
   },
   "actions": {
     "upload": "업로드",
@@ -155,5 +157,22 @@
     "revoke": "취소",
     "revokeConfirm": "키 {name}을(를) 취소할까요?",
     "revoked": "취소됨"
+  },
+  "menu": {
+    "account": "계정"
+  },
+  "account": {
+    "displayName": "표시 이름",
+    "username": "사용자 이름",
+    "role": "역할"
+  },
+  "about": {
+    "tagline": "넷디스크와 이미지 호스팅",
+    "creditsFrom": "",
+    "creditsJoiner": "에서, ",
+    "creditsRole": "님이 제작",
+    "author": "伊欧",
+    "copyright": "Celestia Island",
+    "engineVersion": "엔진 버전"
   }
 }

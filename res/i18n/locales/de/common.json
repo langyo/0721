@@ -4,8 +4,10 @@
   },
   "nav": {
     "portal": "Portal",
-    "users": "Benutzer",
-    "settings": "Konfiguration"
+    "settings": "Konfiguration",
+    "groupContent": "Inhalte",
+    "groupAccess": "Zugriff",
+    "groupSystem": "System"
   },
   "actions": {
     "upload": "Hochladen",
@@ -155,5 +157,22 @@
     "revoke": "Widerrufen",
     "revokeConfirm": "Schlüssel {name} widerrufen?",
     "revoked": "Widerrufen"
+  },
+  "menu": {
+    "account": "Konto"
+  },
+  "account": {
+    "displayName": "Anzeigename",
+    "username": "Benutzername",
+    "role": "Rolle"
+  },
+  "about": {
+    "tagline": "Netzlaufwerk und Bildhosting",
+    "creditsFrom": "Von ",
+    "creditsJoiner": ", erstellt von ",
+    "creditsRole": "",
+    "author": "伊欧",
+    "copyright": "Celestia Island",
+    "engineVersion": "Engine-Version"
   }
 }

@@ -4,8 +4,10 @@
   },
   "nav": {
     "portal": "البوابة",
-    "users": "المستخدمون",
-    "settings": "الإعدادات"
+    "settings": "الإعدادات",
+    "groupContent": "المحتوى",
+    "groupAccess": "الوصول",
+    "groupSystem": "النظام"
   },
   "actions": {
     "upload": "رفع",
@@ -155,5 +157,22 @@
     "revoke": "إلغاء",
     "revokeConfirm": "إلغاء المفتاح {name}؟",
     "revoked": "ملغى"
+  },
+  "menu": {
+    "account": "الحساب"
+  },
+  "account": {
+    "displayName": "الاسم المعروض",
+    "username": "اسم المستخدم",
+    "role": "الدور"
+  },
+  "about": {
+    "tagline": "تخزين الملفات واستضافة الصور",
+    "creditsFrom": "من ",
+    "creditsJoiner": "، أنشأه ",
+    "creditsRole": "",
+    "author": "伊欧",
+    "copyright": "Celestia Island",
+    "engineVersion": "إصدار المحرك"
   }
 }

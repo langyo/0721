@@ -4,8 +4,10 @@
   },
   "nav": {
     "portal": "門戶",
-    "users": "用戶",
-    "settings": "配置"
+    "settings": "配置",
+    "groupContent": "內容",
+    "groupAccess": "接入",
+    "groupSystem": "管理"
   },
   "actions": {
     "upload": "上傳",
@@ -155,5 +157,22 @@
     "revoke": "撤銷",
     "revokeConfirm": "撤銷密鑰 {name}？",
     "revoked": "已撤銷"
+  },
+  "menu": {
+    "account": "帳戶"
+  },
+  "account": {
+    "displayName": "顯示名稱",
+    "username": "使用者名稱",
+    "role": "角色"
+  },
+  "about": {
+    "tagline": "網盤與圖床資源服務",
+    "creditsFrom": "來自 ",
+    "creditsJoiner": "，由 ",
+    "creditsRole": " 主創",
+    "author": "伊欧",
+    "copyright": "Celestia Island",
+    "engineVersion": "引擎版本"
   }
 }

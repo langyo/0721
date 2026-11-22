@@ -15,7 +15,7 @@ importers:
     dependencies:
       '@celestia-island/hikari':
         specifier: ^0.55
-        version: 0.55.458(@types/three@0.185.4)(pinia@4.1.0(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.46(typescript@6.0.3)))(three@0.185.1)(vue@3.5.46(typescript@6.0.3))
+        version: 0.55.463(@types/three@0.185.4)(pinia@4.1.0(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.46(typescript@6.0.3)))(three@0.185.1)(vue@3.5.46(typescript@6.0.3))
       '@celestia-island/plana-rpc-client':
         specifier: ^0.1
         version: 0.1.17
@@ -264,8 +264,8 @@ packages:
   '@bytecodealliance/preview2-shim@0.31.1':
     resolution: {integrity: sha512-uDVB/IhExDW70TquqVx2l2Q5uwwpH7r5M2ltYccux+0YxXBm4TvqyNHTyYxcoLBsoAar28o7uZSj7GOKVx9uvA==}
 
-  '@celestia-island/hikari@0.55.458':
-    resolution: {integrity: sha512-osE9swe4BLdLRrjrPjWM73ELdkbiax8U3Idx4o/P6XqOEOSsRY/TDTby5AtTR+RZ6iJI8Vgg1HStCEHb/5WbaA==}
+  '@celestia-island/hikari@0.55.463':
+    resolution: {integrity: sha512-efUNsdoFn1fKahwGLgiGZTokqGmMiUoT2P5g+y3na5MNNvnXcBpjNJz17SGANj8HdifyifXdS7+IQk43B4d7Iw==}
     peerDependencies:
       '@types/three': ^0.185
       pinia: ^3
@@ -1623,7 +1623,7 @@ snapshots:
     dependencies:
       '@bytecodealliance/jco-node-fs': 0.3.2
 
-  '@celestia-island/hikari@0.55.458(@types/three@0.185.4)(pinia@4.1.0(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.46(typescript@6.0.3)))(three@0.185.1)(vue@3.5.46(typescript@6.0.3))':
+  '@celestia-island/hikari@0.55.463(@types/three@0.185.4)(pinia@4.1.0(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.46(typescript@6.0.3)))(three@0.185.1)(vue@3.5.46(typescript@6.0.3))':
     dependencies:
       '@bytecodealliance/preview2-shim': 0.31.1
       '@celestia-island/tairitsu-host-client': 0.1.0

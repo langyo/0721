@@ -22,7 +22,7 @@ enableAutoUnmount(afterEach);
  *   header-chrome design leans on).
  */
 
-function makeView(chrome: { actions?: string; center?: string; hud?: string }) {
+function makeView(chrome: { actions?: string; center?: string }) {
   return defineComponent({
     name: "ChromeView",
     setup() {
@@ -32,9 +32,6 @@ function makeView(chrome: { actions?: string; center?: string; hud?: string }) {
       }
       if (chrome.center) {
         bar.setCenter(() => [h("nav", { class: "reg-center" }, chrome.center!)]);
-      }
-      if (chrome.hud) {
-        bar.setHud(() => [h("span", { class: "reg-hud" }, chrome.hud!)]);
       }
       return () => h("div", { class: "view-body" }, "view");
     },
@@ -61,7 +58,6 @@ async function mountLayout(view: ReturnType<typeof makeView>) {
         h("div", { class: "layout-actions" }, bar.actions.value.flatMap((r) => r())),
         h(view),
         h("div", { class: "layout-center" }, bar.center.value?.() ?? []),
-        h("div", { class: "layout-hud" }, bar.hud.value.flatMap((r) => r())),
       ];
     },
   });
@@ -135,65 +131,12 @@ describe("useActionBar", () => {
   it("is a silent no-op outside any layout provider", async () => {
     // Views render in tests (and anywhere without a layout) without a
     // provider: registering must neither throw nor render anything.
-    const Bare = makeView({ actions: "Refresh", center: "Filter", hud: "62 FPS" });
+    const Bare = makeView({ actions: "Refresh", center: "Filter" });
     const wrapper = mount(Bare);
     await flushPromises();
     expect(wrapper.find(".reg-action").exists()).toBe(false);
     expect(wrapper.find(".reg-center").exists()).toBe(false);
-    expect(wrapper.find(".reg-hud").exists()).toBe(false);
     expect(wrapper.find(".view-body").exists()).toBe(true);
-  });
-
-  // ── The hud slot (2026-10-02): the header-left readout cluster ──────
-  // Same contract as actions — additive, per-scope, render-fn based — so
-  // the 3D twin's FPS tag is owned by the scene that produces the number
-  // instead of the layout hardcoding it.
-
-  it("renders a descendant's registered hud readout", async () => {
-    const wrapper = await mountLayout(makeView({ hud: "62 FPS" }));
-    expect(wrapper.find(".layout-hud .reg-hud").text()).toBe("62 FPS");
-  });
-
-  it("keeps hud registration when only the hud was registered", async () => {
-    const wrapper = await mountLayout(makeView({}));
-    expect(wrapper.find(".layout-hud .reg-hud").exists()).toBe(false);
-  });
-
-  it("clears the hud registration when the registering view unmounts", async () => {
-    const show = ref(true);
-    const view = makeView({ hud: "62 FPS" });
-    const Layout = defineComponent({
-      name: "Layout",
-      setup() {
-        const bar = provideActionBar();
-        return () => [
-          h("div", { class: "layout-hud" }, bar.hud.value.flatMap((r) => r())),
-          show.value ? h(view) : null,
-        ];
-      },
-    });
-    const wrapper = mount(Layout);
-    await flushPromises();
-    expect(wrapper.find(".layout-hud .reg-hud").exists()).toBe(true);
-
-    show.value = false;
-    await flushPromises();
-    expect(wrapper.find(".layout-hud .reg-hud").exists()).toBe(false);
-  });
-
-  it("renders several hud readouts in registration order (additive)", async () => {
-    const view = defineComponent({
-      name: "DualHudView",
-      setup() {
-        const bar = useActionBar();
-        bar.setHud(() => [h("span", { class: "reg-hud reg-hud-a" }, "62 FPS")]);
-        bar.setHud(() => [h("span", { class: "reg-hud reg-hud-b" }, "temp 41°C")]);
-        return () => h("div", { class: "view-body" }, "view");
-      },
-    });
-    const wrapper = await mountLayout(view);
-    const texts = wrapper.findAll(".layout-hud .reg-hud").map((s) => s.text());
-    expect(texts).toEqual(["62 FPS", "temp 41°C"]);
   });
 
   it("keeps the SURVIVING registration when an overlapped view unmounts (identity guard)", async () => {

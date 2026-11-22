@@ -4,8 +4,10 @@
   },
   "nav": {
     "portal": "Portale",
-    "users": "Utenti",
-    "settings": "Configurazione"
+    "settings": "Configurazione",
+    "groupContent": "Contenuti",
+    "groupAccess": "Accesso",
+    "groupSystem": "Sistema"
   },
   "actions": {
     "upload": "Carica",
@@ -155,5 +157,22 @@
     "revoke": "Revoca",
     "revokeConfirm": "Revocare la chiave {name}?",
     "revoked": "Revocata"
+  },
+  "menu": {
+    "account": "Account"
+  },
+  "account": {
+    "displayName": "Nome visualizzato",
+    "username": "Nome utente",
+    "role": "Ruolo"
+  },
+  "about": {
+    "tagline": "Archiviazione e hosting di immagini",
+    "creditsFrom": "Da ",
+    "creditsJoiner": ", creato da ",
+    "creditsRole": "",
+    "author": "伊欧",
+    "copyright": "Celestia Island",
+    "engineVersion": "Versione del motore"
   }
 }

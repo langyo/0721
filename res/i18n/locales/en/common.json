@@ -4,8 +4,10 @@
   },
   "nav": {
     "portal": "Portal",
-    "users": "Users",
-    "settings": "Settings"
+    "settings": "Settings",
+    "groupContent": "Content",
+    "groupAccess": "Access",
+    "groupSystem": "System"
   },
   "actions": {
     "upload": "Upload",
@@ -155,5 +157,22 @@
     "revoke": "Revoke",
     "revokeConfirm": "Revoke key {name}?",
     "revoked": "Revoked"
+  },
+  "menu": {
+    "account": "Account"
+  },
+  "account": {
+    "displayName": "Display name",
+    "username": "Username",
+    "role": "Role"
+  },
+  "about": {
+    "tagline": "Netdisk and image hosting",
+    "creditsFrom": "From ",
+    "creditsJoiner": ", created by ",
+    "creditsRole": "",
+    "author": "伊欧",
+    "copyright": "Celestia Island",
+    "engineVersion": "Engine version"
   }
 }
