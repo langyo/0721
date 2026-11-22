@@ -17,6 +17,7 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 
 async function load() {
+  error.value = null;
   loading.value = true;
   try { shares.value = await files.shareList(); } catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { loading.value = false; }
 }
@@ -54,7 +55,8 @@ async function revoke(token: string) {
       :columns="columns"
       row-key="token"
       :loading="loading"
-      :error="error ?? undefined"
+      :error="shares.length === 0 ? (error ?? undefined) : undefined"
+      :stale-error="shares.length > 0 ? (error ?? undefined) : undefined"
       :empty-title="t('common.files.noShares')"
     >
       <template #cell-name="{ row }">

@@ -43,6 +43,7 @@ const columns = computed<HTableColumn[]>(() => [
 ]);
 
 async function load() {
+  error.value = null;
   loading.value = true;
   try { keys.value = await api.listKeys(); } catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { loading.value = false; }
 }
@@ -132,7 +133,8 @@ async function doRevoke() {
       :columns="columns"
       row-key="id"
       :loading="loading"
-      :error="error ?? undefined"
+      :error="keys.length === 0 ? (error ?? undefined) : undefined"
+      :stale-error="keys.length > 0 ? (error ?? undefined) : undefined"
       :empty-title="t('common.keys.empty')"
     >
       <template #cell-name="{ row }">

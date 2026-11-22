@@ -1,4 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { h } from "vue";
 import { createPinia, setActivePinia, type Pinia } from "pinia";
 import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -48,10 +49,13 @@ function mountView(): ReturnType<typeof mount> {
     routes: [{ path: "/", component: { template: "<div/>" } }],
   });
   const Harness = {
-    template: "<div><div class='probe'/><UsersView /></div>",
+    template: "<div><div class='probe'/></div>",
     components: { UsersView },
     setup() {
-      provideActionBar();
+      const bar = provideActionBar();
+      // Render the roster and the bar's registered entries (the refresh
+      // button) so the failed-reload path is reachable from a test.
+      return () => [h(UsersView), h("div", { class: "probe-actions" }, bar.actions.value.flatMap((r) => r()))];
     },
   };
   return mount(Harness, { global: { plugins: [pinia, router, i18n] } });
@@ -83,7 +87,9 @@ describe("UsersView (family table roster)", () => {
     expect(wrapper.text()).toContain("@alice");
     // The Created column keeps the time-of-day (master rendered
     // toLocaleString; the date tag's `time` flag is what preserves it).
-    expect(wrapper.text()).toMatch(/\d{1,2}:\d{2}/);
+    const created = wrapper.find(".hk-date-tag");
+    expect(created.exists()).toBe(true);
+    expect(created.text()).toMatch(/\d{1,2}:\d{2}/);
   });
 
   it("reports the SERVER's total, which is not the page length", async () => {
@@ -104,7 +110,8 @@ describe("UsersView (family table roster)", () => {
     // The paging offset is read from the live list, so two overlapping
     // calls would append the same page twice.
     listUsersMock.mockResolvedValueOnce({
-      items: [user("me", "me", "dummy" as "member")],
+      items: [user("me", "me", "admin")],
+      // Two more exist off-page, so `hasMore` opens the load-more control.
       total: 3,
     });
     wrapper = mountView();
@@ -122,6 +129,10 @@ describe("UsersView (family table roster)", () => {
     expect(listUsersMock).toHaveBeenCalledTimes(2); // initial + one more
     release({ items: [], total: 3 });
     await flushPromises();
+    // The invariant behind the guard: the row the user already had is
+    // still there exactly once (a guard that "dodged" re-entrancy by
+    // clearing the list would satisfy a call-count assertion alone).
+    expect(wrapper.findAll("tbody tr").length).toBe(1);
   });
 
   it("offers no delete affordance on the signed-in admin's own row", async () => {
@@ -134,6 +145,33 @@ describe("UsersView (family table roster)", () => {
     const deleteButtons = wrapper.findAll(`button[aria-label="${i18n.global.t("common.actions.delete")}"]`);
     // Two rows, one delete button: the self row carries none.
     expect(deleteButtons.length).toBe(1);
+  });
+
+  it("keeps the rows on a failed refresh and shows the stale banner", async () => {
+    // The scaffold's `error` prop replaces the whole body; `staleError`
+    // is the banner for exactly this case — a failed reload must never
+    // hide data the user already had.
+    listUsersMock.mockResolvedValueOnce({
+      items: [user("me", "me", "admin"), user("u2", "alice", "member")],
+      // More rows exist off-page, so the load-more control is on screen.
+      total: 5,
+    });
+    wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll("tbody tr").length).toBe(2);
+
+    // Any failed load while rows are on screen rides this branch — the
+    // header refresh and the load-more control both call load().
+    listUsersMock.mockRejectedValueOnce(new Error("load blew up"));
+    const more = wrapper.find(`button[aria-label="${i18n.global.t("common.actions.loadMore")}"]`);
+    expect(more.exists()).toBe(true);
+    await more.trigger("click");
+    await flushPromises();
+
+    // Rows survive, and the failure is announced as a banner.
+    expect(wrapper.findAll("tbody tr").length).toBe(2);
+    // The scaffold's banner carries the failure message verbatim.
+    expect(wrapper.text()).toContain("load blew up");
   });
 
   it("renders the scaffold's empty state when the roster is empty", async () => {

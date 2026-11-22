@@ -238,7 +238,8 @@ const columns = computed<HTableColumn[]>(() => [
       :columns="columns"
       row-key="id"
       :loading="loading"
-      :error="loadError ?? undefined"
+      :error="rows.length === 0 ? (loadError ?? undefined) : undefined"
+      :stale-error="rows.length > 0 ? (loadError ?? undefined) : undefined"
       :empty-title="t('common.providers.empty')"
     >
       <template #cell-name="{ row }">
