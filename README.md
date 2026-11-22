@@ -74,9 +74,10 @@ Semantic differences:
 uploads only, and reads always go through the single configured
 backend — the `files.storage_backend` column is per-row bookkeeping,
 never consulted on read. After a switch, blobs written to the old
-backend become unreachable (their media links answer 404) until you
-switch back or migrate them; a blob-migration tool arrives with a
-later wave.
+backend become unreachable until you switch back or migrate them —
+their media links answer 404 while the old backend is still reachable
+but the blob is gone, and 500 when the old backend itself is down;
+a blob-migration tool arrives with a later wave.
 
 **Security note**: `I0721_S3_ENDPOINT` with `http://` sends credentials
 in cleartext — this is safe ONLY for internal-network MinIO (the

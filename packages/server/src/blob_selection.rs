@@ -9,16 +9,16 @@ use crate::blob::BlobStore;
 use crate::blob_ipfs::{IpfsBlobStore, IpfsConfig, IpfsConfigError};
 use crate::blob_s3::{S3BlobStore, S3Config, S3ConfigError};
 
+/// The backends `select_blob_backend` accepts — the error message reads
+/// this list, so the two can never drift apart.
+pub const VALID_BACKENDS: [&str; 3] = ["local", "s3", "ipfs"];
+
 /// Select and construct the blob backend for a process configuration.
 ///
 /// # Errors
 ///
 /// A human-readable error string when the selection is invalid or the
 /// selected backend's environment is incomplete.
-/// The backends `select_blob_backend` accepts — the error message reads
-/// this list, so the two can never drift apart.
-pub const VALID_BACKENDS: [&str; 3] = ["local", "s3", "ipfs"];
-
 pub fn select_blob_backend(
     config: &crate::config::Config,
     env: impl Fn(&str) -> Option<String>,

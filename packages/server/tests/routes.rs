@@ -4047,6 +4047,9 @@ struct KuboStub {
     last_add_query: std::sync::Mutex<Option<String>>,
     /// Hard-fail every /files/read once set (genuine kubo fault shape).
     fail_all_reads: std::sync::atomic::AtomicBool,
+    /// mkdir mode: 0 = ok, 1 = EEXIST shape (500 "file already exists"),
+    /// 2 = genuine fault (500 "disk on fire").
+    mkdir_mode: std::sync::atomic::AtomicU8,
 }
 
 impl KuboStub {
@@ -4062,7 +4065,8 @@ impl KuboStub {
             .route(
                 "/api/v0/add",
                 axum::routing::post(
-                    move |axum::extract::RawQuery(raw): axum::extract::RawQuery, body: String| {
+                    move |axum::extract::RawQuery(raw): axum::extract::RawQuery,
+                          body: axum::body::Bytes| {
                         let stub = add.clone();
                         async move {
                             use axum::response::IntoResponse;
@@ -4079,18 +4083,26 @@ impl KuboStub {
                                 return (StatusCode::INTERNAL_SERVER_ERROR, "kubo exploded")
                                     .into_response();
                             }
-                            // Extract the file payload from the multipart envelope
-                            // (between the first blank line and the trailing boundary).
-                            let payload = body
-                                .split_once("\r\n\r\n")
-                                .map(|(_, rest)| rest)
-                                .and_then(|rest| rest.rfind("\r\n--").map(|end| &rest[..end]))
-                                .unwrap_or(&body);
+                            // Extract the file payload from the multipart
+                            // envelope in the BYTE domain (thumbnails are
+                            // WebP — never valid UTF-8, so the handler
+                            // receives Bytes, and the split is on bytes).
+                            let start = body
+                                .windows(4)
+                                .position(|w| w == b"\r\n\r\n")
+                                .map(|i| i + 4)
+                                .unwrap_or(0);
+                            let rest = &body[start..];
+                            let end = rest
+                                .windows(4)
+                                .rposition(|w| w == b"\r\n--")
+                                .unwrap_or(rest.len());
+                            let payload = &rest[..end];
                             let cid = format!("Qm{:x}", payload.len());
-                            stub.content.lock().unwrap().insert(
-                                cid.clone(),
-                                bytes::Bytes::copy_from_slice(payload.as_bytes()),
-                            );
+                            stub.content
+                                .lock()
+                                .unwrap()
+                                .insert(cid.clone(), bytes::Bytes::copy_from_slice(payload));
                             axum::Json(serde_json::json!({"Name": "file", "Hash": cid, "Size": 0}))
                                 .into_response()
                         }
@@ -4213,8 +4225,18 @@ impl KuboStub {
             .route(
                 "/api/v0/files/mkdir",
                 axum::routing::post(move || {
-                    let _ = mkdir;
-                    async move { (StatusCode::OK, "") }
+                    let stub = mkdir.clone();
+                    async move {
+                        use axum::response::IntoResponse;
+                        match stub.mkdir_mode.load(std::sync::atomic::Ordering::Relaxed) {
+                            1 => (StatusCode::INTERNAL_SERVER_ERROR, "file already exists")
+                                .into_response(),
+                            2 => {
+                                (StatusCode::INTERNAL_SERVER_ERROR, "disk on fire").into_response()
+                            }
+                            _ => (StatusCode::OK, "").into_response(),
+                        }
+                    }
                 }),
             )
             .route(
@@ -4245,6 +4267,7 @@ async fn ipfs_stub_state() -> (AppState, std::sync::Arc<KuboStub>) {
         fail_next_add: std::sync::atomic::AtomicBool::new(false),
         last_add_query: std::sync::Mutex::new(None),
         fail_all_reads: std::sync::atomic::AtomicBool::new(false),
+        mkdir_mode: std::sync::atomic::AtomicU8::new(0),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -4256,11 +4279,14 @@ async fn ipfs_stub_state() -> (AppState, std::sync::Arc<KuboStub>) {
         i0721_server::blob_ipfs::IpfsBlobStore::open(&i0721_server::blob_ipfs::IpfsConfig {
             api_url: format!("http://127.0.0.1:{}", addr.port()),
         });
-    // Rebuild state with the IPFS blob store.
+    // Rebuild state with the IPFS blob store AND the matching backend tag
+    // (the config field feeds the upload's storage_backend column).
+    let mut config = state.config.as_ref().clone();
+    config.storage_backend = "ipfs".to_owned();
     let new_state = i0721_server::state::AppState::new(
         state.store.clone(),
         std::sync::Arc::new(store),
-        state.config.clone(),
+        std::sync::Arc::new(config),
     );
     (new_state, stub)
 }
@@ -4343,6 +4369,45 @@ async fn upload_records_storage_backend_tag() {
     assert_eq!(
         record.storage_backend, "local",
         "the local lane writes its tag"
+    );
+}
+
+#[tokio::test]
+async fn upload_records_ipfs_backend_tag() {
+    let (state, stub) = ipfs_stub_state().await;
+    let admin = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap();
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    let (status, dto) = upload(&state, &token, tiny_png(), "tag.png").await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "upload on the ipfs lane: {dto}"
+    );
+    let file_id = uuid::Uuid::parse_str(dto["id"].as_str().unwrap()).unwrap();
+    let record = state.store.get_file(file_id).await.unwrap().unwrap();
+    assert_eq!(
+        record.storage_backend, "ipfs",
+        "the ipfs lane writes its tag (config-driven, not a literal)"
+    );
+    // The blob really landed through the IPFS stub.
+    assert!(
+        stub.mfs
+            .lock()
+            .unwrap()
+            .contains_key("/i0721/media/tag.png")
+            || stub
+                .mfs
+                .lock()
+                .unwrap()
+                .keys()
+                .any(|k| k.starts_with("/i0721/media/")),
+        "the upload flowed through the IPFS backend: {:?}",
+        stub.mfs.lock().unwrap().keys()
     );
 }
 
@@ -4459,4 +4524,29 @@ async fn ipfs_add_carries_pin_true() {
         query.contains("pin=true"),
         "POST /api/v0/add must carry pin=true (GC survival): {query}"
     );
+}
+
+#[tokio::test]
+async fn ipfs_mkdir_eexist_is_swallowed_but_faults_surface() {
+    let (state, stub) = ipfs_stub_state().await;
+    use i0721_server::blob::BlobSlot;
+
+    // EEXIST shape: kubo answers 500 "file already exists" — the store
+    // treats it as mkdir -p success.
+    stub.mkdir_mode
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    let ok = state
+        .blobs
+        .put(BlobSlot::Media, "eexist", b"e".as_slice())
+        .await;
+    assert!(ok.is_ok(), "EEXIST is swallowed: {ok:?}");
+
+    // A genuine mkdir fault must surface as IoError, never as silence.
+    stub.mkdir_mode
+        .store(2, std::sync::atomic::Ordering::Relaxed);
+    let fault = state
+        .blobs
+        .put(BlobSlot::Media, "fault", b"f".as_slice())
+        .await;
+    assert!(fault.is_err(), "a genuine mkdir fault surfaces: {fault:?}");
 }
