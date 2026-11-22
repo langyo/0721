@@ -228,6 +228,32 @@ impl Store for MemoryStore {
     }
 
     async fn rename_file(&self, id: Uuid, name: &str) -> Result<Option<FileRecord>, StoreError> {
+        {
+            // Same-layer uniqueness (the PG partial unique index's
+            // mirror — the memory lane must refuse what the index would
+            // reject, excluding the row itself).
+            let inner = self.inner.lock().map_err(lock_err)?;
+            if let Some(current) = inner
+                .files
+                .iter()
+                .find(|f| f.id == id && f.deleted_at.is_none())
+            {
+                let owner = current.owner_id;
+                let parent = current.parent_id;
+                let taken = inner.files.iter().any(|f| {
+                    f.deleted_at.is_none()
+                        && f.owner_id == owner
+                        && f.parent_id == parent
+                        && f.name == name
+                        && f.id != id
+                });
+                if taken {
+                    return Err(conflict(format!(
+                        "name {name:?} already exists in this folder"
+                    )));
+                }
+            }
+        }
         let mut inner = self.inner.lock().map_err(lock_err)?;
         let Some(file) = inner
             .files

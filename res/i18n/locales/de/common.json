@@ -83,7 +83,8 @@
     "bannerUrl": "Link (optional)",
     "addBanner": "Banner-Eintrag hinzufügen",
     "passwordLogin": "Passwort-Login erlauben",
-    "passwordLoginHint": "Nach OAuth-Einrichtung empfehlen wir Deaktivieren."
+    "passwordLoginHint": "Nach OAuth-Einrichtung empfehlen wir Deaktivieren.",
+    "defaultQuota": "Standard-Speicherkontingent (Bytes)"
   },
   "chrome": {
     "settings": "Einstellungen",

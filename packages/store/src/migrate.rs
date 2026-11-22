@@ -16,6 +16,26 @@
 
 use lacrymira_pg::Migration;
 
+/// The migration-0004 legacy-dedup UPDATE (extracted so the PG lane can
+/// re-run it against a hand-planted pre-migration shape — the migration
+/// itself is a one-shot on a fresh database, but the cleansing logic
+/// must be provable on real PostgreSQL).
+pub const MIGRATION_0004_DEDUPE_SQL: &str = r#"WITH ranked AS (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY owner_id,
+                                        COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                                        name
+                           ORDER BY created_at, id
+                       ) AS rn
+                FROM files
+                WHERE deleted_at IS NULL
+            )
+            UPDATE files f
+            SET name = f.name || ' (' || ranked.rn || ')'
+            FROM ranked
+            WHERE ranked.id = f.id AND ranked.rn > 1;"#;
+
 /// The baseline schema plus the settings seed.
 ///
 /// The seed row uses `ON CONFLICT DO NOTHING`, so a database whose

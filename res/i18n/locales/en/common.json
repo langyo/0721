@@ -83,7 +83,8 @@
     "bannerUrl": "Link (optional)",
     "addBanner": "Add banner entry",
     "passwordLogin": "Allow password login",
-    "passwordLoginHint": "Turn off once OAuth providers are configured."
+    "passwordLoginHint": "Turn off once OAuth providers are configured.",
+    "defaultQuota": "Default storage quota (bytes)"
   },
   "chrome": {
     "settings": "Settings",

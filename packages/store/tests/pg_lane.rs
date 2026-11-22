@@ -431,9 +431,6 @@ async fn pg_migration_0004_is_idempotent() {
 async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
     let Some(store) = db().await else { return };
 
-    // Simulate master-era data: two live rows, same owner/parent/name,
-    // different sha256. (Direct SQL — the store API now enforces the
-    // index, so we go under it to plant the legacy shape.)
     let user = store
         .create_user(CreateUser {
             username: format!("legacy_{}", uuid::Uuid::new_v4().simple()),
@@ -444,26 +441,84 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
         .await
         .unwrap();
 
-    // The migration's cleansing already ran during bootstrap — to prove
-    // it works, we plant duplicates under the index (by dropping and
-    // re-adding it, which a clean test can do on scratch), or more
-    // simply: verify the index EXISTS and enforces.
-    // (The cleansing UPDATE ran on an empty table at migration time;
-    // the proof-of-cleansing test would need a pre-migration state,
-    // which the scratch database doesn't have. Instead: prove the
-    // INDEX enforces.)
-    let result = store.create_folder(user.id, None, "dupe").await;
-    assert!(result.is_ok(), "first insert passes");
-    let dup = store.create_folder(user.id, None, "dupe").await;
+    // Hand-plant the PRE-MIGRATION shape: drop the unique index, insert
+    // two same-owner same-layer same-name live rows with different
+    // sha256 values (what two master-era uploads with
+    // use_source_file_name=true would produce).
+    {
+        use lacrymira::{Command, Value};
+        // Drop the index so the raw INSERTs pass.
+        let drop = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DROP INDEX IF EXISTS files_owner_folder_name_live_key".to_owned(),
+            params: vec![],
+        };
+        store.executor.execute(&drop).await.unwrap();
+
+        for sha in ["aaaa0000", "bbbb0000"] {
+            let insert = Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text:
+                    "INSERT INTO files (id, owner_id, parent_id, name, kind, mime, size, sha256, \
+                     storage_backend, storage_key, original_name) \
+                     VALUES (gen_random_uuid(), $1, NULL, 'cat.png', 'image', 'image/webp', \
+                     100, $2, 'local', $2, 'cat.png')"
+                        .to_owned(),
+                params: vec![
+                    Value::Uuid(user.id.to_string()),
+                    Value::Text(sha.to_owned()),
+                ],
+            };
+            store.executor.execute(&insert).await.unwrap();
+        }
+    }
+
+    // Run the migration-0004 cleansing UPDATE directly (the same SQL the
+    // migration carries, extracted as a testable constant).
+    {
+        use lacrymira::Command;
+        let cleanse = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: i0721_store::migrate::MIGRATION_0004_DEDUPE_SQL.to_owned(),
+            params: vec![],
+        };
+        store.executor.execute(&cleanse).await.unwrap();
+    }
+
+    // Verify: one row is "cat.png", the other "cat.png (2)".
+    let files = store
+        .list_folder(user.id, None, None, 0, 100)
+        .await
+        .unwrap();
+    assert_eq!(files.len(), 2, "both rows live: {files:?}");
+    let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+    assert!(
+        names.contains(&"cat.png") && names.contains(&"cat.png (2)"),
+        "the later duplicate got the suffix: {names:?}"
+    );
+
+    // Rebuild the index.
+    {
+        use lacrymira::Command;
+        let rebuild = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "CREATE UNIQUE INDEX IF NOT EXISTS files_owner_folder_name_live_key \
+                   ON files (owner_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name) \
+                   WHERE deleted_at IS NULL"
+                .to_owned(),
+            params: vec![],
+        };
+        store.executor.execute(&rebuild).await.unwrap();
+    }
+
+    // The index now enforces: another "cat.png" insert is refused.
+    let dup = store.create_folder(user.id, None, "cat.png").await;
     assert!(
         matches!(dup, Err(StoreError::Conflict(_))),
         "the index enforces same-layer uniqueness: {dup:?}"
     );
-    let _ = result.unwrap();
 }
 
-/// sum_live_sizes on real PG: the BIGINT cast answers correctly (not
-/// the numeric→0 decode bug).
 #[tokio::test]
 async fn pg_sum_live_sizes_returns_bigint() {
     let Some(store) = db().await else { return };

@@ -83,7 +83,8 @@
     "bannerUrl": "الرابط (اختياري)",
     "addBanner": "إضافة إدخال بانر",
     "passwordLogin": "السماح بتسجيل الدخول بكلمة المرور",
-    "passwordLoginHint": "عطّله بعد إعداد مزوّدي OAuth."
+    "passwordLoginHint": "عطّله بعد إعداد مزوّدي OAuth.",
+    "defaultQuota": "حصة التخزين الافتراضية (بايت)"
   },
   "chrome": {
     "settings": "الإعدادات",

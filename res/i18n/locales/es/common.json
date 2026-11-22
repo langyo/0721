@@ -83,7 +83,8 @@
     "bannerUrl": "Enlace (opcional)",
     "addBanner": "Añadir entrada de banner",
     "passwordLogin": "Permitir acceso con contraseña",
-    "passwordLoginHint": "Desactívalo cuando haya proveedores OAuth."
+    "passwordLoginHint": "Desactívalo cuando haya proveedores OAuth.",
+    "defaultQuota": "Cuota de almacenamiento predeterminada (bytes)"
   },
   "chrome": {
     "settings": "Ajustes",

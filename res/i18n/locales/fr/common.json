@@ -83,7 +83,8 @@
     "bannerUrl": "Lien (facultatif)",
     "addBanner": "Ajouter une entrée de bannière",
     "passwordLogin": "Autoriser la connexion par mot de passe",
-    "passwordLoginHint": "À désactiver une fois les fournisseurs OAuth configurés."
+    "passwordLoginHint": "À désactiver une fois les fournisseurs OAuth configurés.",
+    "defaultQuota": "Quota de stockage par défaut (octets)"
   },
   "chrome": {
     "settings": "Paramètres",

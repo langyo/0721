@@ -83,7 +83,8 @@
     "bannerUrl": "Link (opcional)",
     "addBanner": "Adicionar entrada de banner",
     "passwordLogin": "Permitir login por senha",
-    "passwordLoginHint": "Desative após configurar provedores OAuth."
+    "passwordLoginHint": "Desative após configurar provedores OAuth.",
+    "defaultQuota": "Cota de armazenamento padrão (bytes)"
   },
   "chrome": {
     "settings": "Ajustes",

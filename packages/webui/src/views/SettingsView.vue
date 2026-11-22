@@ -60,6 +60,7 @@ const form = reactive({
   imageSizeLimit: "8MiB",
   webpAutoConvert: true,
   useSourceFileName: false,
+  defaultQuota: "",
 });
 
 function fill(config: SiteConfig) {
@@ -75,6 +76,7 @@ function fill(config: SiteConfig) {
   form.imageSizeLimit = config.upload["image-size-limit"];
   form.webpAutoConvert = config.upload["webp-auto-convert"];
   form.useSourceFileName = config.upload["use-source-file-name"];
+  form.defaultQuota = config.upload["default-quota-bytes"]?.toString() ?? "";
 }
 
 async function load() {
@@ -161,6 +163,9 @@ async function save() {
         "image-size-limit": form.imageSizeLimit,
         "webp-auto-convert": form.webpAutoConvert,
         "use-source-file-name": form.useSourceFileName,
+        "default-quota-bytes": form.defaultQuota.trim()
+          ? BigInt(form.defaultQuota.trim())
+          : null,
       },
     };
     await api.putSiteConfig(strict);

@@ -83,7 +83,8 @@
     "bannerUrl": "連結（可選）",
     "addBanner": "新增頁腳條目",
     "passwordLogin": "允許密碼登入",
-    "passwordLoginHint": "設定好 OAuth 提供者後建議關閉。"
+    "passwordLoginHint": "設定好 OAuth 提供者後建議關閉。",
+    "defaultQuota": "預設儲存配額（位元組）"
   },
   "chrome": {
     "settings": "設定",

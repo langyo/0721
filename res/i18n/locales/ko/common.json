@@ -83,7 +83,8 @@
     "bannerUrl": "링크(선택)",
     "addBanner": "배너 항목 추가",
     "passwordLogin": "비밀번호 로그인 허용",
-    "passwordLoginHint": "OAuth 제공자 구성 후 끄기를 권장."
+    "passwordLoginHint": "OAuth 제공자 구성 후 끄기를 권장.",
+    "defaultQuota": "기본 저장 공간 할당량(바이트)"
   },
   "chrome": {
     "settings": "설정",

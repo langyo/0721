@@ -25,7 +25,7 @@ use crate::{migrations, CreateUser, Store, StoreError};
 /// A [`Store`] over a PostgreSQL connection pool.
 #[derive(Debug, Clone)]
 pub struct PgStore {
-    executor: PgExecutor,
+    pub executor: PgExecutor,
 }
 
 impl PgStore {

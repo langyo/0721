@@ -83,7 +83,8 @@
     "bannerUrl": "Link (opzionale)",
     "addBanner": "Aggiungi voce banner",
     "passwordLogin": "Consenti login con password",
-    "passwordLoginHint": "Da disattivare dopo la configurazione OAuth."
+    "passwordLoginHint": "Da disattivare dopo la configurazione OAuth.",
+    "defaultQuota": "Quota di archiviazione predefinita (byte)"
   },
   "chrome": {
     "settings": "Impostazioni",

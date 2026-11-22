@@ -3472,3 +3472,274 @@ async fn netdisk_rename_precheck_answers_friendly_conflict() {
         "the friendly message names the conflict: {envelope}"
     );
 }
+
+// ── W5 R3: mutation-survivor pins ──────────────────────────────────────
+
+/// The cascade also reclaims the CACHE slot (thumbnails): deleting a
+/// folder containing images must free both the media blob and the
+/// {key}.webp thumbnail.
+#[tokio::test]
+async fn netdisk_cascade_reclaims_thumbnail_cache_slot() {
+    let (state, token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    let f = state
+        .store
+        .create_folder(admin_id, None, "photos")
+        .await
+        .unwrap();
+    let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
+    let a_id = uuid::Uuid::parse_str(a["id"].as_str().unwrap()).unwrap();
+    state.store.set_parent(a_id, Some(f.id)).await.unwrap();
+
+    // The thumbnail exists in the Cache slot.
+    let a_key = a["sha256"].as_str().unwrap().to_owned();
+    let thumb_key = format!("{a_key}.webp");
+    let thumb = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(thumb.is_some(), "the thumbnail exists before the cascade");
+
+    // Cascade delete the folder.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": f.id.to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // BOTH the media blob AND the thumbnail are reclaimed.
+    let media = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &a_key)
+        .await
+        .unwrap();
+    assert!(media.is_none(), "the media blob is reclaimed");
+    let thumb_after = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(
+        thumb_after.is_none(),
+        "the CACHE-slot thumbnail is reclaimed too (not just the media blob)"
+    );
+}
+
+/// Content-Disposition RFC 5987: non-ASCII filenames get
+/// filename*=UTF-8'' with percent-encoding.
+#[tokio::test]
+async fn netdisk_share_download_encodes_non_ascii_filenames() {
+    let (state, token) = matrix_setup().await;
+    // Upload with a non-ASCII name (?name= overrides the display name).
+    let (_, dto) = upload(&state, &token, tiny_png(), "cat.png").await;
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+
+    // Create a share.
+    let (status, share_e) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "allow_preview": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{share_e}");
+    let share_token = share_e["result"]["token"].as_str().unwrap().to_owned();
+
+    // Rename to a non-ASCII name.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.update",
+        serde_json::json!({"id": file_id, "name": "猫照片.png"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // Download: the disposition uses filename*=UTF-8''…
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{share_token}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let disposition = response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        disposition.contains("filename*=UTF-8''"),
+        "non-ASCII → RFC 5987 form: {disposition}"
+    );
+    assert!(
+        disposition.contains('%'),
+        "the non-ASCII bytes are percent-encoded: {disposition}"
+    );
+    assert!(
+        !disposition.contains("猫"),
+        "the raw non-ASCII bytes are NOT in the header: {disposition}"
+    );
+
+    // ASCII filenames keep the simple form.
+    let (status, _) = rpc(
+        &state,
+        &token,
+        "files.update",
+        serde_json::json!({"id": file_id, "name": "cat.png"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{share_token}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let disposition = response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        disposition.contains("filename=\"cat.png\""),
+        "ASCII stays simple: {disposition}"
+    );
+    assert!(
+        !disposition.contains("filename*"),
+        "no RFC 5987 arm for ASCII: {disposition}"
+    );
+}
+
+/// Quota fallback: user row NULL → site default from settings.
+#[tokio::test]
+async fn netdisk_quota_falls_back_to_site_default() {
+    let (state, token) = matrix_setup().await;
+    let user = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap();
+    let _ = user;
+
+    // Set the site default via settings.put.
+    let strict = full_settings_json(|json| {
+        json["upload"]["default-quota-bytes"] = serde_json::json!(5_000_000);
+    });
+    let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+    let (status, envelope) = rpc(&state, &token, "settings.put", strict).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // The user's row is NULL → quota_get answers the site default.
+    let (_, envelope) = rpc(&state, &token, "files.quota_get", serde_json::json!({})).await;
+    assert_eq!(
+        envelope["result"]["quota_bytes"], 5_000_000,
+        "NULL user row falls back to the site default: {envelope}"
+    );
+
+    // A per-user override wins.
+    let (status, _) = rpc(
+        &state,
+        &token,
+        "files.quota_put",
+        serde_json::json!({"user_id": user.id.to_string(), "quota_bytes": 1000}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, envelope) = rpc(&state, &token, "files.quota_get", serde_json::json!({})).await;
+    assert_eq!(
+        envelope["result"]["quota_bytes"], 1000,
+        "per-user override wins"
+    );
+}
+
+/// Memory rename: same-layer uniqueness enforced at the store layer
+/// (mirroring the PG partial unique index).
+#[tokio::test]
+async fn netdisk_memory_store_rename_refuses_same_layer_duplicate() {
+    let (state, _token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    let a = state
+        .store
+        .create_folder(admin_id, None, "alpha")
+        .await
+        .unwrap();
+    let b = state
+        .store
+        .create_folder(admin_id, None, "beta")
+        .await
+        .unwrap();
+
+    // Direct store-layer rename (bypassing the RPC pre-check): "beta" →
+    // "alpha" must refuse at the STORE layer too.
+    let result = state.store.rename_file(b.id, "alpha").await;
+    assert!(
+        matches!(result, Err(i0721_store::StoreError::Conflict(_))),
+        "memory store refuses same-layer rename: {result:?}"
+    );
+    let _ = a;
+}
+
+/// Pagination: list_folder with offset/limit on the memory store.
+#[tokio::test]
+async fn netdisk_memory_list_folder_pagination() {
+    let (state, _token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    for i in 0..5 {
+        state
+            .store
+            .create_folder(admin_id, None, &format!("p{i}"))
+            .await
+            .unwrap();
+    }
+    let page1 = state
+        .store
+        .list_folder(admin_id, None, None, 0, 3)
+        .await
+        .unwrap();
+    let page2 = state
+        .store
+        .list_folder(admin_id, None, None, 3, 3)
+        .await
+        .unwrap();
+    assert_eq!(page1.len(), 3);
+    assert_eq!(page2.len(), 2);
+    let ids1: Vec<_> = page1.iter().map(|r| r.id).collect();
+    let ids2: Vec<_> = page2.iter().map(|r| r.id).collect();
+    assert!(ids1.iter().all(|id| !ids2.contains(id)));
+    assert_eq!(ids1.len() + ids2.len(), 5);
+}

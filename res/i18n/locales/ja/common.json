@@ -83,7 +83,8 @@
     "bannerUrl": "リンク（任意）",
     "addBanner": "バナー項目を追加",
     "passwordLogin": "パスワードログインを許可",
-    "passwordLoginHint": "OAuth プロバイダー設定後は無効化を推奨。"
+    "passwordLoginHint": "OAuth プロバイダー設定後は無効化を推奨。",
+    "defaultQuota": "デフォルトのストレージクォータ（バイト）"
   },
   "chrome": {
     "settings": "設定",
