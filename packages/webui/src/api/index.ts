@@ -127,11 +127,9 @@ export function putPasswordLogin(enabled: boolean): Promise<void> {
 
 // ── API keys (the MCP wave) ─────────────────────────────────────────
 
-export interface ApiKeyCreated { id: string; name: string; key: string; }
-export interface ApiKeyPublic {
-  id: string; name: string; key_prefix: string;
-  last_used_at?: string | null; revoked_at?: string | null; created_at: string;
-}
+// The wire shapes are the ts-rs bindings — never hand-written here
+// (AGENTS 「类型单向」): the generated barrel is the single source.
+export type { ApiKeyCreated, ApiKeyPublic } from "@/types";
 
 export function createKey(name: string): Promise<ApiKeyCreated> {
   return wsCall<ApiKeyCreated>('keys.create', { name });

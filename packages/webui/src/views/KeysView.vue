@@ -95,18 +95,18 @@ async function doRevoke() {
       <p class="warning">{{ t("common.keys.copyOnceWarning") }}</p>
       <code class="key-text" data-testid="plaintext-key">{{ created.key }}</code>
       <div class="actions">
-        <HkButton variant="primary" @click="copyKey">
+        <HkButton variant="primary" data-testid="copy-key" @click="copyKey">
           <template #icon><Copy :size="14" /></template>
           {{ copied === "key" ? t("common.keys.copied") : t("common.actions.copyLink") }}
         </HkButton>
-        <HkButton variant="ghost" @click="copyConfig">
+        <HkButton variant="ghost" data-testid="copy-config" @click="copyConfig">
           {{ copied === "config" ? t("common.keys.copied") : t("common.keys.copyConfig") }}
         </HkButton>
-        <HkButton variant="ghost" @click="copyPrompt">
+        <HkButton variant="ghost" data-testid="copy-prompt" @click="copyPrompt">
           {{ copied === "prompt" ? t("common.keys.copied") : t("common.keys.copyPrompt") }}
         </HkButton>
       </div>
-      <p v-if="copyFailed" role="alert" class="copy-failed">{{ t("common.keys.copyFailed") }}</p>
+      <p v-if="copyFailed" role="alert" data-testid="copy-failed" class="copy-failed">{{ t("common.keys.copyFailed") }}</p>
     </div>
 
     <ul v-if="keys.length > 0" class="key-list">
@@ -124,7 +124,7 @@ async function doRevoke() {
     <HkAdaptiveDialog :model-value="createOpen" :title="t('common.keys.create')" width="26rem" @update:model-value="(v: boolean) => (createOpen = v)">
       <div class="dialog-body">
         <HkInput v-model="newName" :placeholder="t('common.keys.nameLabel')" data-testid="key-name" />
-        <HkButton variant="primary" :disabled="!newName.trim() || createBusy" @click="doCreate">{{ t("common.actions.create") }}</HkButton>
+        <HkButton variant="primary" data-testid="new-key" :disabled="!newName.trim() || createBusy" @click="doCreate">{{ t("common.actions.create") }}</HkButton>
       </div>
     </HkAdaptiveDialog>
 

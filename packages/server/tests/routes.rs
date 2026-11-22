@@ -5891,3 +5891,38 @@ async fn mcp_get_share_link_refuses_folders_and_follows_the_public_origin() {
     );
     assert!(!text.contains("localhost"), "no localhost fallback: {text}");
 }
+
+#[tokio::test]
+async fn mcp_reupload_of_own_bytes_still_faces_the_quota_gate() {
+    let (state, admin) = test_state().await;
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    let api_key = mcp_api_key(&state, &token, "reupload-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+    let payload = serde_json::json!({
+        "content_base64": base64_of(&tiny_png()),
+        "name": "twice.png",
+    });
+
+    // First upload succeeds under the default (unlimited) quota.
+    mcp_call_tool(&state, &session_id, "upload_file", payload.clone()).await;
+    let frames = sse_read_until(&mut sse, "\"id\":1").await;
+    let first = sse_envelope(&frames);
+    assert!(
+        first["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("twice.png"),
+        "the first upload succeeds: {frames}"
+    );
+
+    // Squeeze the quota, then re-upload the SAME bytes: dedupe runs after
+    // the gates, so the shortcut must not answer 200 past the quota.
+    state.store.set_user_quota(admin.id, Some(1)).await.unwrap();
+    mcp_call_tool(&state, &session_id, "upload_file", payload).await;
+    let frames = sse_read_until(&mut sse, "\"isError\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(
+        is_error && text.contains("quota"),
+        "an over-quota re-upload must NOT ride the dedupe shortcut: {text}"
+    );
+}

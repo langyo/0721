@@ -103,21 +103,6 @@ pub async fn run_upload(
     let processed =
         process_upload(&data, source_name.as_deref(), &rules).map_err(pipeline_error)?;
 
-    // 4. Dedupe is per owner: re-uploading content THIS user already has
-    // answers with their existing record; another user's identical file
-    // is invisible here and becomes a fresh row below (sharing the same
-    // content-addressed blob).
-    if let Some(existing) = state
-        .store
-        .get_file_by_owner_and_sha256(user.id, &processed.sha256)
-        .await?
-    {
-        return Ok(Uploaded {
-            record: existing,
-            created: false,
-        });
-    }
-
     // 5. Destination folder: must be the caller's live folder (admins
     // may target any). Checked BEFORE any blob write so a rejected
     // upload leaves nothing behind.
@@ -170,7 +155,23 @@ pub async fn run_upload(
         .unwrap_or_else(|| processed.sha256.clone());
     validate_file_name(&display_name).map_err(|err| ApiError::bad_request(err.to_string()))?;
 
-    // 8. Same bytes ⇒ same key ⇒ idempotent write even when another owner
+    // 8. Dedupe runs AFTER the gates on purpose: a re-upload of content
+    // the caller already owns still has to satisfy the folder/quota/name
+    // gates of THIS request — otherwise an over-quota or foreign-folder
+    // re-upload would answer 200 without ever being checked (the hole
+    // this ordering closes; pinned by the over-quota re-upload test).
+    if let Some(existing) = state
+        .store
+        .get_file_by_owner_and_sha256(user.id, &processed.sha256)
+        .await?
+    {
+        return Ok(Uploaded {
+            record: existing,
+            created: false,
+        });
+    }
+
+    // 9. Same bytes ⇒ same key ⇒ idempotent write even when another owner
     // already placed the blob (write-then-rename underneath).
     let storage_key = processed.sha256.clone();
     let thumbnail_key = processed
@@ -190,7 +191,7 @@ pub async fn run_upload(
             .await?;
     }
 
-    // 9. The metadata row.
+    // 10. The metadata row.
     let new_file = NewFile {
         owner_id: user.id,
         parent_id: folder_id,
