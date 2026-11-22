@@ -3975,3 +3975,56 @@ async fn upload_name_conflict_reports_the_name_message() {
         "the conflict names the real cause: {body}"
     );
 }
+
+#[tokio::test]
+async fn deleting_a_file_purges_its_share_rows() {
+    let (state, token) = matrix_setup().await;
+    let (_, up) = upload(&state, &token, tiny_png(), "shared.png").await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+
+    let (_, share) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "allow_preview": true}),
+    )
+    .await;
+    let share_token = share["result"]["token"]
+        .as_str()
+        .unwrap_or_else(|| panic!("share_create failed: {share}"))
+        .to_owned();
+    let (_, list_before) = rpc(&state, &token, "files.share_list", serde_json::json!({})).await;
+    assert_eq!(
+        list_before["result"].as_array().unwrap().len(),
+        1,
+        "the share is listed: {list_before}"
+    );
+
+    // Delete the file: the share row must die with it (the token stops
+    // resolving AND the list stops showing the orphan).
+    let (status, del) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": file_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "delete: {del}");
+
+    let (_, list_after) = rpc(&state, &token, "files.share_list", serde_json::json!({})).await;
+    assert!(
+        list_after["result"].as_array().unwrap().is_empty(),
+        "no orphaned share rows: {list_after}"
+    );
+    let meta = app(&state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/share/{share_token}/meta"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(meta.status(), StatusCode::NOT_FOUND, "the token is dead");
+}

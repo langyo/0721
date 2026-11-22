@@ -504,6 +504,13 @@ pub fn build_server(state: AppState) -> RpcServer {
                 if removed == 0 {
                     return Err(api_err(ApiError::not_found("file not found")));
                 }
+                // The subtree's share rows die with it: tokens stop
+                // resolving AND the "my shares" list stops listing them.
+                state
+                    .store
+                    .delete_shares_for_files(&subtree)
+                    .await
+                    .map_err(store_err)?;
                 if record.kind == i0721_proto::FileKind::Folder {
                     // Batch blob reclaim for the whole subtree: per key,
                     // unlink only when no other live row references it

@@ -571,6 +571,13 @@ impl Store for MemoryStore {
         Ok(inner.shares.len() != before)
     }
 
+    async fn delete_shares_for_files(&self, file_ids: &[Uuid]) -> Result<u64, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let before = inner.shares.len();
+        inner.shares.retain(|s| !file_ids.contains(&s.file_id));
+        Ok((before - inner.shares.len()) as u64)
+    }
+
     async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         Ok(inner

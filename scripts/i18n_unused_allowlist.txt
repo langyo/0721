@@ -1,8 +1,4 @@
 # i18n unused-key allowlist (scripts/check_i18n.py)
-# Generic affordance labels with no consumer yet in the W3 shell — the
-# remaining page waves (folders/shares/keys) render them. One line per
-# dotted key (or prefix.* for a wildcard).
-common.actions.close
-common.actions.confirm
-common.actions.retry
-common.actions.saved
+# One dotted key per line. Kept empty on purpose: every key in the tree
+# currently has a consumer (actions.close/saved were deleted as dead keys;
+# actions.confirm and actions.retry gained consumers in the netdisk wave).

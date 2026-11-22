@@ -232,6 +232,11 @@ pub trait Store: Send + Sync {
     /// Revoke a share by token.
     async fn delete_share(&self, token: &str) -> Result<bool, StoreError>;
 
+    /// Drop every share row pointing at any of these files (used when a
+    /// file or subtree is deleted — the tokens stop resolving and the
+    /// "my shares" list stops listing orphans).
+    async fn delete_shares_for_files(&self, file_ids: &[Uuid]) -> Result<u64, StoreError>;
+
     /// Sum of live file sizes for an owner (folders count 0).
     async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError>;
 

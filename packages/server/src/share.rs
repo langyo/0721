@@ -104,7 +104,7 @@ pub async fn download(
         .get(crate::blob::BlobSlot::Media, &file.storage_key)
         .await
         .map_err(ApiError::from)?
-        .unwrap_or_default();
+        .ok_or_else(|| ApiError::not_found("share blob missing"))?;
     let previewable = matches!(
         file.kind,
         i0721_proto::FileKind::Image

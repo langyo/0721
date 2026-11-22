@@ -809,6 +809,24 @@ impl Store for PgStore {
         Ok(removed > 0)
     }
 
+    async fn delete_shares_for_files(&self, file_ids: &[Uuid]) -> Result<u64, StoreError> {
+        if file_ids.is_empty() {
+            return Ok(0);
+        }
+        let filter = ShareColumn::FileId.in_(file_ids.to_vec()).into_inner();
+        let cmd = Command::Delete {
+            table: ShareModel::TABLE.to_owned(),
+            filter: Some(filter),
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        match reply {
+            lacrymira::Reply::Affected(n) => Ok(n),
+            other => Err(StoreError::Db(format!(
+                "expected an affected-rows reply from the shares table, got {other:?}"
+            ))),
+        }
+    }
+
     async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError> {
         let cmd = Command::Sql {
             dialect: lacrymira::Dialect::Postgres,

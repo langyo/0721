@@ -76,8 +76,11 @@ test: webui
 # panics instead of skipping. Point I0721_DATABASE_URL at a SCRATCH
 # database (e.g. createdb i0721_dev_$(date +%Y%m%d)); tests leave a few
 # lane_* rows behind, so never aim it at production.
+# Serialised on purpose: the migration tests drop/recreate the global
+# unique index on a shared scratch database, so parallel index tests race
+# each other's hand-planted rows (11 failures / 26 parallel runs measured).
 pg-test:
-    I0721_TEST_PG=1 cargo test --workspace pg_ -- --nocapture
+    I0721_TEST_PG=1 cargo test --workspace pg_ -- --nocapture --test-threads=1
 
 # Format check.
 fmt:
