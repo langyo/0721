@@ -14,6 +14,10 @@ id: string,
  */
 owner_id: string, 
 /**
+ * Parent folder (`None` = root).
+ */
+parent_id?: string, 
+/**
  * Display name.
  */
 name: string, 

@@ -197,6 +197,7 @@ mod tests {
             display_name: "Admin".to_owned(),
             role: Role::Admin,
             password_hash: Some("argon2id$secret".to_owned()),
+            quota_bytes: None,
             created_at: Timestamp::now(),
         };
         let json = serde_json::to_value(UserDto::from(record)).unwrap();
