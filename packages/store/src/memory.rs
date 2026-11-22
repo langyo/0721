@@ -23,6 +23,7 @@ struct Inner {
     settings: HashMap<String, serde_json::Value>,
     oauth_identities: Vec<(String, String, Uuid)>,
     shares: Vec<i0721_proto::ShareRecord>,
+    api_keys: Vec<i0721_proto::ApiKeyRecord>,
 }
 
 /// The in-memory [`Store`].
@@ -332,6 +333,59 @@ impl Store for MemoryStore {
             .iter()
             .filter(|f| f.deleted_at.is_none() && f.thumbnail_key.as_deref() == Some(key))
             .count() as u64)
+    }
+
+    async fn create_api_key(&self, record: &i0721_proto::ApiKeyRecord) -> Result<(), StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        inner.api_keys.push(record.clone());
+        Ok(())
+    }
+
+    async fn list_api_keys(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::ApiKeyRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let mut rows: Vec<_> = inner
+            .api_keys
+            .iter()
+            .filter(|k| k.user_id == user_id)
+            .cloned()
+            .collect();
+        rows.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+        Ok(rows)
+    }
+
+    async fn revoke_api_key(&self, id: Uuid) -> Result<bool, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let row = inner.api_keys.iter_mut().find(|k| k.id == id);
+        match row {
+            Some(key) if key.revoked_at.is_none() => {
+                key.revoked_at = Some(Timestamp::now().to_string());
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    async fn find_api_key_by_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .api_keys
+            .iter()
+            .find(|k| k.key_hash == key_hash && k.revoked_at.is_none())
+            .cloned())
+    }
+
+    async fn touch_api_key(&self, id: Uuid) -> Result<(), StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        if let Some(key) = inner.api_keys.iter_mut().find(|k| k.id == id) {
+            key.last_used_at = Some(Timestamp::now().to_string());
+        }
+        Ok(())
     }
 
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {

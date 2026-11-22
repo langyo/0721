@@ -125,6 +125,24 @@ export function putPasswordLogin(enabled: boolean): Promise<void> {
   return wsCall<void>("auth.password.put", { enabled });
 }
 
+// ── API keys (the MCP wave) ─────────────────────────────────────────
+
+export interface ApiKeyCreated { id: string; name: string; key: string; }
+export interface ApiKeyPublic {
+  id: string; name: string; key_prefix: string;
+  last_used_at?: string | null; revoked_at?: string | null; created_at: string;
+}
+
+export function createKey(name: string): Promise<ApiKeyCreated> {
+  return wsCall<ApiKeyCreated>('keys.create', { name });
+}
+export function listKeys(): Promise<ApiKeyPublic[]> {
+  return wsCall<ApiKeyPublic[]>('keys.list');
+}
+export function revokeKey(id: string): Promise<void> {
+  return wsCall<void>('keys.revoke', { id });
+}
+
 export function health(): Promise<HealthReport> {
   return apiFetch<HealthReport>("/api/health");
 }

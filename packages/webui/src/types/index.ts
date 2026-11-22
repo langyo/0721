@@ -6,6 +6,8 @@
  * by `cargo test -p i0721-proto -p i0721-server`; never hand-edit this
  * file or the bindings. Regenerate with `just webui-types` and commit.
  */
+export type { ApiKeyCreated } from "./ApiKeyCreated.ts";
+export type { ApiKeyPublic } from "./ApiKeyPublic.ts";
 export type { AuthSession } from "./AuthSession.ts";
 export type { CreateUserRequest } from "./CreateUserRequest.ts";
 export type { FileDto } from "./FileDto.ts";

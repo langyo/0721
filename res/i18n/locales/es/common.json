@@ -139,5 +139,18 @@
     "preview": "Vista previa",
     "fileNotAvailable": "Este archivo ya no está disponible",
     "breadcrumbRoot": "Mis archivos"
+  },
+  "keys": {
+    "title": "Claves API",
+    "create": "Crear clave",
+    "empty": "Sin claves",
+    "nameLabel": "Nombre de la clave",
+    "copyOnceWarning": "Esta clave no se mostrará de nuevo. ¡Cópiala ahora!",
+    "copied": "¡Copiado!",
+    "copyConfig": "Copiar config",
+    "copyPrompt": "Copiar prompt",
+    "revoke": "Revocar",
+    "revokeConfirm": "¿Revocar la clave {name}?",
+    "revoked": "Revocada"
   }
 }

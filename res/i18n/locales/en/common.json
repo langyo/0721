@@ -139,5 +139,18 @@
     "preview": "Preview",
     "fileNotAvailable": "This file is no longer available",
     "breadcrumbRoot": "My files"
+  },
+  "keys": {
+    "title": "API Keys",
+    "create": "Create key",
+    "empty": "No keys yet",
+    "nameLabel": "Key name",
+    "copyOnceWarning": "This key will NOT be shown again. Copy it now.",
+    "copied": "Copied!",
+    "copyConfig": "Copy config",
+    "copyPrompt": "Copy agent prompt",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke key {name}?",
+    "revoked": "Revoked"
   }
 }

@@ -40,6 +40,8 @@ pub fn router(state: AppState) -> Router {
     let rpc_state = state.clone();
     Router::new()
         .route("/api/health", get(api::settings::health))
+        .route("/api/mcp/sse", get(crate::mcp::sse))
+        .route("/api/mcp/message", axum::routing::post(crate::mcp::message))
         .nest("/api/v1", api::router())
         .route("/media/{key}", get(media::download))
         .route("/", get(static_files::serve_root))

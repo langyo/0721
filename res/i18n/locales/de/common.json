@@ -139,5 +139,18 @@
     "preview": "Vorschau",
     "fileNotAvailable": "Diese Datei ist nicht mehr verfügbar",
     "breadcrumbRoot": "Meine Dateien"
+  },
+  "keys": {
+    "title": "API-Schlüssel",
+    "create": "Schlüssel erstellen",
+    "empty": "Noch keine Schlüssel",
+    "nameLabel": "Schlüsselname",
+    "copyOnceWarning": "Dieser Schlüssel wird nie wieder angezeigt. Jetzt kopieren!",
+    "copied": "Kopiert!",
+    "copyConfig": "Konfiguration kopieren",
+    "copyPrompt": "Agent-Prompt kopieren",
+    "revoke": "Widerrufen",
+    "revokeConfirm": "Schlüssel {name} widerrufen?",
+    "revoked": "Widerrufen"
   }
 }

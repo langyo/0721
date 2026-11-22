@@ -139,5 +139,18 @@
     "preview": "Aperçu",
     "fileNotAvailable": "Ce fichier n'est plus disponible",
     "breadcrumbRoot": "Mes fichiers"
+  },
+  "keys": {
+    "title": "Clés API",
+    "create": "Créer une clé",
+    "empty": "Aucune clé",
+    "nameLabel": "Nom de la clé",
+    "copyOnceWarning": "Cette clé ne sera plus jamais affichée. Copiez-la maintenant !",
+    "copied": "Copié !",
+    "copyConfig": "Copier la config",
+    "copyPrompt": "Copier le prompt",
+    "revoke": "Révoquer",
+    "revokeConfirm": "Révoquer la clé {name} ?",
+    "revoked": "Révoquée"
   }
 }

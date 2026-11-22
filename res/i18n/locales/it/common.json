@@ -139,5 +139,18 @@
     "preview": "Anteprima",
     "fileNotAvailable": "Questo file non è più disponibile",
     "breadcrumbRoot": "I miei file"
+  },
+  "keys": {
+    "title": "Chiavi API",
+    "create": "Crea chiave",
+    "empty": "Nessuna chiave",
+    "nameLabel": "Nome chiave",
+    "copyOnceWarning": "Questa chiave non verrà più mostrata. Copiala ora!",
+    "copied": "Copiato!",
+    "copyConfig": "Copia config",
+    "copyPrompt": "Copia prompt",
+    "revoke": "Revoca",
+    "revokeConfirm": "Revocare la chiave {name}?",
+    "revoked": "Revocata"
   }
 }

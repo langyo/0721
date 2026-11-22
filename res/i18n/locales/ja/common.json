@@ -139,5 +139,18 @@
     "preview": "プレビュー",
     "fileNotAvailable": "このファイルは利用できません",
     "breadcrumbRoot": "マイファイル"
+  },
+  "keys": {
+    "title": "API キー",
+    "create": "キー作成",
+    "empty": "キーはありません",
+    "nameLabel": "キー名",
+    "copyOnceWarning": "このキーは二度と表示されません。今すぐコピーしてください。",
+    "copied": "コピーしました！",
+    "copyConfig": "設定をコピー",
+    "copyPrompt": "エージェントプロンプトをコピー",
+    "revoke": "取り消し",
+    "revokeConfirm": "キー {name} を取り消しますか？",
+    "revoked": "取り消しました"
   }
 }

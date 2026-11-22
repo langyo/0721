@@ -139,5 +139,18 @@
     "preview": "معاينة",
     "fileNotAvailable": "هذا الملف لم يعد متاحاً",
     "breadcrumbRoot": "ملفاتي"
+  },
+  "keys": {
+    "title": "مفاتيح API",
+    "create": "إنشاء مفتاح",
+    "empty": "لا مفاتيح",
+    "nameLabel": "اسم المفتاح",
+    "copyOnceWarning": "لن يظهر هذا المفتاح مرة أخرى. انسخه الآن!",
+    "copied": "تم النسخ!",
+    "copyConfig": "نسخ الإعداد",
+    "copyPrompt": "نسخ موجه الوكيل",
+    "revoke": "إلغاء",
+    "revokeConfirm": "إلغاء المفتاح {name}؟",
+    "revoked": "ملغى"
   }
 }

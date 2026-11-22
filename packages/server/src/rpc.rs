@@ -333,6 +333,9 @@ pub fn build_server(state: AppState) -> RpcServer {
     let state_quota_get = state.clone();
     let state_quota_put = state.clone();
     let state_files_chain = state.clone();
+    let state_keys_create = state.clone();
+    let state_keys_list = state.clone();
+    let state_keys_revoke = state.clone();
     RpcServer::builder()
         .auth(move |headers: &HeaderMap, uri: &Uri| {
             let state = state.clone();
@@ -1214,5 +1217,80 @@ pub fn build_server(state: AppState) -> RpcServer {
                     .map_err(store_err)?;
                 Ok(Value::Null)
             }
-        })        .build()
+        })        .method_ctx("keys.create", move |ctx: RpcRequestCtx| {
+            let state = state_keys_create.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct CreateParams {
+                    name: String,
+                }
+                let args: CreateParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+
+                let key = crate::mcp::mint_api_key();
+                let hash = crate::mcp::hash_api_key(&key);
+                let prefix = crate::mcp::mask_api_key(&key);
+                let record = i0721_proto::ApiKeyRecord {
+                    id: Uuid::new_v4(),
+                    user_id: caller.id,
+                    name: args.name,
+                    key_prefix: prefix,
+                    key_hash: hash,
+                    scopes: "[]".to_owned(),
+                    last_used_at: None,
+                    revoked_at: None,
+                    created_at: jiff::Timestamp::now(),
+                };
+                state.store.create_api_key(&record).await.map_err(store_err)?;
+                // The plaintext key appears HERE and ONLY here.
+                to_value(i0721_proto::ApiKeyCreated {
+                    id: record.id,
+                    name: record.name,
+                    key,
+                })
+            }
+        })
+        .method_ctx("keys.list", move |ctx: RpcRequestCtx| {
+            let state = state_keys_list.clone();
+            async move {
+                let caller = user_of(&ctx);
+                let rows = state.store.list_api_keys(caller.id).await.map_err(store_err)?;
+                let items: Vec<i0721_proto::ApiKeyPublic> = rows
+                    .into_iter()
+                    .map(|r| i0721_proto::ApiKeyPublic {
+                        id: r.id,
+                        name: r.name,
+                        key_prefix: r.key_prefix,
+                        last_used_at: r.last_used_at,
+                        revoked_at: r.revoked_at,
+                        created_at: r.created_at,
+                    })
+                    .collect();
+                to_value(items)
+            }
+        })
+        .method_ctx("keys.revoke", move |ctx: RpcRequestCtx| {
+            let state = state_keys_revoke.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct RevokeParams {
+                    id: Uuid,
+                }
+                let args: RevokeParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                // Owner-or-admin: the key's owner or an admin may revoke.
+                let keys = state.store.list_api_keys(caller.id).await.map_err(store_err)?;
+                let owns = keys.iter().any(|k| k.id == args.id);
+                if !owns && caller.role != Role::Admin {
+                    return Err(api_err(ApiError::forbidden("not your key")));
+                }
+                let removed = state.store.revoke_api_key(args.id).await.map_err(store_err)?;
+                if removed {
+                    Ok(Value::Null)
+                } else {
+                    Err(api_err(ApiError::not_found("key not found or already revoked")))
+                }
+            }
+        })
+        .build()
 }

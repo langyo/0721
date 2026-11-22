@@ -139,5 +139,18 @@
     "preview": "Предпросмотр",
     "fileNotAvailable": "Файл больше недоступен",
     "breadcrumbRoot": "Мои файлы"
+  },
+  "keys": {
+    "title": "API-ключи",
+    "create": "Создать ключ",
+    "empty": "Нет ключей",
+    "nameLabel": "Имя ключа",
+    "copyOnceWarning": "Этот ключ больше не будет показан. Скопируйте сейчас!",
+    "copied": "Скопировано!",
+    "copyConfig": "Копировать конфиг",
+    "copyPrompt": "Копировать промпт",
+    "revoke": "Отозвать",
+    "revokeConfirm": "Отозвать ключ {name}?",
+    "revoked": "Отозван"
   }
 }

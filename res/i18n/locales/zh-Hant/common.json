@@ -139,5 +139,18 @@
     "preview": "預覽",
     "fileNotAvailable": "該檔案不再可用",
     "breadcrumbRoot": "我的檔案"
+  },
+  "keys": {
+    "title": "API 密鑰",
+    "create": "建立密鑰",
+    "empty": "暫無密鑰",
+    "nameLabel": "密鑰名稱",
+    "copyOnceWarning": "此密鑰不會再次顯示，請立即複製。",
+    "copied": "已複製！",
+    "copyConfig": "複製配置",
+    "copyPrompt": "複製 Agent 提示詞",
+    "revoke": "撤銷",
+    "revokeConfirm": "撤銷密鑰 {name}？",
+    "revoked": "已撤銷"
   }
 }

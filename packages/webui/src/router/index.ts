@@ -65,6 +65,12 @@ export const router = createRouter({
           meta: { titleKey: "common.settings.title", admin: true },
         },
         {
+          path: "keys",
+          name: "api-keys",
+          component: () => import("@/views/KeysView.vue"),
+          meta: { titleKey: "common.keys.title" },
+        },
+        {
           path: "providers",
           name: "login-providers",
           component: () => import("@/views/ProvidersView.vue"),

@@ -247,6 +247,30 @@ pub trait Store: Send + Sync {
         quota_bytes: Option<i64>,
     ) -> Result<(), StoreError>;
 
+    // ── API keys (the MCP wave) ──────────────────────────────────────
+
+    /// Create an API key row.
+    async fn create_api_key(&self, record: &i0721_proto::ApiKeyRecord) -> Result<(), StoreError>;
+
+    /// One owner's API keys, newest first.
+    async fn list_api_keys(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::ApiKeyRecord>, StoreError>;
+
+    /// Soft-revoke by id (owner-or-admin checked by the caller).
+    async fn revoke_api_key(&self, id: Uuid) -> Result<bool, StoreError>;
+
+    /// Find a live (non-revoked) key by its hash. The caller handles
+    /// the async last_used_at refresh.
+    async fn find_api_key_by_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError>;
+
+    /// Best-effort last_used_at update (never blocks the request path).
+    async fn touch_api_key(&self, id: Uuid) -> Result<(), StoreError>;
+
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError>;
 
     /// Write one settings row (upsert).
