@@ -104,11 +104,15 @@ fn params<T: serde::de::DeserializeOwned>(ctx: &RpcRequestCtx) -> Result<T, Json
         .map_err(|err| JsonRpcError::invalid_params(&err.to_string()))
 }
 
-/// The cookie the webui could set for cookie-authenticated deployments
-/// (the browser token lives in localStorage today; the channel exists so
-/// a future cookie session needs no server change).
+/// The session cookie name. The browser session rides this httpOnly cookie
+/// (set at login); the four extraction channels in `extract_token` below
+/// exist for non-browser clients (cookie, Bearer header, subprotocol,
+/// query parameter).
 const TOKEN_COOKIE: &str = "i0721-token";
 
+/// NOTE (declared deviation): this extractor and `api::auth::extract_token`
+/// are an intentional dual-write pending a shared auth module; both must
+/// keep the same four-channel order (cookie, Bearer, subprotocol, query).
 /// Extract the credential, the chest four-channel order (see the module
 /// doc). Pure header/URL reading — proving happens in `verify_identity`.
 fn extract_token(headers: &HeaderMap, uri: &Uri) -> Option<String> {

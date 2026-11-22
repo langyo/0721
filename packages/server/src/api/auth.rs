@@ -27,7 +27,7 @@ pub const COOKIE_ATTRIBUTES: &str = " HttpOnly; SameSite=Strict; Path=/";
 
 /// Extract the credential, the family's fixed four-channel order:
 /// cookie → `Authorization: Bearer` → `Sec-WebSocket-Protocol: jwt.<t>`
-/// → `?token=` (the last resort). The BROWSER path is the cookie; the
+/// → `?token=` (the last resort). The browser path is the cookie (the WS-side copy of this extractor lives in rpc.rs); the
 /// other channels stay for non-browser clients.
 pub(crate) fn extract_token(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
     if let Some(cookie) = headers
