@@ -6,26 +6,47 @@
 
 ## 本仓是什么
 
-- 图床 → 网盘 + 图床资源服务（langyo 个人仓，Apache-2.0）；部署候选 `res.celestia.world`，对接
-  `auth.celestia.world`（开源版支持 Google/GitHub/飞书等 provider + 可选账密）。
-- 重构波次：axum 0.8 + lacrymira（元数据 PostgreSQL）+ hikari Vue/TS webui + 本地/S3/IPFS 存储 +
-  MCP（API key，SSE + Bearer）。旧栈（Yew / sea-orm / tairitsu / Cloudflare Workers 双态）随波退役：
-  **Yew client + SSR 页已在 bootstrap 波先行退役**（上游 `hikari-boot` 已消失，车道本就不可构建；
-  过渡期首页为占位页，媒体与 API 照常）。
+- 网盘 + 图床资源服务（langyo 个人仓，Apache-2.0）；staging 上线 `res.celestia.world`
+  （node-1:3026，`i0721-staging.service`）；OAuth 对接 `auth.celestia.world`（ERP provider
+  `res-celestia`），开源版支持 Google/GitHub/飞书等 provider + 可选账密双模式。
+
+## 架构终态（11 波全部合并，#19–#26）
+
+- **服务端**：axum 0.8 + tokio + lacrymira ^0.1（PostgreSQL，`i0721-pg`）+ jiff（禁 chrono）。
+- **通信面**：WS JSON-RPC（plana-rpc-server @ `/api/rpc`，一次性 WS ticket + httpOnly cookie）+
+  REST 白名单（health / auth bootstrap / refresh / logout / ws-ticket / upload / media / share / MCP SSE+message）+
+  MCP（SSE transport + 5 agent 工具 + API key `i0721-<32hex>` 哈希存储 + copy-once）。
+- **数据模型**：users（quota_bytes）/ oauth_identities / files（folder + parent_id + 同层唯一索引 +
+  软删 + 级联回收）/ shares / api_keys / settings 六表。
+- **存储**：`I0721_STORAGE_BACKEND` = local | s3（object_store ^0.12）| ipfs（kubo RPC + MFS）。
+- **webui**：hikari Vue/TS（chest 复刻壳 + 主题设定 + 连接状态灯 + 12 语种 i18n + ts-rs 单向类型）。
+- **会话**：httpOnly cookie（SameSite=Lax + Secure 按请求 X-Forwarded-Proto 判定 + 
+  `I0721_COOKIE_SECURE=auto|always|never` 钉）；WebSocket 用一次性 ticket；MCP 用 API key。
 
 ## 开发纪律
 
 - trunk = `master`，只经 PR + squash merge；标题 = `<gitmoji> 一句英文陈述句.`
   （钩子由 `celestia-devtools init` 安装）。
-- 门禁 = `just gate`（fmt → clippy -D warnings → test → cargo deny）；
+- 门禁 = `just gate`（webui build → fmt → clippy -D warnings → test → deny → vitest → barrel →
+  lockfile → i18n）；PG 车道 = `just pg-test`（序列化，索引重建测试不能并行）；
   devtools 漂移检查 = `celestia-devtools init --check`。
-- CI 口径 = trunk 基本检查（push master：<1 分钟、无编译——verify-versions +
-  depspec-lint + family-versions）+ `ci.yml` 手动 dispatch（全量门禁）。
-- 依赖声明两段式（`^0.8` / `^0.1` 形）；时间一律 jiff 禁 chrono；不直接 use sqlx
-  （逃生舱走 lacrymira `Command::Sql`）。`wasm-bindgen` 精确钉版是 wasm-bindgen-cli 配套的
-  过渡豁免，Yew 退役波一并移除。
-- webui 波落地后：右上角动作区语法（主创建动作 = 动作区加号，槽位唯一家 = hikari
-  `docs/<locale>/design/page-chrome.md` + `useActionBar` 注释）；i18n = JSON
-  `res/i18n/locales/<lang>/<namespace>.json`，en + zh-Hans baseline，`check_i18n` 硬门禁。
-- 版本：树内版本随发版波统一升 0.4.0；**发布 tag 挂起**至用户目验裁决（`publish.yml` 由
-  `v*` tag 触发，不打 tag 即不发版）。
+- CI 口径 = trunk 基本检查（push master：<1 分钟——verify-versions + depspec-lint + family-versions）+
+  `ci.yml` 手动 dispatch（全量门禁）。
+- 依赖声明两段式（`^0.8` / `^0.1` 形）；**不直接 use sqlx**（逃生舱走 lacrymira `Command::Sql`）。
+- 右上角动作区语法（主创建动作 = 动作区加号，槽位唯一家 = hikari `docs/<locale>/design/page-chrome.md`）；
+  i18n = JSON `res/i18n/locales/<lang>/<namespace>.json`，en + zh-Hans baseline，`check_i18n` 硬门禁。
+- 版本：树内 0.4.0；**发布 tag 挂起**至用户目验裁决（`publish.yml` 由 `v*` tag 触发）。
+
+## 部署（staging 实测）
+
+- 单元 `i0721-staging.service`（node-1:3026）；部署根 `/srv/celestia/i0721-staging/`；
+  引导根 `/mnt/codespace/_secure/i0721-staging.env`（600）。
+- daemon vhost `res-celestia-world` → node-1:3026（SSE 车道关缓冲/3600s）。
+- ERP client `res-celestia` 已注册于 node-3 `erp-personal/oauth-clients.env`。
+- 公网隧道（SakuraFrp）待用户面板创建（A 组 = auth+admin+res .celestia.world）。
+
+## 遗留（后续波次）
+
+- scopes 执行与 key expires_at；DashMap 替代 Mutex 注册表；Range/流式读取；
+  per-file 存储放置；MFS 多节点映射入库；text 预览大小帽；上传取消/拖拽。
+- `cred_scan` 测试夹具豁免已登记 `_ledger/tool-exemptions.md`。
