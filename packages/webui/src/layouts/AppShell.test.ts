@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // run for real (they degrade to disconnected/null without a client).
 vi.mock("@/api", () => ({ health: vi.fn().mockRejectedValue(new Error("no net")) }));
 
+import { HkStatusBar } from "@celestia-island/hikari";
+
 import AppShell from "./AppShell.vue";
 import { useAuthStore } from "@/stores/auth";
 import { createAppI18n } from "@/i18n";
@@ -80,6 +82,11 @@ describe("AppShell (family grouped chrome)", () => {
     expect(text).toContain(i18n.global.t("common.nav.groupContent"));
     expect(text).toContain(i18n.global.t("common.nav.groupAccess"));
     expect(text).not.toContain(i18n.global.t("common.nav.groupSystem"));
+    // A second, independent pin on the same gating: the admin pages'
+    // own labels must not render for a member either (with this, the
+    // guarantee no longer rests on the group-label line alone).
+    expect(text).not.toContain(i18n.global.t("common.users.title"));
+    expect(text).not.toContain(i18n.global.t("common.providers.title"));
     // The member's own pages ride the content/access groups.
     expect(text).toContain(i18n.global.t("common.files.title"));
     expect(text).toContain(i18n.global.t("common.keys.title"));
@@ -99,6 +106,28 @@ describe("AppShell (family grouped chrome)", () => {
     expect(text).toContain(i18n.global.t("common.users.title"));
     expect(text).toContain(i18n.global.t("common.providers.title"));
     expect(text).toContain(i18n.global.t("common.nav.settings"));
+  });
+
+  it("feeds the family status bar the live engine identity and probe state", async () => {
+    // The HkStatusBar prop-name seam is untyped (Vue fallthrough attrs
+    // type-check clean), so the wiring is pinned BEHAVIOURALLY: a real
+    // health payload must arrive on the bar's engineVersion prop (R3 S2).
+    // useEngineHealth reads raw fetch("/api/health") — stub the global.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "ok", version: "sentinel-engine-9.9.9", config_source: "settings" }),
+      }),
+    );
+    wrapper = await mountShell("member");
+    await flushPromises();
+    const bar = wrapper.getComponent(HkStatusBar);
+    expect(bar.props("engineVersion")).toBe("sentinel-engine-9.9.9");
+    expect(bar.props("version")).toBe(__APP_VERSION__);
+    // No RPC client in a unit test: the transport probe reads disconnected.
+    expect(bar.props("connectionStatus")).toBe("disconnected");
+    vi.unstubAllGlobals();
   });
 
   it("renders the page into the shell's content host", async () => {
