@@ -168,7 +168,7 @@ pub async fn upload(
         mime: processed.mime.clone(),
         size: processed.data.len() as i64,
         sha256: processed.sha256.clone(),
-        storage_backend: "local".to_owned(),
+        storage_backend: state.config.storage_backend.clone(),
         storage_key,
         thumbnail_key,
         original_name: file_name.unwrap_or_default(),

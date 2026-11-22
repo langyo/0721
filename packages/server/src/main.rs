@@ -7,7 +7,6 @@ use i0721_proto::Role;
 use i0721_store::{CreateUser, PgStore, Store};
 
 use i0721_server::auth;
-use i0721_server::blob::LocalBlobStore;
 use i0721_server::config::Config;
 use i0721_server::routes;
 use i0721_server::state::AppState;
@@ -29,9 +28,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     seed_default_admin(&store, &config.seed_admin_password).await?;
 
-    let blobs = LocalBlobStore::open(&config.media_root)?;
+    let blobs =
+        i0721_server::blob_selection::select_blob_backend(&config, |key| std::env::var(key).ok())
+            .unwrap_or_else(|err| {
+                eprintln!("blob backend selection failed: {err}");
+                std::process::exit(1);
+            });
     let listen = config.listen;
-    let state = AppState::new(Arc::new(store), Arc::new(blobs), Arc::new(config));
+    let state = AppState::new(Arc::new(store), blobs, Arc::new(config));
 
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(

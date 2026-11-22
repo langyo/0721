@@ -46,6 +46,50 @@ backends and an MCP surface for AI agents.
 - Deploy via Docker Compose
 - Written in Rust with a TypeScript frontend
 
+## Storage backends
+
+The blob backend is selected at startup by `I0721_STORAGE_BACKEND`
+(`local` | `s3` | `ipfs`; default `local`). All three implement the same
+put/get/delete surface; thumbnails (the Cache slot) follow the same
+backend. Multi-backend coexistence and per-file overrides are a future
+wave — this is a deployment-shape choice.
+
+| Backend | Env | Notes |
+|---|---|---|
+| `local` (default) | `I0721_MEDIA_ROOT` (default `data`) | Two directories: `media/` + `media-cache/` |
+| `s3` | `I0721_S3_ENDPOINT` `I0721_S3_BUCKET` `I0721_S3_REGION` `I0721_S3_ACCESS_KEY` `I0721_S3_SECRET_KEY` | Works with AWS S3, MinIO, R2. Endpoint present = path-style; absent = AWS. Keys: `media/{sha}` and `cache/{sha}.webp` |
+| `ipfs` | `I0721_IPFS_API` (e.g. `http://127.0.0.1:5001`) | kubo RPC. put = `/api/v0/add?pin=true` + MFS link; get = MFS read; delete = MFS rm + best-effort unpin |
+
+Semantic differences:
+- **S3** has no local cache — every read is a network round-trip. For
+  single-node deployments with a local MinIO this is still fast.
+- **IPFS** deletion is content-addressed: `delete` unpins the CID, but
+  another row referencing the same content keeps it alive; kubo's
+  garbage collector reclaims unpinned CIDs on its schedule. The
+  key-to-CID mapping rides kubo's MFS (`/i0721/{slot}/{key}`) —
+  node-local state; a multi-node cluster would need the mapping in the
+  metadata database instead.
+
+**Backend switching**: changing `I0721_STORAGE_BACKEND` affects NEW
+uploads only, and reads always go through the single configured
+backend — the `files.storage_backend` column is per-row bookkeeping,
+never consulted on read. After a switch, blobs written to the old
+backend become unreachable until you switch back or migrate them —
+their media links answer 404 while the old backend is still reachable
+but the blob is gone, and 500 when the old backend itself is down;
+a blob-migration tool arrives with a later wave.
+
+**Security note**: `I0721_S3_ENDPOINT` with `http://` sends credentials
+in cleartext — this is safe ONLY for internal-network MinIO (the
+compose example). Production deployments must use `https://`.
+
+`I0721_MEDIA_ROOT` has no effect when the backend is `s3` or `ipfs`
+(it only configures the `local` backend's directory layout).
+
+Deployment examples: `deploy/docker-compose.s3.yml` (service + MinIO +
+create-bucket init) and `deploy/docker-compose.ipfs.yml` (service +
+kubo).
+
 ## Deploy
 
 The compose file (`deploy/docker-compose.yml`) brings up PostgreSQL 17
@@ -107,7 +151,12 @@ required variable or an unparseable value refuses to start):
 | `I0721_DATABASE_URL` | required | PostgreSQL URL |
 | `JWT_SECRET` (container-side; compose sets it from `I0721_JWT_SECRET`) | required | HS256 secret for the transition-era tokens |
 | `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
-| `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it) |
+| `I0721_STORAGE_BACKEND` | `local` | blob backend selection: `local`, `s3` or `ipfs` (see [Storage backends](#storage-backends)) |
+| `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it); consumed by the `local` backend only |
+| `I0721_S3_ENDPOINT` | *(empty)* | S3-compatible endpoint (MinIO/R2; http only for internal networks). Empty = AWS |
+| `I0721_S3_BUCKET` / `I0721_S3_REGION` | required with `s3` | bucket name / region (`auto` works for MinIO) |
+| `I0721_S3_ACCESS_KEY` / `I0721_S3_SECRET_KEY` | required with `s3` | credentials |
+| `I0721_IPFS_API` | required with `ipfs` | kubo RPC base URL (e.g. `http://127.0.0.1:5001`) |
 | `I0721_PUBLIC_ORIGIN` | — | the deployment's absolute https origin (OAuth redirect URIs); unset = Host-header derivation |
 | `I0721_STATIC_DIR` | `dist/webui` | web UI dist directory (dev mode; the default build embeds the dist) |
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |

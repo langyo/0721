@@ -143,6 +143,8 @@ pub struct Config {
     /// absolute https URL (http allowed for localhost/127.0.0.1 dev).
     /// Drives the OAuth redirect URI; absent = Host derivation.
     pub public_origin: Option<String>,
+    /// The blob backend selection: `local` (default) | `s3` | `ipfs`.
+    pub storage_backend: String,
 }
 
 impl Config {
@@ -229,6 +231,7 @@ impl Config {
             seed_admin_password,
             trusted_proxies,
             public_origin,
+            storage_backend: lookup("I0721_STORAGE_BACKEND").unwrap_or_else(|| "local".to_owned()),
         })
     }
 }
