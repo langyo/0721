@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import {
   HkAdaptiveDialog,
-  HkEmptyState,
+  HkAdminTablePage,
+  HkBadge,
+  HkDateTag,
+  HkIconButton,
   HkInput,
+  type HTableColumn,
 } from "@celestia-island/hikari";
 import { ShieldCheck, Trash2, Users as UsersIcon } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
@@ -154,54 +158,77 @@ async function confirmDelete() {
   }
 }
 
-function formatWhen(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
-}
+/** The roster's column set — the family table anatomy. `key` doubles as
+ * the cell-slot name (`cell-<key>`), `copyable: false` on the action
+ * column keeps click-to-copy off it. */
+const columns = computed<HTableColumn[]>(() => [
+  { key: "name", title: t("common.users.account"), sortable: false },
+  { key: "role", title: t("common.users.role"), align: "left" },
+  { key: "created", title: t("common.users.created"), align: "left" },
+  { key: "actions", title: "", align: "right", width: "3.5rem", copyable: false },
+]);
+
 </script>
 
 <template>
   <section class="users">
-    <HkEmptyState v-if="loading && users.length === 0" loading boxed :title="t('common.status.loading')" />
-    <HkEmptyState v-else-if="loadError" boxed :title="t('common.status.error')" :description="loadError" />
-    <HkEmptyState
-      v-else-if="users.length === 0"
-      boxed
+    <HkAdminTablePage
+      :title="t('common.users.title')"
+      :subtitle="t('common.status.total', { count: total })"
       :icon="UsersIcon"
-      :title="t('common.users.empty')"
-    />
+      :rows="users"
+      :columns="columns"
+      row-key="id"
+      :loading="loading"
+      :error="loadError ?? undefined"
+      :empty-title="t('common.users.empty')"
+    >
+      <template #cell-name="{ row }">
+        <span class="user-name-cell">
+          <span class="user-name">{{ row.display_name }}</span>
+          <span class="user-login">@{{ row.username }}</span>
+        </span>
+      </template>
 
-    <template v-else>
-      <p class="users-count">{{ t("common.status.total", { count: total }) }}</p>
-      <ul class="user-list">
-        <li v-for="user in users" :key="user.id" class="user-row">
-          <div class="user-avatar" :class="{ admin: user.role === 'admin' }">
-            <ShieldCheck v-if="user.role === 'admin'" :size="16" />
-            <UsersIcon v-else :size="16" />
-          </div>
-          <div class="user-main">
-            <span class="user-name">{{ user.display_name }}</span>
-            <span class="user-login">@{{ user.username }}</span>
-          </div>
-          <span class="user-role">{{ user.role === "admin" ? t("common.status.admin") : t("common.status.member") }}</span>
-          <span class="user-created" :title="t('common.users.created')">{{ formatWhen(user.created_at) }}</span>
-          <button
-            type="button"
-            class="user-delete"
-            :aria-label="t('common.actions.delete')"
-            :title="t('common.actions.delete')"
-            @click="((pendingDelete = user), (deleteError = null))"
-          >
-            <Trash2 :size="14" />
-          </button>
-        </li>
-      </ul>
-      <div v-if="hasMore" class="users-more">
-        <button type="button" class="users-more-btn" :disabled="loading" @click="load(false)">
-          {{ t("common.actions.loadMore") }}
-        </button>
-      </div>
-    </template>
+      <template #cell-role="{ row }">
+        <HkBadge :variant="row.role === 'admin' ? 'warning' : 'muted'" pill>
+          <ShieldCheck v-if="row.role === 'admin'" :size="12" />
+          {{ row.role === "admin" ? t("common.status.admin") : t("common.status.member") }}
+        </HkBadge>
+      </template>
+
+      <template #cell-created="{ row }">
+        <HkDateTag :value="row.created_at" />
+      </template>
+
+      <template #cell-actions="{ row }">
+        <!-- Deleting yourself would drop the admin surface mid-session:
+             the family roster convention is no affordance at all rather
+             than a dead button. -->
+        <HkIconButton
+          v-if="row.id !== auth.user?.id"
+          :size="24"
+          variant="ghost"
+          :aria-label="t('common.actions.delete')"
+          :title="t('common.actions.delete')"
+          @click="((pendingDelete = row), (deleteError = null))"
+        >
+          <template #icon><Trash2 :size="14" /></template>
+        </HkIconButton>
+      </template>
+    </HkAdminTablePage>
+
+    <div v-if="hasMore" class="users-more">
+      <HkIconButton
+        :size="28"
+        variant="ghost"
+        :aria-label="t('common.actions.loadMore')"
+        :title="t('common.actions.loadMore')"
+        @click="load(false)"
+      >
+        <template #icon><UsersIcon :size="16" /></template>
+      </HkIconButton>
+    </div>
 
     <HkAdaptiveDialog
       :model-value="createOpen"
@@ -264,53 +291,6 @@ function formatWhen(iso: string): string {
   gap: 1rem;
 }
 
-.users-count {
-  margin: 0;
-  opacity: 0.75;
-  font-size: 0.875rem;
-}
-
-.user-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.user-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, currentColor 4%, transparent);
-}
-
-.user-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, currentColor 10%, transparent);
-  opacity: 0.8;
-
-  &.admin {
-    background: color-mix(in srgb, rgb(13 148 136) 22%, transparent);
-  }
-}
-
-.user-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
 .user-name {
   font-weight: 600;
   font-size: 0.9rem;
@@ -321,56 +301,15 @@ function formatWhen(iso: string): string {
   opacity: 0.6;
 }
 
-.user-role {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
-}
-
-.user-created {
-  font-size: 0.75rem;
-  opacity: 0.6;
-}
-
-.user-delete {
-  border: none;
-  background: transparent;
-  color: inherit;
-  opacity: 0.6;
-  cursor: pointer;
-  padding: 0.35rem;
-  border-radius: 0.4rem;
+.user-name-cell {
   display: inline-flex;
-
-  &:hover {
-    opacity: 1;
-    background: color-mix(in srgb, rgb(220 38 38) 16%, transparent);
-    color: rgb(220 38 38);
-  }
+  flex-direction: column;
+  gap: 0.1rem;
 }
 
 .users-more {
   display: flex;
   justify-content: center;
-}
-
-.users-more-btn {
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  background: transparent;
-  color: inherit;
-  padding: 0.45rem 1.4rem;
-  border-radius: 999px;
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    background: color-mix(in srgb, currentColor 8%, transparent);
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
 }
 
 .create-form {

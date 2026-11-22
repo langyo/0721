@@ -62,7 +62,8 @@
     "role": "役割",
     "created": "作成日時",
     "deleteConfirm": "ユーザー {name} を削除しますか？",
-    "conflict": "そのユーザー名は既に使われています。"
+    "conflict": "そのユーザー名は既に使われています。",
+    "account": "アカウント"
   },
   "settings": {
     "title": "サイト設定",
@@ -113,7 +114,9 @@
     "enabled": "有効",
     "deleteConfirm": "プロバイダー {id} を削除しますか？",
     "scopes": "スコープ",
-    "scopesHint": "スペース区切り。内蔵タイプはこの値を無視します（テンプレート固有のスコープを使用）。"
+    "scopesHint": "スペース区切り。内蔵タイプはこの値を無視します（テンプレート固有のスコープを使用）。",
+    "secret": "シークレット",
+    "edit": "編集"
   },
   "files": {
     "title": "ファイル",
@@ -142,7 +145,9 @@
     "download": "ダウンロード",
     "preview": "プレビュー",
     "fileNotAvailable": "このファイルは利用できません",
-    "breadcrumbRoot": "マイファイル"
+    "breadcrumbRoot": "マイファイル",
+    "fileName": "ファイル",
+    "size": "サイズ"
   },
   "keys": {
     "title": "API キー",
@@ -158,7 +163,10 @@
     "promptTemplate": "0721 MCP サーバー（{endpoint}）を API キー {key} で使用してください。利用可能なツール: list_files、file_info、upload_file、get_share_link、search_files。",
     "revoke": "取り消し",
     "revokeConfirm": "キー {name} を取り消しますか？",
-    "revoked": "取り消しました"
+    "revoked": "取り消しました",
+    "prefix": "プレフィックス",
+    "state": "状態",
+    "active": "有効"
   },
   "menu": {
     "account": "アカウント"

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import {
   HkAdaptiveDialog,
+  HkAdminTablePage,
+  HkBadge,
   HkButton,
-  HkEmptyState,
+  HkIconButton,
   HkInput,
   HkSwitch,
+  type HTableColumn,
 } from "@celestia-island/hikari";
-import { Plus, Trash2, Unplug } from "lucide-vue-next";
+import { Pencil, Plus, Trash2, Unplug } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -213,43 +216,75 @@ async function confirmDelete() {
     deleteBusy.value = false;
   }
 }
+
+/** The roster's column set (the family table anatomy); `key` doubles as
+ * the cell-slot name. The secret column is copy-exempt (it renders a
+ * mask, never the value). */
+const columns = computed<HTableColumn[]>(() => [
+  { key: "name", title: t("common.providers.title") },
+  { key: "secret", title: t("common.providers.secret"), copyable: false },
+  { key: "enabled", title: t("common.providers.enabled"), align: "center", copyable: false },
+  { key: "actions", title: "", align: "right", width: "6rem", copyable: false },
+]);
 </script>
 
 <template>
   <section class="providers">
-    <HkEmptyState v-if="loading && rows.length === 0" loading boxed :title="t('common.status.loading')" />
-    <HkEmptyState v-else-if="loadError" boxed :title="t('common.status.error')" :description="loadError" />
-    <HkEmptyState v-else-if="rows.length === 0" boxed :icon="Unplug" :title="t('common.providers.empty')" />
+    <p v-if="toggleError" class="toggle-error" role="alert">{{ toggleError }}</p>
+    <HkAdminTablePage
+      :title="t('common.providers.title')"
+      :subtitle="t('common.status.total', { count: rows.length })"
+      :icon="Unplug"
+      :rows="rows"
+      :columns="columns"
+      row-key="id"
+      :loading="loading"
+      :error="loadError ?? undefined"
+      :empty-title="t('common.providers.empty')"
+    >
+      <template #cell-name="{ row }">
+        <button type="button" class="provider-name-cell" @click="openEdit(row)">
+          <span class="provider-name">{{ row.display_name }}</span>
+          <span class="provider-meta">{{ row.id }} · {{ row.type }}</span>
+        </button>
+      </template>
 
-    <template v-else>
-      <p v-if="toggleError" class="toggle-error" role="alert">{{ toggleError }}</p>
-      <ul class="provider-list">
-        <li v-for="row in rows" :key="row.id" class="provider-row">
-          <button type="button" class="row-main" @click="openEdit(row)">
-            <span class="row-name">{{ row.display_name }}</span>
-            <span class="row-id">{{ row.id }} · {{ row.type }}</span>
-          </button>
-          <span class="row-secret" :title="row.has_secret ? t('common.providers.secretSet') : t('common.providers.noSecret')">
-            {{ row.has_secret ? `••••${row.secret_tail}` : t("common.providers.noSecret") }}
-          </span>
-          <label class="row-switch">
-            <HkSwitch
-              :model-value="row.enabled"
-              :aria-label="t('common.providers.enabled')"
-              @update:model-value="(v: boolean) => toggle(row, v)"
-            />
-          </label>
-          <button
-            type="button"
-            class="row-delete"
+      <template #cell-secret="{ row }">
+        <HkBadge v-if="row.has_secret" variant="muted" mono pill>{{ `••••${row.secret_tail}` }}</HkBadge>
+        <HkBadge v-else variant="warning" pill>{{ t("common.providers.noSecret") }}</HkBadge>
+      </template>
+
+      <template #cell-enabled="{ row }">
+        <HkSwitch
+          :model-value="row.enabled"
+          :aria-label="t('common.providers.enabled')"
+          @update:model-value="(v: boolean) => toggle(row, v)"
+        />
+      </template>
+
+      <template #cell-actions="{ row }">
+        <span class="provider-actions">
+          <HkIconButton
+            :size="24"
+            variant="ghost"
+            :aria-label="t('common.providers.edit')"
+            :title="t('common.providers.edit')"
+            @click="openEdit(row)"
+          >
+            <template #icon><Pencil :size="14" /></template>
+          </HkIconButton>
+          <HkIconButton
+            :size="24"
+            variant="ghost"
             :aria-label="t('common.actions.delete')"
+            :title="t('common.actions.delete')"
             @click="((pendingDelete = row), (deleteError = null))"
           >
-            <Trash2 :size="14" />
-          </button>
-        </li>
-      </ul>
-    </template>
+            <template #icon><Trash2 :size="14" /></template>
+          </HkIconButton>
+        </span>
+      </template>
+    </HkAdminTablePage>
 
     <HkAdaptiveDialog
       :model-value="dialogOpen"
@@ -340,72 +375,6 @@ async function confirmDelete() {
   gap: 1rem;
 }
 
-.provider-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.provider-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, currentColor 4%, transparent);
-}
-
-.row-main {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  text-align: start;
-  padding: 0;
-}
-
-.row-name {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.row-id {
-  font-size: 0.75rem;
-  opacity: 0.6;
-}
-
-.row-secret {
-  font-size: 0.75rem;
-  opacity: 0.7;
-  font-variant-numeric: tabular-nums;
-}
-
-.row-delete {
-  border: none;
-  background: transparent;
-  color: inherit;
-  opacity: 0.6;
-  cursor: pointer;
-  padding: 0.35rem;
-  border-radius: 0.4rem;
-  display: inline-flex;
-
-  &:hover {
-    opacity: 1;
-    background: color-mix(in srgb, rgb(220 38 38) 16%, transparent);
-    color: rgb(220 38 38);
-  }
-}
-
 .edit-form {
   display: flex;
   flex-direction: column;
@@ -463,4 +432,8 @@ async function confirmDelete() {
   border-radius: 0.5rem;
   background: color-mix(in srgb, rgb(220 38 38) 12%, transparent);
 }
+.provider-name-cell { display: flex; flex-direction: column; gap: 0.15rem; text-align: start; background: none; border: 0; color: inherit; cursor: pointer; padding: 0; }
+.provider-name { font-weight: 600; }
+.provider-meta { opacity: 0.65; font-size: 0.85em; }
+.provider-actions { display: inline-flex; gap: 0.25rem; }
 </style>
