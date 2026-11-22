@@ -72,6 +72,11 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # Binding staleness: the export tests inside `cargo test` just
+      # regenerated every binding — any committed file that no longer
+      # matches the Rust definitions shows as a diff now. The BARREL
+      # bijection is checked separately (no regeneration there, so a
+      # hand-edited index.ts fails with the precise missing line).
       - name: TS bindings are not stale
         run: |
           python3 scripts/gen_types_barrel.py --check && \

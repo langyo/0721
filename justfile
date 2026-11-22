@@ -42,14 +42,18 @@ webui-types:
     cargo test -p i0721-proto -p i0721-server --quiet
     python3 scripts/gen_types_barrel.py
 
-# Fail when the committed TS bindings or the barrel drifted: the barrel
-# is first checked against the disk file set (a hand-edited or stale
-# index.ts is a bijection break), then everything is regenerated and
-# git-diffed. CI + gate both pin this so a stale contract can never
-# merge.
+# Fail when the committed BARREL drifted: bijection against the disk
+# binding files + content check, with NO regeneration anywhere in the
+# recipe — a hand-edited or stale index.ts fails fast with the precise
+# missing/extra line instead of being silently rewritten back to health.
 webui-types-check:
     python3 scripts/gen_types_barrel.py --check
-    just webui-types
+
+# Binding staleness is a SEPARATE lane: the ts-rs export tests inside
+# `cargo test --workspace` regenerate every binding, and the git diff
+# then fails on any committed binding that no longer matches the Rust
+# definitions. (Depends on `test` so the gate never runs cargo twice.)
+webui-bindings-check: test
     git diff --exit-code -- packages/webui/src/types
 
 # ── rust ────────────────────────────────────────────────────────────────
@@ -92,14 +96,14 @@ licenses:
 i18n-check:
     python3 scripts/check_i18n.py --quiet
 
-# One-shot gate, both sides: rust (fmt -> clippy -> test -> deny) with
-# the embedded dist built first, then the webui lane (vitest) and the
-# TS-contract staleness pin.
+# One-shot gate, both sides: rust (fmt -> clippy -> test+bindings
+# staleness -> deny) with the embedded dist built first, then the webui
+# lane (vitest), the barrel bijection pin and the i18n gate.
 gate:
     just webui
     just fmt
     just lint
-    just test
+    just webui-bindings-check
     just licenses
     just webui-test
     just webui-types-check
