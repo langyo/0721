@@ -108,6 +108,7 @@
     "issuerUrl": "URL do emissor (OIDC)",
     "enabled": "Ativo",
     "deleteConfirm": "Excluir o provedor {id}?",
-    "scopes": "Escopos"
+    "scopes": "Escopos",
+    "scopesHint": "Separados por espaços. Os tipos integrados ignoram este valor (seus templates trazem escopos próprios)."
   }
 }

@@ -108,6 +108,7 @@
     "issuerUrl": "Issuer-URL (OIDC)",
     "enabled": "Aktiv",
     "deleteConfirm": "Anbieter {id} löschen?",
-    "scopes": "Scopes"
+    "scopes": "Scopes",
+    "scopesHint": "Leerzeichengetrennt. Eingebaute Typen ignorieren diesen Wert (ihre Vorlagen bringen eigene Scopes mit)."
   }
 }

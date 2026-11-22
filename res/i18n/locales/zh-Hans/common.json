@@ -108,6 +108,7 @@
     "issuerUrl": "签发方 URL（OIDC）",
     "enabled": "启用",
     "deleteConfirm": "删除提供方 {id}？",
-    "scopes": "作用域"
+    "scopes": "作用域",
+    "scopesHint": "空格分隔。内置类型忽略此值（模板自带作用域）。"
   }
 }

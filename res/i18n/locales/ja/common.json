@@ -108,6 +108,7 @@
     "issuerUrl": "発行者 URL（OIDC）",
     "enabled": "有効",
     "deleteConfirm": "プロバイダー {id} を削除しますか？",
-    "scopes": "スコープ"
+    "scopes": "スコープ",
+    "scopesHint": "スペース区切り。内蔵タイプはこの値を無視します（テンプレート固有のスコープを使用）。"
   }
 }

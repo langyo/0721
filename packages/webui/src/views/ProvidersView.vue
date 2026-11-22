@@ -301,6 +301,16 @@ async function confirmDelete() {
           <span>{{ t("common.providers.issuerUrl") }}</span>
           <HkInput v-model="form.issuer_url" name="provider-issuer" placeholder="https://sso.example.com" />
         </label>
+        <label class="field">
+          <span>{{ t("common.providers.scopes") }}</span>
+          <HkInput
+            v-model="form.scopes"
+            name="provider-scopes"
+            placeholder="openid profile email"
+            data-testid="provider-scopes"
+          />
+          <small class="hint">{{ t("common.providers.scopesHint") }}</small>
+        </label>
         <div class="field switch-field">
           <span>{{ t("common.providers.enabled") }}</span>
           <HkSwitch v-model="form.enabled" :aria-label="t('common.providers.enabled')" />

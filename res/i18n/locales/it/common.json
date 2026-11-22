@@ -108,6 +108,7 @@
     "issuerUrl": "URL dell'emittente (OIDC)",
     "enabled": "Attivo",
     "deleteConfirm": "Eliminare il provider {id}?",
-    "scopes": "Scope"
+    "scopes": "Scope",
+    "scopesHint": "Separati da spazi. I tipi integrati ignorano questo valore (i loro template hanno scope propri)."
   }
 }

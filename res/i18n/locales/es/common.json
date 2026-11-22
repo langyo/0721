@@ -108,6 +108,7 @@
     "issuerUrl": "URL del emisor (OIDC)",
     "enabled": "Activo",
     "deleteConfirm": "¿Eliminar el proveedor {id}?",
-    "scopes": "Ámbitos"
+    "scopes": "Ámbitos",
+    "scopesHint": "Separados por espacios. Los tipos integrados ignoran este valor (sus plantillas traen sus propios ámbitos)."
   }
 }

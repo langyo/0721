@@ -221,9 +221,14 @@ pub struct OAuthProviderUpsert {
     pub icon: Option<String>,
 }
 
-/// Load the whole registry (empty when the row is absent/corrupt — a
-/// corrupt row must not take the login page down; the admin list
-/// surfaces the breakage on write).
+/// Load the whole registry (empty when the row is absent — a fresh
+/// deployment has no providers). A CORRUPT row (hand-edited JSON the
+/// `OAuthProvider` shape rejects) also lands on empty: the login page
+/// stays up and the admin list reads clean, and the next upsert
+/// overwrites the broken row with a well-formed registry. KNOWN GAP
+/// (no test yet): nothing surfaces WHICH row was corrupt or that a
+/// drop happened — a `tracing::warn!` on the parse failure is the
+/// obvious follow-up.
 pub async fn load_providers(state: &AppState) -> Vec<OAuthProvider> {
     state
         .store

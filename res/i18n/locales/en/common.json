@@ -108,6 +108,7 @@
     "issuerUrl": "Issuer URL (OIDC)",
     "enabled": "Enabled",
     "deleteConfirm": "Delete provider {id}?",
-    "scopes": "Scopes"
+    "scopes": "Scopes",
+    "scopesHint": "Space-separated. Built-in types ignore this value (their templates carry their own)."
   }
 }
