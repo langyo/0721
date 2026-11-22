@@ -117,10 +117,18 @@ describe("KeysView clipboard", () => {
     await clickTestId("copy-key");
     expect(writeText).toHaveBeenCalledWith("i0721-fedcba9876543210fedcba9876543210");
     // The button flips to its "copied" label, then back after 3 s.
-    const copiedLabel = byTestId("copy-key").textContent;
-    vi.advanceTimersByTime(3100);
+    // The button flips to the localized "copied" label on the COPIED
+    // target only, and the reset happens at the 3 s mark (2999 ms keeps
+    // it, 3100 ms clears it — the duration is pinned, not just "some
+    // timer exists").
+    expect(byTestId("copy-key").textContent?.trim()).toBe("Copied!");
+    expect(byTestId("copy-config").textContent?.trim()).not.toBe("Copied!");
+    vi.advanceTimersByTime(2999);
     await flushPromises();
-    expect(byTestId("copy-key").textContent).not.toBe(copiedLabel);
+    expect(byTestId("copy-key").textContent?.trim()).toBe("Copied!");
+    vi.advanceTimersByTime(1);
+    await flushPromises();
+    expect(byTestId("copy-key").textContent?.trim()).not.toBe("Copied!");
     vi.useRealTimers();
   });
 
@@ -139,6 +147,9 @@ describe("KeysView clipboard", () => {
     await clickTestId("copy-prompt");
     const prompt = writeText.mock.calls.at(-1)?.[0] as string;
     expect(prompt).toContain("i0721-fedcba9876543210fedcba9876543210");
+    // The prompt payload is NOT the config payload (the two buttons must
+    // not copy the same template).
+    expect(prompt).not.toBe(config);
     vi.useRealTimers();
   });
 
@@ -149,8 +160,35 @@ describe("KeysView clipboard", () => {
     await openCreateCard(wrapper);
 
     await clickTestId("copy-key");
-    const alert = byTestId("copy-failed");
-    expect(alert.textContent?.length).toBeGreaterThan(0);
+    // The rendered message is the localized copyFailed string, and the
+    // button is NOT left showing the success label.
+    expect(byTestId("copy-failed").textContent?.trim()).toBe(
+      "Copy failed — select the text and copy it manually.",
+    );
+    expect(byTestId("copy-key").textContent?.trim()).not.toBe("Copied!");
+    vi.useRealTimers();
+  });
+
+  it("clears a stale success mark when a later copy fails", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const writeText = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("denied"));
+    vi.spyOn(navigator.clipboard, "writeText").mockImplementation(writeText);
+    await openCreateCard(wrapper);
+
+    await clickTestId("copy-key");
+    expect(byTestId("copy-key").textContent?.trim()).toBe("Copied!");
+    // Second copy (config) fails: the success mark on the key button must
+    // not survive, and the failure must be visible.
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+      new Error("denied"),
+    );
+    await clickTestId("copy-config");
+    expect(byTestId("copy-key").textContent?.trim()).not.toBe("Copied!");
+    expect(byTestId("copy-failed").textContent?.length).toBeGreaterThan(0);
     vi.useRealTimers();
   });
 });

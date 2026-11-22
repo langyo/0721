@@ -783,3 +783,31 @@ async fn pg_find_share_by_file_is_owner_scoped() {
     cleanup_user(&store, owner.id).await;
     cleanup_user(&store, other.id).await;
 }
+
+/// The api_keys scopes column is JSONB; the write path wraps a JSON
+/// string and the read path unwraps it. Pin the round trip so a future
+/// scopes reader cannot inherit a silent double-encode (the review
+/// flagged the asymmetry: `Value::String(..)` in, `.to_string()` out).
+#[tokio::test]
+async fn pg_api_key_scopes_round_trip() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let record = i0721_proto::ApiKeyRecord {
+        id: uuid::Uuid::new_v4(),
+        user_id: user.id,
+        name: "scopes-key".to_owned(),
+        key_prefix: "i0721-abcd".to_owned(),
+        key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
+        scopes: "[]".to_owned(),
+        last_used_at: None,
+        revoked_at: None,
+        created_at: jiff::Timestamp::now(),
+    };
+    store.create_api_key(&record).await.expect("insert");
+    let rows = store.list_api_keys(user.id).await.expect("list");
+    assert_eq!(rows.len(), 1, "one key listed");
+    assert_eq!(rows[0].id, record.id);
+    let scopes: serde_json::Value =
+        serde_json::from_str(&rows[0].scopes).expect("scopes is valid JSON");
+    assert_eq!(scopes, serde_json::json!([]), "scopes round-trips as []");
+}

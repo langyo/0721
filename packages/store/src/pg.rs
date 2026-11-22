@@ -483,7 +483,12 @@ impl Store for PgStore {
             name: record.name.clone(),
             key_prefix: record.key_prefix.clone(),
             key_hash: record.key_hash.clone(),
-            scopes: serde_json::Value::String(record.scopes.clone()),
+            // Parse the record's JSON text into a REAL JSONB value:
+            // wrapping the string would store a JSON *string* and the
+            // read path's `.to_string()` would then hand back a quoted
+            // copy (the double-encode the round-trip test pins).
+            scopes: serde_json::from_str(&record.scopes)
+                .unwrap_or_else(|_| serde_json::Value::Array(Vec::new())),
             last_used_at: record.last_used_at.clone(),
             revoked_at: record.revoked_at.clone(),
             created_at: record.created_at,
