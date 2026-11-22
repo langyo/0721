@@ -11,6 +11,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import SettingsDialog from "@/components/SettingsDialog.vue";
+import ConnectionStatusTag from "@/components/ConnectionStatusTag.vue";
 import { provideActionBar } from "@/composables/useActionBar";
 import { LOCALE_OPTIONS, setLocale } from "@/i18n";
 import { useAuthStore } from "@/stores/auth";
@@ -122,6 +123,11 @@ const localeOptions = LOCALE_OPTIONS.value.map((o) => ({ code: o.code, label: o.
         <component :is="view" />
       </RouterView>
     </main>
+    <footer class="app-shell-footer">
+      <!-- The bottom-left connection light: the transport probe (live WS
+           state + heartbeat latency); tap-to-retry rides the probe. -->
+      <ConnectionStatusTag source="transport" />
+    </footer>
     <SettingsDialog v-model="settingsOpen" @logout="handleLogout" />
   </div>
 </template>
@@ -151,5 +157,12 @@ const localeOptions = LOCALE_OPTIONS.value.map((o) => ({ code: o.code, label: o.
   max-width: 72rem;
   margin: 0 auto;
   padding: 1rem 1rem 3rem;
+}
+
+.app-shell-footer {
+  position: fixed;
+  inset-inline-start: 0.75rem;
+  inset-block-end: 0.75rem;
+  z-index: 20;
 }
 </style>

@@ -16,6 +16,9 @@ importers:
       '@celestia-island/hikari':
         specifier: ^0.55
         version: 0.55.458(@types/three@0.185.4)(pinia@4.1.0(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.46(typescript@6.0.3)))(three@0.185.1)(vue@3.5.46(typescript@6.0.3))
+      '@celestia-island/plana-rpc-client':
+        specifier: ^0.1
+        version: 0.1.17
       '@vueuse/core':
         specifier: ^15
         version: 15.0.0(vue@3.5.46(typescript@6.0.3))
@@ -271,6 +274,9 @@ packages:
     peerDependenciesMeta:
       pinia:
         optional: true
+
+  '@celestia-island/plana-rpc-client@0.1.17':
+    resolution: {integrity: sha512-+c25Y0SLJYEh1Rq8knwyPa/MZF58c3tHP+vyfS2liS7Zro8U+/QBxGkUD37xvKX8pHK3yKAX5g/F8WpW2yHwOA==}
 
   '@celestia-island/tairitsu-host-client@0.1.0':
     resolution: {integrity: sha512-Ge8jNk5B8n1vfHyJBrhrAUKgaFIhWDvh40JrN/awgvJ0iXPO1BABCnj02bsjT+FYLg8QRCBt6jeTJXrI51OOtw==}
@@ -1633,6 +1639,10 @@ snapshots:
       vue: 3.5.46(typescript@6.0.3)
     optionalDependencies:
       pinia: 4.1.0(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.46(typescript@6.0.3))
+
+  '@celestia-island/plana-rpc-client@0.1.17':
+    dependencies:
+      '@celestia-island/tairitsu-transport': 0.2.0
 
   '@celestia-island/tairitsu-host-client@0.1.0': {}
 

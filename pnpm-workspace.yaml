@@ -12,8 +12,12 @@ minimumReleaseAgeExclude:
   # The first-party family packages are consumed straight off the registry
   # and republish frequently; the release-age gate otherwise silently
   # resolves their previous (stale) versions right after each publish.
-  # This repo consumes hikari only (kirino/plana-* join with their waves).
+  # This repo consumes hikari + the plana RPC client (kirino joins with
+  # its wave).
   - '@celestia-island/hikari'
+  # The RPC client's own first-party transport dep (release-age would
+  # otherwise resolve its previous version after each publish).
+  - '@celestia-island/tairitsu-transport'
   # hikari's resolved version pulls these first-party runtime deps; both
   # were first published same-day, so the exact-version pin is what
   # exempts the lockfile verification pass (the bare hikari entry above

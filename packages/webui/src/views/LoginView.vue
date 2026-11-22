@@ -1,5 +1,7 @@
 <script setup lang="ts">
+
 import { HkSignInCard } from "@celestia-island/hikari";
+import ConnectionStatusTag from "@/components/ConnectionStatusTag.vue";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -54,6 +56,11 @@ async function onSubmit(username: string, password: string) {
       />
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
     </div>
+    <!-- Sessionless surface: the health probe + the idle (gray) light —
+         a WS probe here would hang red forever (no token yet). -->
+    <div class="login-status">
+      <ConnectionStatusTag source="health" idle />
+    </div>
   </div>
 </template>
 
@@ -84,5 +91,12 @@ async function onSubmit(username: string, password: string) {
   color: rgb(220 38 38);
   font-size: 0.875rem;
   text-align: center;
+}
+
+.login-status {
+  position: fixed;
+  inset-inline-start: 0.75rem;
+  inset-block-end: 0.75rem;
+  z-index: 20;
 }
 </style>

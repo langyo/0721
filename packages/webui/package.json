@@ -20,7 +20,8 @@
     "pinia": "^4",
     "vue": "^3",
     "vue-i18n": "^11",
-    "vue-router": "^5"
+    "vue-router": "^5",
+    "@celestia-island/plana-rpc-client": "^0.1"
   },
   "devDependencies": {
     "@types/node": "^26",
