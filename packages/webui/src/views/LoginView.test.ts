@@ -43,16 +43,17 @@ function typeInto(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-async function mountView() {
+async function mountView(query: Record<string, string> = {}) {
   const i18n = createAppI18n();
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: "/", name: "portal", component: { template: "<div/>" } },
+      { path: "/files", name: "files", component: { template: "<div/>" } },
       { path: "/login", name: "login", component: LoginView },
     ],
   });
-  await router.push("/login");
+  await router.push({ path: "/login", query });
   const wrapper = mount(LoginView, {
     global: { plugins: [i18n, router, createPinia()] },
   });
@@ -170,8 +171,8 @@ describe("LoginView dual-mode (family login panel)", () => {
     });
     const { wrapper } = await mountView();
     await flushPromises();
-    // No credential inputs and no password card…
-    expect(wrapper.find(".s-auth-credentials").exists()).toBe(false);
+    // No credential inputs at all — the card is not mounted under a
+    // password-off descriptor (the switch is what mounts it).
     expect(wrapper.findAll("input").length).toBe(0);
     // …one full-width provider row instead.
     expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
@@ -219,6 +220,60 @@ describe("LoginView dual-mode (family login panel)", () => {
     // then the honest labels for that choice.
     expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(2);
     expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
+  });
+});
+
+describe("LoginView sso lane (family panel)", () => {
+  it("navigates the whole page from the sso row when the password lane is off", async () => {
+    // The password-off lane has exactly ONE handler — the sso row — so a
+    // wrong URL there would ship silently without this pin.
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+    const original = window.location.href;
+    const hrefSetter = vi.fn();
+    try {
+      Object.defineProperty(window.location, "href", {
+        set: (v: string) => hrefSetter(v),
+        get: () => original,
+        configurable: true,
+      });
+      await wrapper.find(".hk-auth-channel-row").trigger("click");
+      expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
+    } finally {
+      Object.defineProperty(window.location, "href", {
+        value: original,
+        writable: true,
+        configurable: true,
+      });
+    }
+  });
+
+  it("falls back to the password lane when the descriptor is unreachable", async () => {
+    // A rejected descriptor must not render a dead page: the classic
+    // card is the fallback (the server still enforces the switch).
+    loginMethodsMock.mockRejectedValue(new Error("boom"));
+    const { wrapper } = await mountView();
+    await flushPromises();
+    expect(wrapper.findAll("input").length).toBeGreaterThan(0);
+    expect(wrapper.find(".hk-auth-channel-row").exists()).toBe(false);
+  });
+});
+
+describe("LoginView redirect handling", () => {
+  it("honours the redirect query after a successful sign-in", async () => {
+    loginMock.mockResolvedValue(session);
+    const { wrapper, router } = await mountView({ redirect: "/files" });
+    const inputs = wrapper.findAll("input");
+    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
+    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
+    await flushPromises();
+    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe("/files");
   });
 });
 

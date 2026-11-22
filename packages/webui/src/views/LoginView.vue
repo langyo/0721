@@ -19,9 +19,11 @@ import type { LoginMethods } from "@/types";
 /**
  * The sign-in face, driven by `GET /api/v1/auth/login-methods`.
  *
- * It is the FAMILY panel (`HkLoginFlow`), not a hand-built card: the
- * same component chest, the ERP faces and the mail console mount. The
- * descriptor becomes the channel list —
+ * It is hikari's `HkLoginFlow` panel, not a hand-built card, so the
+ * channel/step semantics (and the copy rules the component spells out in
+ * its own docstring — provider names belong on rows, never in the channel
+ * segment) come from the upstream component rather than from this file.
+ * The descriptor becomes the channel list —
  *
  *  - the password kill-switch on  → one credentials channel (the
  *    account + password card);
@@ -30,9 +32,9 @@ import type { LoginMethods } from "@/types";
  *    redirect entry (the flow plants an httpOnly state cookie and 302s,
  *    which a fetch cannot carry through).
  *
- * The segment group renders only for two or more channels, so a
- * deployment configured for Celestia ID alone shows exactly one panel
- * with no dead segment — the shape the kill-switch is meant to produce.
+ * The segment group renders only for two or more channels (the
+ * component's own rule), so a deployment configured for Celestia ID
+ * alone shows exactly one panel with no segment at all.
  */
 
 const { t } = useI18n();
