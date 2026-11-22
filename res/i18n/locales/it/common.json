@@ -25,7 +25,7 @@
     "add": "Aggiungi",
     "remove": "Rimuovi"
   },
-  "common": {
+  "status": {
     "loading": "Caricamento",
     "error": "Qualcosa è andato storto",
     "empty": "Ancora niente qui",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "Accedi",
     "subtitle": "Continua su 0721",
-    "username": "Nome utente",
-    "password": "Password",
-    "submit": "Accedi",
     "failed": "Nome utente o password non validi"
   },
   "portal": {

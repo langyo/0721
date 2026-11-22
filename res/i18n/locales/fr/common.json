@@ -25,7 +25,7 @@
     "add": "Ajouter",
     "remove": "Retirer"
   },
-  "common": {
+  "status": {
     "loading": "Chargement",
     "error": "Une erreur est survenue",
     "empty": "Rien ici pour l'instant",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "Connexion",
     "subtitle": "Continuer vers 0721",
-    "username": "Nom d'utilisateur",
-    "password": "Mot de passe",
-    "submit": "Se connecter",
     "failed": "Nom d'utilisateur ou mot de passe incorrect"
   },
   "portal": {

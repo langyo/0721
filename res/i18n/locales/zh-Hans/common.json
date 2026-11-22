@@ -25,7 +25,7 @@
     "add": "添加",
     "remove": "移除"
   },
-  "common": {
+  "status": {
     "loading": "加载中",
     "error": "出了点问题",
     "empty": "这里还什么都没有",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "登录",
     "subtitle": "继续前往 0721",
-    "username": "用户名",
-    "password": "密码",
-    "submit": "登录",
     "failed": "用户名或密码错误"
   },
   "portal": {

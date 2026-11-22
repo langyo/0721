@@ -25,7 +25,7 @@
     "add": "Add",
     "remove": "Remove"
   },
-  "common": {
+  "status": {
     "loading": "Loading",
     "error": "Something went wrong",
     "empty": "Nothing here yet",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "Sign in",
     "subtitle": "Continue to 0721",
-    "username": "Username",
-    "password": "Password",
-    "submit": "Sign in",
     "failed": "Invalid username or password"
   },
   "portal": {

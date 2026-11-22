@@ -25,7 +25,7 @@
     "add": "추가",
     "remove": "제거"
   },
-  "common": {
+  "status": {
     "loading": "로딩 중",
     "error": "문제가 발생했습니다",
     "empty": "아직 아무것도 없습니다",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "로그인",
     "subtitle": "0721으로 이동",
-    "username": "사용자 이름",
-    "password": "비밀번호",
-    "submit": "로그인",
     "failed": "사용자 이름 또는 비밀번호가 틀렸습니다"
   },
   "portal": {

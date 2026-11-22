@@ -127,7 +127,10 @@ LOCALES_DIR = ROOT / "res" / "i18n" / "locales"
 SRC_DIR = ROOT / "packages" / "webui" / "src"
 
 BASELINE_LANGS: tuple[str, ...] = ("en", "zh-Hans")
-SCAN_EXTS: tuple[str, ...] = (".ts", ".tsx")
+# This webui's views are Vue SFCs (.vue) — the t() call sites live in
+# <script setup> blocks and template interpolations, so .vue rides the
+# scan set alongside the .ts/.tsx the chest original covered.
+SCAN_EXTS: tuple[str, ...] = (".ts", ".tsx", ".vue")
 SCAN_SKIP_DIRS: set[str] = {"node_modules", "dist", ".cache", "locales"}
 DEFAULT_ALLOWLIST = ROOT / "scripts" / "i18n_unused_allowlist.txt"
 

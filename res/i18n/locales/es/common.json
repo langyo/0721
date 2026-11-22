@@ -25,7 +25,7 @@
     "add": "Añadir",
     "remove": "Quitar"
   },
-  "common": {
+  "status": {
     "loading": "Cargando",
     "error": "Algo salió mal",
     "empty": "Aún no hay nada",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "Iniciar sesión",
     "subtitle": "Continuar a 0721",
-    "username": "Nombre de usuario",
-    "password": "Contraseña",
-    "submit": "Iniciar sesión",
     "failed": "Nombre de usuario o contraseña incorrectos"
   },
   "portal": {

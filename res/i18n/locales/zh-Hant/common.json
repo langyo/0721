@@ -25,7 +25,7 @@
     "add": "新增",
     "remove": "移除"
   },
-  "common": {
+  "status": {
     "loading": "載入中",
     "error": "發生錯誤",
     "empty": "這裡還沒有內容",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "登入",
     "subtitle": "前往 0721",
-    "username": "用戶名",
-    "password": "密碼",
-    "submit": "登入",
     "failed": "用戶名或密碼錯誤"
   },
   "portal": {

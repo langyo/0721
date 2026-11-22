@@ -25,7 +25,7 @@
     "add": "Hinzufügen",
     "remove": "Entfernen"
   },
-  "common": {
+  "status": {
     "loading": "Laden",
     "error": "Etwas ist schiefgelaufen",
     "empty": "Noch nichts hier",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "Anmelden",
     "subtitle": "Weiter zu 0721",
-    "username": "Benutzername",
-    "password": "Passwort",
-    "submit": "Anmelden",
     "failed": "Ungültiger Benutzername oder falsches Passwort"
   },
   "portal": {

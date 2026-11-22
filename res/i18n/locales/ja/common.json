@@ -25,7 +25,7 @@
     "add": "追加",
     "remove": "削除"
   },
-  "common": {
+  "status": {
     "loading": "読み込み中",
     "error": "問題が発生しました",
     "empty": "まだ何もありません",
@@ -37,9 +37,6 @@
   "auth": {
     "title": "ログイン",
     "subtitle": "0721 へ続行",
-    "username": "ユーザー名",
-    "password": "パスワード",
-    "submit": "ログイン",
     "failed": "ユーザー名またはパスワードが違います"
   },
   "portal": {

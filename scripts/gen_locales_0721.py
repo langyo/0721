@@ -35,15 +35,14 @@ T["en"] = {
         "loadMore": "Load more", "logout": "Sign out", "add": "Add",
         "remove": "Remove",
     },
-    "common": {
+    "status": {
         "loading": "Loading", "error": "Something went wrong",
         "empty": "Nothing here yet", "admin": "Admin", "member": "Member",
         "total": "{count} in total", "version": "Version {version}",
     },
     "auth": {
         "title": "Sign in", "subtitle": "Continue to 0721",
-        "username": "Username", "password": "Password",
-        "submit": "Sign in", "failed": "Invalid username or password",
+        "failed": "Invalid username or password",
     },
     "portal": {
         "title": "Portal",
@@ -94,15 +93,14 @@ T["zh-Hans"] = {
         "loadMore": "加载更多", "logout": "退出登录", "add": "添加",
         "remove": "移除",
     },
-    "common": {
+    "status": {
         "loading": "加载中", "error": "出了点问题",
         "empty": "这里还什么都没有", "admin": "管理员", "member": "用户",
         "total": "共 {count} 项", "version": "版本 {version}",
     },
     "auth": {
         "title": "登录", "subtitle": "继续前往 0721",
-        "username": "用户名", "password": "密码",
-        "submit": "登录", "failed": "用户名或密码错误",
+        "failed": "用户名或密码错误",
     },
     "portal": {
         "title": "图片",
@@ -152,15 +150,14 @@ T["zh-Hant"] = {
         "loadMore": "載入更多", "logout": "登出", "add": "新增",
         "remove": "移除",
     },
-    "common": {
+    "status": {
         "loading": "載入中", "error": "發生錯誤",
         "empty": "這裡還沒有內容", "admin": "管理員", "member": "用戶",
         "total": "共 {count} 項", "version": "版本 {version}",
     },
     "auth": {
         "title": "登入", "subtitle": "前往 0721",
-        "username": "用戶名", "password": "密碼",
-        "submit": "登入", "failed": "用戶名或密碼錯誤",
+        "failed": "用戶名或密碼錯誤",
     },
     "portal": {
         "title": "圖片",
@@ -211,15 +208,14 @@ T["ja"] = {
         "close": "閉じる", "loadMore": "さらに読み込む", "logout": "ログアウト",
         "add": "追加", "remove": "削除",
     },
-    "common": {
+    "status": {
         "loading": "読み込み中", "error": "問題が発生しました",
         "empty": "まだ何もありません", "admin": "管理者", "member": "ユーザー",
         "total": "全 {count} 件", "version": "バージョン {version}",
     },
     "auth": {
         "title": "ログイン", "subtitle": "0721 へ続行",
-        "username": "ユーザー名", "password": "パスワード",
-        "submit": "ログイン", "failed": "ユーザー名またはパスワードが違います",
+        "failed": "ユーザー名またはパスワードが違います",
     },
     "portal": {
         "title": "画像",
@@ -270,15 +266,14 @@ T["ko"] = {
         "close": "닫기", "loadMore": "더 보기", "logout": "로그아웃",
         "add": "추가", "remove": "제거",
     },
-    "common": {
+    "status": {
         "loading": "로딩 중", "error": "문제가 발생했습니다",
         "empty": "아직 아무것도 없습니다", "admin": "관리자", "member": "사용자",
         "total": "총 {count}개", "version": "버전 {version}",
     },
     "auth": {
         "title": "로그인", "subtitle": "0721으로 이동",
-        "username": "사용자 이름", "password": "비밀번호",
-        "submit": "로그인", "failed": "사용자 이름 또는 비밀번호가 틀렸습니다",
+        "failed": "사용자 이름 또는 비밀번호가 틀렸습니다",
     },
     "portal": {
         "title": "이미지",
@@ -329,15 +324,14 @@ T["de"] = {
         "close": "Schließen", "loadMore": "Mehr laden", "logout": "Abmelden",
         "add": "Hinzufügen", "remove": "Entfernen",
     },
-    "common": {
+    "status": {
         "loading": "Laden", "error": "Etwas ist schiefgelaufen",
         "empty": "Noch nichts hier", "admin": "Admin", "member": "Benutzer",
         "total": "{count} insgesamt", "version": "Version {version}",
     },
     "auth": {
         "title": "Anmelden", "subtitle": "Weiter zu 0721",
-        "username": "Benutzername", "password": "Passwort",
-        "submit": "Anmelden", "failed": "Ungültiger Benutzername oder falsches Passwort",
+        "failed": "Ungültiger Benutzername oder falsches Passwort",
     },
     "portal": {
         "title": "Bilder",
@@ -388,15 +382,14 @@ T["fr"] = {
         "close": "Fermer", "loadMore": "Charger plus", "logout": "Se déconnecter",
         "add": "Ajouter", "remove": "Retirer",
     },
-    "common": {
+    "status": {
         "loading": "Chargement", "error": "Une erreur est survenue",
         "empty": "Rien ici pour l'instant", "admin": "Admin", "member": "Utilisateur",
         "total": "{count} au total", "version": "Version {version}",
     },
     "auth": {
         "title": "Connexion", "subtitle": "Continuer vers 0721",
-        "username": "Nom d'utilisateur", "password": "Mot de passe",
-        "submit": "Se connecter", "failed": "Nom d'utilisateur ou mot de passe incorrect",
+        "failed": "Nom d'utilisateur ou mot de passe incorrect",
     },
     "portal": {
         "title": "Images",
@@ -447,15 +440,13 @@ T["es"] = {
         "close": "Cerrar", "loadMore": "Cargar más", "logout": "Cerrar sesión",
         "add": "Añadir", "remove": "Quitar",
     },
-    "common": {
+    "status": {
         "loading": "Cargando", "error": "Algo salió mal",
         "empty": "Aún no hay nada", "admin": "Administrador", "member": "Usuario",
         "total": "{count} en total", "version": "Versión {version}",
     },
     "auth": {
         "title": "Iniciar sesión", "subtitle": "Continuar a 0721",
-        "username": "Nombre de usuario", "password": "Contraseña",
-        "submit": "Iniciar sesión",
         "failed": "Nombre de usuario o contraseña incorrectos",
     },
     "portal": {
@@ -507,15 +498,14 @@ T["it"] = {
         "close": "Chiudi", "loadMore": "Carica altro", "logout": "Esci",
         "add": "Aggiungi", "remove": "Rimuovi",
     },
-    "common": {
+    "status": {
         "loading": "Caricamento", "error": "Qualcosa è andato storto",
         "empty": "Ancora niente qui", "admin": "Amministratore", "member": "Utente",
         "total": "{count} in totale", "version": "Versione {version}",
     },
     "auth": {
         "title": "Accedi", "subtitle": "Continua su 0721",
-        "username": "Nome utente", "password": "Password",
-        "submit": "Accedi", "failed": "Nome utente o password non validi",
+        "failed": "Nome utente o password non validi",
     },
     "portal": {
         "title": "Immagini",
@@ -566,15 +556,14 @@ T["pt"] = {
         "close": "Fechar", "loadMore": "Carregar mais", "logout": "Sair",
         "add": "Adicionar", "remove": "Remover",
     },
-    "common": {
+    "status": {
         "loading": "Carregando", "error": "Algo deu errado",
         "empty": "Nada por aqui ainda", "admin": "Administrador", "member": "Usuário",
         "total": "{count} no total", "version": "Versão {version}",
     },
     "auth": {
         "title": "Entrar", "subtitle": "Continuar para o 0721",
-        "username": "Nome de usuário", "password": "Senha",
-        "submit": "Entrar", "failed": "Nome de usuário ou senha inválidos",
+        "failed": "Nome de usuário ou senha inválidos",
     },
     "portal": {
         "title": "Imagens",
@@ -625,15 +614,14 @@ T["ru"] = {
         "close": "Закрыть", "loadMore": "Загрузить ещё", "logout": "Выйти",
         "add": "Добавить", "remove": "Убрать",
     },
-    "common": {
+    "status": {
         "loading": "Загрузка", "error": "Что-то пошло не так",
         "empty": "Здесь пока ничего нет", "admin": "Админ", "member": "Пользователь",
         "total": "Всего: {count}", "version": "Версия {version}",
     },
     "auth": {
         "title": "Вход", "subtitle": "Продолжить в 0721",
-        "username": "Имя пользователя", "password": "Пароль",
-        "submit": "Войти", "failed": "Неверное имя пользователя или пароль",
+        "failed": "Неверное имя пользователя или пароль",
     },
     "portal": {
         "title": "Изображения",
@@ -684,15 +672,13 @@ T["ar"] = {
         "close": "إغلاق", "loadMore": "تحميل المزيد", "logout": "تسجيل الخروج",
         "add": "إضافة", "remove": "إزالة",
     },
-    "common": {
+    "status": {
         "loading": "جارٍ التحميل", "error": "حدث خطأ ما",
         "empty": "لا يوجد شيء هنا بعد", "admin": "مدير", "member": "مستخدم",
         "total": "{count} في المجموع", "version": "الإصدار {version}",
     },
     "auth": {
         "title": "تسجيل الدخول", "subtitle": "المتابعة إلى 0721",
-        "username": "اسم المستخدم", "password": "كلمة المرور",
-        "submit": "تسجيل الدخول",
         "failed": "اسم المستخدم أو كلمة المرور غير صحيحة",
     },
     "portal": {
