@@ -352,6 +352,11 @@ async fn rpc_auth_flow_verify_refresh() {
         .to_str()
         .unwrap();
     assert!(cookie.starts_with("i0721-token="));
+    // The rotation carries the same attribute contract as the login
+    // (Lax always; Secure follows the request's scheme).
+    assert!(cookie.contains("SameSite=Lax"), "refresh: {cookie}");
+    assert!(!cookie.contains("Strict"), "refresh: {cookie}");
+    assert!(!cookie.contains("Secure"), "plain-http refresh: {cookie}");
 
     // Tampered token: the auth hook refuses the request outright.
     let tampered = format!("{token}x");
@@ -1612,7 +1617,12 @@ async fn logout_expires_the_cookie_and_kills_the_session() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     let cookie = response.headers().get(header::SET_COOKIE).unwrap();
-    assert!(cookie.to_str().unwrap().contains("Max-Age=0"));
+    let cleared = cookie.to_str().unwrap();
+    assert!(cleared.contains("Max-Age=0"));
+    // The clearing cookie carries the SAME attributes as the planted one
+    // — a mismatched Path/SameSite would leave the live cookie in place.
+    assert!(cleared.contains("SameSite=Lax"), "logout: {cleared}");
+    assert!(cleared.contains("HttpOnly"), "logout: {cleared}");
 
     let (status, _) = rpc(&state, &token, "auth.verify", serde_json::Value::Null).await;
     assert_eq!(
@@ -2088,6 +2098,11 @@ async fn oauth_end_to_end_against_a_local_stub_provider() {
         .find(|c| c.starts_with("i0721-token="))
         .expect("the OAuth login plants the session cookie");
     assert!(session.contains("HttpOnly"));
+    // The OAuth-planted session rides the same attribute contract.
+    assert!(
+        session.contains("SameSite=Lax"),
+        "oauth session cookie: {session}"
+    );
     // The flow cookie is cleared alongside.
     assert!(set_cookies
         .iter()
@@ -5979,4 +5994,24 @@ async fn session_cookie_is_lax_and_secure_only_over_https() {
     );
     let cookie = login_cookie(&pinned, None).await;
     assert!(cookie.contains("Secure"), "pinned always: {cookie}");
+}
+
+/// `I0721_COOKIE_SECURE` is validated at startup: a typo must refuse to
+/// start rather than silently degrade to `auto` (which is how a
+/// production https edge would end up with a non-Secure session cookie).
+#[tokio::test]
+async fn cookie_secure_rejects_an_unknown_value() {
+    let result = i0721_server::config::Config::from_env_with(|key| match key {
+        "I0721_DATABASE_URL" => Some("postgres://x/y".to_owned()),
+        "JWT_SECRET" => Some("s".to_owned()),
+        "I0721_COOKIE_SECURE" => Some("Secure".to_owned()),
+        _ => None,
+    });
+    match result {
+        Err(err) => assert!(
+            format!("{err}").contains("I0721_COOKIE_SECURE"),
+            "the error names the variable: {err}"
+        ),
+        Ok(_) => panic!("an unknown I0721_COOKIE_SECURE must refuse to start"),
+    }
 }

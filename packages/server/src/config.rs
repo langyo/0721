@@ -35,6 +35,9 @@ pub const BODY_LIMIT: usize = 16 * 1024 * 1024;
 /// Default first-boot admin password (README says it loudly: change it).
 pub const DEFAULT_SEED_ADMIN_PASSWORD: &str = "admin";
 
+/// Default for `I0721_COOKIE_SECURE`.
+pub const DEFAULT_COOKIE_SECURE: &str = "auto";
+
 /// Why the environment could not be turned into a [`Config`].
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -69,6 +72,12 @@ pub enum ConfigError {
     /// exception is localhost/127.0.0.1/::1 only).
     #[error("I0721_PUBLIC_ORIGIN `{value}` is not an absolute https origin (http only for localhost/127.0.0.1, no path, no userinfo)")]
     PublicOrigin {
+        /// The raw value.
+        value: String,
+    },
+    /// `I0721_COOKIE_SECURE` is not one of `auto` / `always` / `never`.
+    #[error("I0721_COOKIE_SECURE `{value}` is not one of auto, always, never")]
+    CookieSecure {
         /// The raw value.
         value: String,
     },
@@ -163,9 +172,8 @@ impl Config {
 
     /// Injection point so configuration mapping is testable without racing
     /// on process-global environment variables.
-    pub(crate) fn from_env_with(
-        lookup: impl Fn(&str) -> Option<String>,
-    ) -> Result<Self, ConfigError> {
+    #[doc(hidden)]
+    pub fn from_env_with(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
         let database_url = lookup("I0721_DATABASE_URL").ok_or(ConfigError::Missing {
             var: "I0721_DATABASE_URL",
         })?;
@@ -232,7 +240,21 @@ impl Config {
             upload_concurrency,
             log_filter,
             seed_admin_password,
-            cookie_secure: lookup("I0721_COOKIE_SECURE").unwrap_or_else(|| "auto".to_owned()),
+            cookie_secure: {
+                let value = lookup("I0721_COOKIE_SECURE")
+                    .unwrap_or_else(|| DEFAULT_COOKIE_SECURE.to_owned());
+                // Fail fast: a typo must not silently fall back to `auto`
+                // (that is how a production https edge ends up serving the
+                // session cookie without `Secure`).
+                match value.as_str() {
+                    "auto" | "always" | "never" => value,
+                    other => {
+                        return Err(ConfigError::CookieSecure {
+                            value: other.to_owned(),
+                        })
+                    }
+                }
+            },
             trusted_proxies,
             public_origin,
             storage_backend: lookup("I0721_STORAGE_BACKEND").unwrap_or_else(|| "local".to_owned()),
