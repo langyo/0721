@@ -496,31 +496,30 @@ impl Store for PgStore {
         name: &str,
         exclude: Option<Uuid>,
     ) -> Result<bool, StoreError> {
-        let cmd = Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: "SELECT COUNT(*) FROM files                    WHERE deleted_at IS NULL AND owner_id = $1                    AND COALESCE(parent_id::text, 'ROOT') = COALESCE($2::text, 'ROOT')                    AND name = $3 AND id <> $4"
-                .to_owned(),
-            params: vec![
-                Value::Uuid(owner_id.to_string()),
-                parent_id.map(|p| Value::Uuid(p.to_string())).unwrap_or(Value::Null),
-                Value::Text(name.to_owned()),
-                exclude.map(|e| Value::Uuid(e.to_string())).unwrap_or(Value::Uuid(Uuid::nil().to_string())),
-            ],
+        // Entity-layer read (the raw COALESCE SQL hit the driver's
+        // binary-decoding path for UUID params); the root/NULL folding
+        // that COALESCE expressed happens here in Rust.
+        let mut filter = FileColumn::DeletedAt
+            .is_null()
+            .into_inner()
+            .and(FileColumn::OwnerId.eq(owner_id).into_inner())
+            .and(FileColumn::Name.eq(name).into_inner());
+        filter = match parent_id {
+            Some(pid) => filter.and(FileColumn::ParentId.eq(pid).into_inner()),
+            None => filter.and(FileColumn::ParentId.is_null().into_inner()),
         };
-        let reply = self.executor.execute(&cmd).await?;
-        let Reply::Rows { rows, .. } = reply else {
-            return Err(StoreError::Db("expected rows from a COUNT".to_owned()));
+        if let Some(exclude_id) = exclude {
+            filter = filter.and(FileColumn::Id.ne(exclude_id).into_inner());
+        }
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(filter),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
         };
-        let hit = rows
-            .first()
-            .and_then(|row| row.iter().next())
-            .and_then(|v| match v {
-                Value::I64(n) => Some(*n > 0),
-                Value::I32(n) => Some(*n > 0),
-                _ => None,
-            })
-            .unwrap_or(false);
-        Ok(hit)
+        Ok(!self.query_all::<FileModel>(cmd).await?.is_empty())
     }
 
     async fn create_folder(
@@ -578,47 +577,47 @@ impl Store for PgStore {
     }
 
     async fn ancestor_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
-        let cmd = Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: "WITH RECURSIVE up(id, parent) AS (                    SELECT id, parent_id FROM files WHERE id = $1                    UNION ALL SELECT f.id, f.parent_id FROM files f                    JOIN up ON f.id = up.parent)                    SELECT parent FROM up WHERE parent IS NOT NULL"
-                .to_owned(),
-            params: vec![Value::Uuid(id.to_string())],
-        };
-        let reply = self.executor.execute(&cmd).await?;
-        let Reply::Rows { rows, .. } = reply else {
-            return Err(StoreError::Db(
-                "expected rows from the ancestor walk".to_owned(),
-            ));
-        };
-        Ok(rows
-            .iter()
-            .filter_map(|row| match row.iter().next() {
-                Some(Value::Uuid(u)) => Uuid::parse_str(u).ok(),
-                _ => None,
-            })
-            .collect())
+        // Iterative walk through the entity layer (the raw recursive
+        // CTE hits the driver's binary-decoding path for UUID columns).
+        let mut chain = Vec::new();
+        let mut cursor = id;
+        loop {
+            let Some(row) = self.get_file(cursor).await? else {
+                break;
+            };
+            let Some(parent) = row.parent_id else {
+                break;
+            };
+            chain.push(parent);
+            cursor = parent;
+        }
+        Ok(chain)
     }
 
     async fn subtree_live_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
-        let cmd = Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: "WITH RECURSIVE down(id) AS (                    SELECT id FROM files WHERE id = $1                    UNION ALL SELECT f.id FROM files f                    JOIN down ON f.parent_id = down.id                    WHERE f.deleted_at IS NULL)                    SELECT id FROM down"
-                .to_owned(),
-            params: vec![Value::Uuid(id.to_string())],
-        };
-        let reply = self.executor.execute(&cmd).await?;
-        let Reply::Rows { rows, .. } = reply else {
-            return Err(StoreError::Db(
-                "expected rows from the subtree walk".to_owned(),
-            ));
-        };
-        Ok(rows
-            .iter()
-            .filter_map(|row| match row.iter().next() {
-                Some(Value::Uuid(u)) => Uuid::parse_str(u).ok(),
-                _ => None,
-            })
-            .collect())
+        // Iterative BFS through the entity layer (see ancestor_ids).
+        let mut ids = vec![id];
+        let mut frontier = vec![id];
+        while let Some(current) = frontier.pop() {
+            let cmd = Command::Select {
+                table: FileModel::TABLE.to_owned(),
+                filter: Some(
+                    FileColumn::DeletedAt
+                        .is_null()
+                        .into_inner()
+                        .and(FileColumn::ParentId.eq(current).into_inner()),
+                ),
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                lock: None,
+            };
+            for child in self.query_all::<FileModel>(cmd).await? {
+                ids.push(child.id);
+                frontier.push(child.id);
+            }
+        }
+        Ok(ids)
     }
 
     async fn soft_delete_many(&self, ids: &[Uuid]) -> Result<u64, StoreError> {
