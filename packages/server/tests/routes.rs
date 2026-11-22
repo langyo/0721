@@ -5134,3 +5134,168 @@ async fn mcp_upload_records_configured_backend() {
         stub.mfs.lock().unwrap().keys()
     );
 }
+
+/// A key revoked AFTER the handshake kills the live session: the message
+/// lane re-checks the session's key, answers 401 naming the revocation
+/// and drops the entry, so the stream ends and the sessionId is dead.
+#[tokio::test]
+async fn mcp_revoked_key_kills_the_live_session() {
+    let (state, token) = test_state_with_token().await;
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "live-revoke"}),
+    )
+    .await;
+    let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
+    let key_id = envelope["result"]["id"].as_str().unwrap().to_owned();
+
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    // The session really is live BEFORE the revocation.
+    let (status, _) =
+        mcp_post_message(&state, &session_id, "initialize", serde_json::json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "a live session accepts a frame"
+    );
+    let frames = sse_read_until(&mut sse, "protocolVersion").await;
+    assert!(
+        frames.contains("\"result\""),
+        "the live session answered: {frames}"
+    );
+
+    // Revoke the key behind the session's back.
+    let (_, revoked) = rpc(
+        &state,
+        &token,
+        "keys.revoke",
+        serde_json::json!({"id": key_id}),
+    )
+    .await;
+    assert!(
+        revoked.get("result").is_some(),
+        "the revoke call succeeded: {revoked}"
+    );
+
+    // The next frame on the SAME session is refused: 401 whose body names
+    // the revocation (not the generic unknown-session answer).
+    let (status, body) =
+        mcp_post_message(&state, &session_id, "initialize", serde_json::json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the revoked key's live session is dead: {body}"
+    );
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("revoked"),
+        "the answer names the revocation: {body}"
+    );
+
+    // The entry is gone: a retry answers the generic unknown-session 401.
+    let (status, body) =
+        mcp_post_message(&state, &session_id, "initialize", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown"),
+        "the session left the table: {body}"
+    );
+
+    // And the SSE stream itself ends: the client cannot keep riding it.
+    // (A finished chunked body is NOT a TCP EOF — hyper keeps the
+    // connection for the next request — so the observable event is the
+    // response's terminating `0\r\n\r\n` chunk.)
+    assert!(
+        sse_read_to_end(&mut sse, std::time::Duration::from_secs(5)).await,
+        "the revoked key's SSE stream must end, not keep pinging"
+    );
+}
+
+/// Read to the end of the chunked response body (the `0\r\n\r\n`
+/// terminator) within the budget; `true` when the server finished the
+/// stream (or closed the socket) in time.
+///
+/// The terminator is matched WITHOUT its leading CRLF: the earlier
+/// `sse_read_until` reads already consumed the last data chunk's trailing
+/// CRLF, so a finished stream here reads exactly `"0\r\n\r\n"`.
+async fn sse_read_to_end(stream: &mut tokio::net::TcpStream, budget: std::time::Duration) -> bool {
+    use tokio::io::AsyncReadExt;
+    let mut acc: Vec<u8> = Vec::new();
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        if String::from_utf8_lossy(&acc).ends_with("0\r\n\r\n") {
+            return true;
+        }
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        let mut buf = [0u8; 8192];
+        match tokio::time::timeout(left, stream.read(&mut buf)).await {
+            Ok(Ok(0)) | Ok(Err(_)) => return true,
+            Ok(Ok(n)) => acc.extend_from_slice(&buf[..n]),
+            Err(_) => return false,
+        }
+    }
+}
+
+/// The disconnect hook: dropping the SSE body removes the session from
+/// the table immediately instead of squatting for the rest of the TTL.
+#[tokio::test]
+async fn mcp_session_leaves_the_table_on_disconnect() {
+    let (state, token) = test_state_with_token().await;
+    let api_key = mcp_api_key(&state, &token, "drop-key").await;
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/mcp/sse")
+                .header(header::AUTHORIZATION, format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Poll the first frame (the endpoint event) so the stream body — and
+    // with it the guard — is really alive, then drop it.
+    let mut frames = Box::pin(response.into_body().into_data_stream());
+    let first = futures::StreamExt::next(&mut frames)
+        .await
+        .expect("the endpoint frame")
+        .unwrap();
+    let text = String::from_utf8_lossy(&first).to_string();
+    assert!(
+        text.contains("event: endpoint"),
+        "the first frame is the endpoint event: {text}"
+    );
+    let session_id = session_id_of(&text);
+    drop(frames); // the client went away
+
+    // The session left the table with its stream: the message lane no
+    // longer knows it. (Without the guard it stays accepted until the
+    // TTL sweep.)
+    let (status, body) =
+        mcp_post_message(&state, &session_id, "initialize", serde_json::json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the session left the table with its stream: {body}"
+    );
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown"),
+        "{body}"
+    );
+}

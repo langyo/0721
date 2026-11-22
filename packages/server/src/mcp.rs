@@ -8,6 +8,13 @@
 //! - `POST /api/mcp/message?sessionId=` — 202; the JSON-RPC response is
 //!   pushed back through the corresponding SSE stream.
 //!
+//! Session lifecycle (the W7 hardening): a session is removed the moment
+//! its stream is dropped (`SessionGuard` — the disconnect hook), the
+//! stream ENDS at its `expires_at` instead of squatting on a zombie
+//! keepalive, and every message re-checks that the session's API key is
+//! still live — revoking a key kills the sessions it opened, not just
+//! future handshakes.
+//!
 //! The tool surface (five tools) rides the STORE's existing per-user
 //! permission face: no admin elevation, the key's owner is the acting
 //! user for every call. `upload_file` runs the SAME chain as the REST
@@ -17,7 +24,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
@@ -61,23 +68,32 @@ pub fn mask_api_key(key: &str) -> String {
     format!("{visible}****")
 }
 
-/// Verify an API key: hash → lookup → active check. The hash lookup is
-/// an indexed equality — timing leaks nothing about which key matched
-/// (all non-matches are the same branch); the comparison itself is the
-/// SHA-256 digest, not the key, so constant-time comparison of the
-/// digest is unnecessary (the lookup key IS the digest).
+/// The live-key lookup: hash → non-revoked row. Side-effect free — the
+/// handshake adds the last-used refresh, the per-message re-check
+/// deliberately does not (one write per SSE frame would be noise).
+/// The hash lookup is an indexed equality — timing leaks nothing about
+/// which key matched (all non-matches are the same branch); the
+/// comparison itself is the SHA-256 digest, not the key, so constant-time
+/// comparison of the digest is unnecessary (the lookup key IS the digest).
+async fn lookup_live_key(
+    state: &AppState,
+    key_hash: &str,
+) -> Result<i0721_proto::ApiKeyRecord, ApiError> {
+    state
+        .store
+        .find_api_key_by_hash(key_hash)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::unauthorized("invalid API key"))
+}
+
+/// Verify an API key at the handshake: the live lookup plus a best-effort
+/// `last_used_at` refresh (spawned, never blocks the call).
 pub(crate) async fn verify_api_key(
     state: &AppState,
     raw_key: &str,
 ) -> Result<i0721_proto::ApiKeyRecord, ApiError> {
-    let hash = hash_api_key(raw_key);
-    let record = state
-        .store
-        .find_api_key_by_hash(&hash)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::unauthorized("invalid API key"))?;
-    // Best-effort refresh (never blocks the call).
+    let record = lookup_live_key(state, &hash_api_key(raw_key)).await?;
     let store = state.store.clone();
     let id = record.id;
     tokio::spawn(async move {
@@ -89,33 +105,109 @@ pub(crate) async fn verify_api_key(
 // ── SSE session management ─────────────────────────────────────────────
 
 struct McpSession {
-    /// The authenticated user.
+    /// The authenticated user (the key owner at handshake time).
     user_id: Uuid,
+    /// The HASH of the key that opened this session — the re-check handle.
+    ///
+    /// Why the hash and not `api_key_id` + a new `get_api_key(id)` store
+    /// method: the hash is already the unique-indexed lookup key
+    /// (`find_api_key_by_hash`), and that query already filters revoked
+    /// rows — so the re-check needs NO new store surface, no schema
+    /// change and no second revocation predicate to keep in sync. It is
+    /// also no more sensitive than the database row, which stores exactly
+    /// this digest. The plaintext key never enters the session.
+    key_hash: String,
     /// The response channel (SSE writes).
     tx: mpsc::Sender<String>,
-    /// Last activity (TTL pruning).
-    #[allow(dead_code)]
-    last_active: std::time::Instant,
+    /// Hard TTL end for BOTH sides: the stream stops here and the table
+    /// stops re-admitting it here (no sliding window — chest-matched).
+    expires_at: Instant,
 }
 
 /// In-memory session table (bounded by SESSION_CAP; pruned on insert).
+///
+/// The lock is a `std::sync::Mutex`, not `tokio`'s: every critical
+/// section is a few HashMap operations with no `.await` inside, and the
+/// synchronous `Drop` hook below MUST be able to take it (a `tokio` lock
+/// cannot be acquired from a `Drop`).
 #[derive(Clone)]
 pub struct McpSessions {
-    inner: std::sync::Arc<tokio::sync::Mutex<HashMap<String, Arc<McpSession>>>>,
+    inner: Arc<std::sync::Mutex<HashMap<String, Arc<McpSession>>>>,
 }
 
 impl McpSessions {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            inner: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Borrow the table. Poisoning only means a panic unwound while the
+    /// map was borrowed; the map itself is still structurally sound, so
+    /// recover it instead of cascading the panic into every later session.
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<McpSession>>> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Register a session. `false` when the cap is already reached (the
+    /// caller answers 429). Expired entries are reclaimed here — there is
+    /// no background sweeper: the streams end themselves at `expires_at`,
+    /// and this sweep only catches holders that vanished without a Drop.
+    fn insert(&self, session_id: String, session: Arc<McpSession>) -> bool {
+        let mut sessions = self.lock();
+        let now = Instant::now();
+        sessions.retain(|_, s| s.expires_at > now);
+        if sessions.len() >= SESSION_CAP {
+            return false;
+        }
+        sessions.insert(session_id, session);
+        true
+    }
+
+    /// One live session (a clone of the `Arc` — the caller drops the lock
+    /// before it awaits anything). An entry past its `expires_at` is dead
+    /// even when nothing has swept it yet: the TTL is enforced HERE as
+    /// well as on the stream, so a client that lost its stream cannot
+    /// keep POSTing against a table entry the sweep has not reached.
+    fn get(&self, session_id: &str) -> Option<Arc<McpSession>> {
+        let sessions = self.lock();
+        let session = sessions.get(session_id)?;
+        (session.expires_at > Instant::now()).then(|| Arc::clone(session))
+    }
+
+    /// Drop a session from the table (the Drop hook + the revocation
+    /// path). Idempotent: a missing entry is not an error.
+    fn remove(&self, session_id: &str) {
+        self.lock().remove(session_id);
     }
 }
 
 impl Default for McpSessions {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The disconnect hook, and the ONLY reliable one.
+///
+/// This guard is a local INSIDE the stream body, so it dies exactly when
+/// the body does: the client goes away → axum drops the response body →
+/// the `async_stream` generator is dropped → the guard drops → the
+/// session leaves the table immediately instead of squatting until the
+/// next insert's sweep. (The chest precedent wraps the stream in a
+/// `Drop` impl; a guard local is the same hook without a manual `Stream`
+/// impl to keep in sync.)
+struct SessionGuard {
+    session_id: String,
+    sessions: McpSessions,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.sessions.remove(&self.session_id);
     }
 }
 
@@ -140,41 +232,61 @@ pub async fn sse(State(state): State<AppState>, headers: HeaderMap) -> Response 
                 .into_response()
         }
     };
+    // The handle the message lane re-verifies this session against.
+    let key_hash = hash_api_key(raw_key);
 
     let session_id = Uuid::new_v4().to_string();
     let (tx, mut rx) = mpsc::channel::<String>(64);
+    let expires_at = Instant::now() + SESSION_TTL;
 
     // Register the session.
-    {
-        let mut sessions = state.mcp_sessions.inner.lock().await;
-        // Prune expired + enforce cap.
-        sessions.retain(|_, s| s.last_active.elapsed() < SESSION_TTL);
-        if sessions.len() >= SESSION_CAP {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                [(header::CONTENT_TYPE, "application/json")],
-                r#"{"error":"session limit reached"}"#,
-            )
-                .into_response();
-        }
-        sessions.insert(
-            session_id.clone(),
-            Arc::new(McpSession {
-                user_id: key_record.user_id,
-                tx: tx.clone(),
-                last_active: std::time::Instant::now(),
-            }),
-        );
+    let registered = state.mcp_sessions.insert(
+        session_id.clone(),
+        Arc::new(McpSession {
+            user_id: key_record.user_id,
+            key_hash,
+            tx: tx.clone(),
+            expires_at,
+        }),
+    );
+    if !registered {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"error":"session limit reached"}"#,
+        )
+            .into_response();
     }
+
+    // The guard and the table handle are cloned OUT of `state` so the
+    // stream body owns them for its whole life (it must be `'static`).
+    let sessions = state.mcp_sessions.clone();
+    let guard_id = session_id.clone();
 
     // SSE stream.
     let stream = async_stream::stream! {
+        // The disconnect hook: dropped with the body, i.e. the moment the
+        // client goes away.
+        let _guard = SessionGuard {
+            session_id: guard_id,
+            sessions,
+        };
         // First frame: the endpoint event.
         yield Ok::<_, std::convert::Infallible>(axum::response::sse::Event::default()
             .event("endpoint")
             .data(format!("/api/mcp/message?sessionId={session_id}")));
         // Keepalive + message pump.
         loop {
+            // TTL enforcement at the TOP of every iteration, not only on
+            // the keepalive tick: a session that keeps receiving frames
+            // abandons each fresh `sleep` before it elapses, so a check
+            // living in the sleep branch would never run for a busy
+            // session. Here it runs once per frame and once per ping (at
+            // most KEEPALIVE late), and the stream ENDS rather than
+            // pinging a zombie until the client notices.
+            if Instant::now() >= expires_at {
+                break;
+            }
             tokio::select! {
                 _ = tokio::time::sleep(KEEPALIVE) => {
                     yield Ok(axum::response::sse::Event::default().comment("ping"));
@@ -184,6 +296,8 @@ pub async fn sse(State(state): State<AppState>, headers: HeaderMap) -> Response 
                         Some(data) => yield Ok(axum::response::sse::Event::default()
                             .event("message")
                             .data(data)),
+                        // Every sender is gone: the session was removed
+                        // (revoked key) — end the stream.
                         None => break,
                     }
                 }
@@ -209,14 +323,8 @@ pub async fn message(
             .into_response();
     };
 
-    // Session lookup: the session carries the authenticated user; the
-    // message lane does NOT re-verify the API key (the session IS the
-    // credential from here on — the key was proven at the SSE handshake).
-    let session = {
-        let sessions = state.mcp_sessions.inner.lock().await;
-        sessions.get(session_id).cloned()
-    };
-    let Some(session) = session else {
+    // Session lookup: the session carries the authenticated user.
+    let Some(session) = state.mcp_sessions.get(session_id) else {
         return (
             StatusCode::UNAUTHORIZED,
             [(header::CONTENT_TYPE, "application/json")],
@@ -224,6 +332,33 @@ pub async fn message(
         )
             .into_response();
     };
+
+    // Key re-verification. The session is NOT a permanent credential: a
+    // key revoked after the handshake must stop working NOW, not when the
+    // 30-minute TTL lapses. The session stores the key's hash, so this is
+    // the same unique-indexed lookup the handshake paid — one read per
+    // JSON-RPC frame, far cheaper than the tool dispatch it guards.
+    //
+    // A store FAILURE is not a revocation: it fails this request (500)
+    // and leaves the session alone, so a database blip does not sign
+    // every agent out of its stream.
+    match state.store.find_api_key_by_hash(&session.key_hash).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            // Revoked. Drop the entry: this `Arc` (plus the stream's
+            // clone of the sender) is the only holder, so the SSE stream
+            // ends as soon as it falls out of scope here — the client
+            // cannot keep riding it.
+            state.mcp_sessions.remove(session_id);
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::CONTENT_TYPE, "application/json")],
+                r#"{"error":"this session's API key was revoked"}"#,
+            )
+                .into_response();
+        }
+        Err(err) => return ApiError::from(err).into_response(),
+    }
 
     // Parse and dispatch the JSON-RPC request.
     let request: Value = match serde_json::from_str(&body) {
