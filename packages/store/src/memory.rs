@@ -327,7 +327,7 @@ impl Store for MemoryStore {
             })
             .cloned()
             .collect();
-        rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.created_at));
         Ok(rows)
     }
 
@@ -400,10 +400,7 @@ impl Store for MemoryStore {
         let inner = self.inner.lock().map_err(lock_err)?;
         let mut chain = Vec::new();
         let mut cursor = id;
-        loop {
-            let Some(row) = inner.files.iter().find(|f| f.id == cursor) else {
-                break;
-            };
+        while let Some(row) = inner.files.iter().find(|f| f.id == cursor) {
             let Some(parent) = row.parent_id else {
                 break;
             };
@@ -485,7 +482,7 @@ impl Store for MemoryStore {
             .filter(|s| s.owner_id == owner_id)
             .cloned()
             .collect();
-        rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.created_at));
         Ok(rows)
     }
 

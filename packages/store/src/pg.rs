@@ -630,8 +630,8 @@ impl Store for PgStore {
         let cmd = Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
             text: format!(
-                "UPDATE files SET deleted_at = {} WHERE deleted_at IS NULL AND id IN ({})",
-                format!("'{}'", stamp),
+                "UPDATE files SET deleted_at = '{}' WHERE deleted_at IS NULL AND id IN ({})",
+                stamp,
                 placeholders.join(", ")
             ),
             params: ids.iter().map(|id| Value::Uuid(id.to_string())).collect(),
