@@ -29,6 +29,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import * as files from "@/api/files";
+import type { ChainEntry } from "@/api/files";
 import { useActionBar } from "@/composables/useActionBar";
 import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
@@ -54,7 +55,7 @@ async function load() {
   loading.value = true;
   error.value = null;
   try {
-    items.value = await files.listFolder(folderId.value);
+    items.value = (await files.listFolder(folderId.value)).items;
     const q = await files.quotaGet();
     quotaUsed.value = Number(q.used_bytes);
     quotaLimit.value = q.quota_bytes != null ? Number(q.quota_bytes) : null;
@@ -69,14 +70,25 @@ onMounted(() => void load());
 watch(folderId, () => void load());
 usePageRefresh(() => load(), { loading });
 
-// Breadcrumb: root → … → current.
+// Breadcrumb: root → … → current, via files.chain (deep-linkable).
+const chain = ref<ChainEntry[]>([]);
+watch(folderId, async (id) => {
+  if (id) {
+    try {
+      chain.value = await files.folderChain(id);
+    } catch { chain.value = []; }
+  } else {
+    chain.value = [];
+  }
+}, { immediate: true });
+
 const crumbs = computed(() => {
   const trail: { name: string; to: string }[] = [
     { name: t("common.files.breadcrumbRoot"), to: "/files" },
   ];
-  // (A real breadcrumb needs the folder chain; the first version walks
-  // by folder name from the listing — the server doesn't expose the
-  // chain endpoint yet.)
+  for (const entry of chain.value) {
+    trail.push({ name: entry.name, to: `/files/${entry.id}` });
+  }
   return trail;
 });
 
@@ -189,12 +201,16 @@ const shareExpires = ref("");
 const shareBusy = ref(false);
 const shareLink = ref<string | null>(null);
 
-const copyOk = ref(false);
+const copyOk = ref<null | boolean>(null);
 function copyShareLink() {
   if (shareLink.value) {
+    copyOk.value = null;
     void navigator.clipboard.writeText(
       new URL(shareLink.value, window.location.origin).toString(),
-    ).then(() => { copyOk.value = true; }).catch(() => undefined);
+    ).then(() => {
+      copyOk.value = true;
+      window.setTimeout(() => { copyOk.value = null; }, 3000);
+    }).catch(() => { copyOk.value = false; });
   }
 }
 
@@ -208,12 +224,15 @@ async function doShare() {
       shareExpires.value || undefined,
     );
     shareLink.value = `/s/${share.token}`;
+    copyOk.value = null;
     try {
       await navigator.clipboard.writeText(
         new URL(shareLink.value, window.location.origin).toString(),
       );
+      copyOk.value = true;
+      window.setTimeout(() => { copyOk.value = null; }, 3000);
     } catch {
-      // Clipboard blocked — the link is displayed inline.
+      copyOk.value = false; // visible failure → manual copy prompt
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : t("common.status.error");
@@ -391,7 +410,10 @@ bar.setActions(() => {
         <div v-if="shareLink" class="share-result">
           <span class="share-label">{{ t("common.files.shareLink") }}</span>
           <code>{{ shareLink }}</code>
-          <span v-if="copyOk" class="share-copied">{{ t("common.files.shareCreated") }}</span>
+          <span v-if="copyOk === true" class="share-copied">{{ t("common.files.shareCreated") }}</span>
+          <span v-else-if="copyOk === false" class="share-failed">
+            {{ t("common.actions.copyLink") }} ↓
+          </span>
           <HkButton variant="ghost" @click="copyShareLink()">
             <template #icon><Copy :size="14" /></template>
             {{ t("common.actions.copyLink") }}

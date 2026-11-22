@@ -51,6 +51,25 @@ async fn resolve(
     Ok((share, file))
 }
 
+/// RFC 5987 percent-encode for filename* parameters.
+fn urlencode_rfc5987(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() * 3);
+    for byte in value.bytes() {
+        // attr-char per RFC 5987: ALPHA / DIGIT / !#$&+-.^_`|~
+        let is_attr_char = byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+            );
+        if is_attr_char {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
 /// `GET /api/v1/share/{token}/meta`
 pub async fn meta(State(state): State<AppState>, Path(token): Path<String>) -> Response {
     match resolve(&state, &token).await {
@@ -93,10 +112,15 @@ pub async fn download(
             | i0721_proto::FileKind::Media
     );
     let inline = share.allow_preview && previewable;
-    let disposition = if inline {
-        format!("inline; filename=\"{}\"", file.name.replace('"', ""))
+    // RFC 6266/5987: non-ASCII names use filename*=UTF-8 with
+    // percent-encoding; an ASCII-safe fallback rides alongside.
+    let encoded = urlencode_rfc5987(&file.name);
+    let ascii = file.name.is_ascii() && !file.name.contains('"');
+    let kind = if inline { "inline" } else { "attachment" };
+    let disposition = if ascii {
+        format!("{kind}; filename=\"{}\"", file.name.replace('"', ""))
     } else {
-        format!("attachment; filename=\"{}\"", file.name.replace('"', ""))
+        format!("{kind}; filename*=UTF-8''{encoded}")
     };
     let mut response = (
         StatusCode::OK,

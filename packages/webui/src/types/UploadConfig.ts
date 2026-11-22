@@ -15,4 +15,9 @@ export type UploadConfig = {
 /**
  * Keep the original file name as the display name.
  */
-"use-source-file-name": boolean, };
+"use-source-file-name": boolean, 
+/**
+ * Global default per-user storage quota (bytes); None = unlimited.
+ * Per-user rows (users.quota_bytes) override this.
+ */
+"default-quota-bytes"?: bigint | null, };

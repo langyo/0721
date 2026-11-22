@@ -461,6 +461,8 @@ impl Store for PgStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        offset: u64,
+        limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError> {
         let mut filter = FileColumn::DeletedAt
             .is_null()
@@ -477,8 +479,8 @@ impl Store for PgStore {
             table: FileModel::TABLE.to_owned(),
             filter: Some(filter),
             order_by: vec![("created_at".to_owned(), false)],
-            limit: None,
-            offset: None,
+            limit: Some(limit),
+            offset: Some(offset),
             lock: None,
         };
         Ok(self
@@ -729,7 +731,7 @@ impl Store for PgStore {
     async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError> {
         let cmd = Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
-            text: "SELECT COALESCE(SUM(size), 0) AS used FROM files                    WHERE deleted_at IS NULL AND owner_id = $1 AND kind <> 'folder'"
+            text: "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) AS used FROM files                    WHERE deleted_at IS NULL AND owner_id = $1 AND kind <> 'folder'"
                 .to_owned(),
             params: vec![Value::Uuid(owner_id.to_string())],
         };

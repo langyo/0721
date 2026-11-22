@@ -113,6 +113,10 @@ pub struct UploadConfig {
     /// Keep the original file name as the display name.
     #[serde(default)]
     pub use_source_file_name: bool,
+    /// Global default per-user storage quota (bytes); None = unlimited.
+    /// Per-user rows (users.quota_bytes) override this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_quota_bytes: Option<i64>,
 }
 
 fn default_image_size_limit() -> String {
@@ -129,6 +133,7 @@ impl Default for UploadConfig {
             image_size_limit: default_image_size_limit(),
             webp_auto_convert: default_webp_auto_convert(),
             use_source_file_name: false,
+            default_quota_bytes: None,
         }
     }
 }
@@ -244,6 +249,9 @@ pub struct UploadConfigStrict {
     pub webp_auto_convert: bool,
     /// Keep the original file name as the display name.
     pub use_source_file_name: bool,
+    /// Global default storage quota; None = unlimited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_quota_bytes: Option<i64>,
 }
 
 impl From<SiteConfigStrict> for SiteConfig {
@@ -263,6 +271,7 @@ impl From<SiteConfigStrict> for SiteConfig {
                 image_size_limit: strict.upload.image_size_limit,
                 webp_auto_convert: strict.upload.webp_auto_convert,
                 use_source_file_name: strict.upload.use_source_file_name,
+                default_quota_bytes: strict.upload.default_quota_bytes,
             },
         }
     }
@@ -285,6 +294,7 @@ impl From<&SiteConfig> for SiteConfigStrict {
                 image_size_limit: config.upload.image_size_limit.clone(),
                 webp_auto_convert: config.upload.webp_auto_convert,
                 use_source_file_name: config.upload.use_source_file_name,
+                default_quota_bytes: config.upload.default_quota_bytes,
             },
         }
     }

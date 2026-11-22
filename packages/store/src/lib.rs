@@ -170,6 +170,8 @@ pub trait Store: Send + Sync {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        offset: u64,
+        limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError>;
 
     /// Whether a name is already taken in one owner's folder layer

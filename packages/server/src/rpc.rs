@@ -332,6 +332,7 @@ pub fn build_server(state: AppState) -> RpcServer {
     let state_share_delete = state.clone();
     let state_quota_get = state.clone();
     let state_quota_put = state.clone();
+    let state_files_chain = state.clone();
     RpcServer::builder()
         .auth(move |headers: &HeaderMap, uri: &Uri| {
             let state = state.clone();
@@ -390,17 +391,25 @@ pub fn build_server(state: AppState) -> RpcServer {
                 // the admin-flavored global stream.
                 let scope = if user.role != Role::Admin { "own" } else { scope };
                 if scope == "own" {
-                    let rows = state
+                    let (offset, limit) = PageArgs {
+                        offset: args.offset,
+                        limit: args.limit,
+                    }
+                    .sanitize();
+                    // Count first (unpaginated), then page.
+                    let all = state
                         .store
-                        .list_folder(user.id, args.folder_id, args.kind)
+                        .list_folder(user.id, args.folder_id, args.kind.clone(), 0, u64::MAX / 2)
                         .await
                         .map_err(store_err)?;
-                    let total = rows.len() as u64;
-                    let items = rows
+                    let total = all.len() as u64;
+                    let items = all
                         .into_iter()
+                        .skip(offset as usize)
+                        .take(limit as usize)
                         .map(FileDto::from)
                         .collect::<Vec<_>>();
-                    return to_value(PageResult { total, offset: 0, limit: total.max(1), items });
+                    return to_value(PageResult { total, offset, limit, items });
                 }
                 let (offset, limit) = PageArgs {
                     offset: args.offset,
@@ -434,10 +443,23 @@ pub fn build_server(state: AppState) -> RpcServer {
                 }
                 let params: UpdateParams = params(&ctx)?;
                 let user = user_of(&ctx);
-                require_file_owner_or_admin(&state, &user, params.id).await?;
+                let existing = require_file_owner_or_admin(&state, &user, params.id).await?;
                 validate_file_name(&params.name)
                     .map_err(|err| ApiError::bad_request(err.to_string()))
                     .map_err(api_err)?;
+                // Same-layer duplicate pre-check (exclude self): a rename
+                // into a taken name answers the same friendly conflict as
+                // create/move, not a raw index rejection.
+                let taken = state
+                    .store
+                    .folder_name_taken(existing.owner_id, existing.parent_id, &params.name, Some(params.id))
+                    .await
+                    .map_err(store_err)?;
+                if taken {
+                    return Err(api_err(ApiError::conflict(
+                        "a row with this name already exists in this folder",
+                    )));
+                }
                 let record = state
                     .store
                     .rename_file(params.id, &params.name)
@@ -486,47 +508,73 @@ pub fn build_server(state: AppState) -> RpcServer {
                     // (compare-and-restore against racing re-uploads —
                     // the single-file lane's guard, applied per key).
                     use std::collections::HashMap;
-                    let mut keys: HashMap<String, ()> = HashMap::new();
+                    // Collect BOTH slot keys per row: the media blob and
+                    // the thumbnail (Cache slot) — the cascade must
+                    // reclaim everything the single-file lane would.
+                    let mut media_keys: HashMap<String, ()> = HashMap::new();
+                    let mut cache_keys: HashMap<String, ()> = HashMap::new();
                     for row in &rows {
-                        if row.kind != i0721_proto::FileKind::Folder
-                            && !row.storage_key.is_empty()
-                        {
-                            keys.insert(row.storage_key.clone(), ());
+                        if row.kind != i0721_proto::FileKind::Folder {
+                            if !row.storage_key.is_empty() {
+                                media_keys.insert(row.storage_key.clone(), ());
+                            }
+                            if let Some(thumb) = row.thumbnail_key.as_deref() {
+                                if !thumb.is_empty() {
+                                    cache_keys.insert(thumb.to_owned(), ());
+                                }
+                            }
                         }
                     }
-                    for (key, ()) in keys {
+                    // Reclaim with the single-file lane's
+                    // compare-and-restore guard, per slot.
+                    async fn reclaim_key(
+                        state: &AppState,
+                        slot: crate::blob::BlobSlot,
+                        key: &str,
+                    ) -> Result<(), crate::error::ApiError> {
                         let still_live = state
                             .store
-                            .count_live_files_by_storage_key(&key)
+                            .count_live_files_by_storage_key(key)
                             .await
-                            .map_err(store_err)?;
+                            .map_err(crate::error::ApiError::from)?;
                         if still_live == 0 {
                             let snapshot = state
                                 .blobs
-                                .get(crate::blob::BlobSlot::Media, &key)
+                                .get(slot, key)
                                 .await
-                                .map_err(blob_err)?;
+                                .map_err(crate::error::ApiError::from)?;
                             state
                                 .blobs
-                                .delete(crate::blob::BlobSlot::Media, &key)
+                                .delete(slot, key)
                                 .await
-                                .map_err(blob_err)?;
+                                .map_err(crate::error::ApiError::from)?;
                             if state
                                 .store
-                                .count_live_files_by_storage_key(&key)
+                                .count_live_files_by_storage_key(key)
                                 .await
-                                .map_err(store_err)?
+                                .map_err(crate::error::ApiError::from)?
                                 > 0
                             {
                                 if let Some(bytes) = snapshot {
                                     state
                                         .blobs
-                                        .put(crate::blob::BlobSlot::Media, &key, &bytes)
+                                        .put(slot, key, &bytes)
                                         .await
-                                        .map_err(blob_err)?;
+                                        .map_err(crate::error::ApiError::from)?;
                                 }
                             }
                         }
+                        Ok(())
+                    }
+                    for (key, ()) in media_keys {
+                        reclaim_key(&state, crate::blob::BlobSlot::Media, &key)
+                            .await
+                            .map_err(api_err)?;
+                    }
+                    for (key, ()) in cache_keys {
+                        reclaim_key(&state, crate::blob::BlobSlot::Cache, &key)
+                            .await
+                            .map_err(api_err)?;
                     }
                     return Ok(Value::Null);
                 }
@@ -954,6 +1002,39 @@ pub fn build_server(state: AppState) -> RpcServer {
                 to_value(FileDto::from(moved))
             }
         })
+        .method_ctx("files.chain", move |ctx: RpcRequestCtx| {
+            let state = state_files_chain.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct ChainParams {
+                    folder_id: uuid::Uuid,
+                }
+                let args: ChainParams = params(&ctx)?;
+                let user = user_of(&ctx);
+                // Owner-or-admin on the TARGET folder.
+                let target = state.store.get_file(args.folder_id).await.map_err(store_err)?
+                    .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
+                    .ok_or_else(|| ApiError::not_found("folder not found"))
+                    .map_err(api_err)?;
+                if user.role != Role::Admin && target.owner_id != user.id {
+                    return Err(api_err(ApiError::forbidden("not your folder")));
+                }
+                // Walk ancestors, then reverse (root-first).
+                let ancestors = state.store.ancestor_ids(args.folder_id).await.map_err(store_err)?;
+                let mut chain = vec![
+                    serde_json::json!({"id": args.folder_id.to_string(), "name": target.name}),
+                ];
+                for ancestor_id in ancestors {
+                    if let Some(row) = state.store.get_file(ancestor_id).await.map_err(store_err)? {
+                        chain.push(serde_json::json!({
+                            "id": row.id.to_string(), "name": row.name,
+                        }));
+                    }
+                }
+                chain.reverse(); // root … → current
+                to_value(chain)
+            }
+        })
         .method_ctx("files.share_create", move |ctx: RpcRequestCtx| {
             let state = state_share_create.clone();
             async move {
@@ -1042,9 +1123,18 @@ pub fn build_server(state: AppState) -> RpcServer {
                     None => caller,
                 };
                 let used = state.store.sum_live_sizes(target.id).await.map_err(store_err)?;
+                // Per-user row ?? the site default; None = unlimited.
+                let quota = match target.quota_bytes {
+                    Some(q) => Some(q),
+                    None => site_config(&state)
+                        .await
+                        .map_err(api_err)?
+                        .upload
+                        .default_quota_bytes,
+                };
                 to_value(QuotaInfo {
                     used_bytes: used,
-                    quota_bytes: target.quota_bytes,
+                    quota_bytes: quota,
                 })
             }
         })

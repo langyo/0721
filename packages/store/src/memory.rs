@@ -314,6 +314,8 @@ impl Store for MemoryStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        offset: u64,
+        limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let mut rows: Vec<FileRecord> = inner
@@ -328,7 +330,11 @@ impl Store for MemoryStore {
             .cloned()
             .collect();
         rows.sort_by_key(|r| std::cmp::Reverse(r.created_at));
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect())
     }
 
     async fn folder_name_taken(

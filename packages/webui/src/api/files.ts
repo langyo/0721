@@ -3,12 +3,23 @@ import type { FileDto, PageResult, QuotaInfo, ShareDto } from "@/types";
 import { wsCall } from "@/composables/useJsonRpc";
 import { apiUpload } from "./client";
 
-export function listFolder(folderId: string | null, kind?: string): Promise<FileDto[]> {
+export function listFolder(folderId: string | null, kind?: string, offset = 0, limit = 100): Promise<PageResult<FileDto>> {
   return wsCall<PageResult<FileDto>>("files.list", {
     scope: "own",
     folder_id: folderId,
+    offset,
+    limit,
     ...(kind ? { kind } : {}),
-  }).then((p) => p.items);
+  });
+}
+
+export interface ChainEntry {
+  id: string;
+  name: string;
+}
+
+export function folderChain(folderId: string): Promise<ChainEntry[]> {
+  return wsCall<ChainEntry[]>("files.chain", { folder_id: folderId });
 }
 
 export function listTimeline(offset: number, limit: number): Promise<PageResult<FileDto>> {

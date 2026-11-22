@@ -2888,6 +2888,8 @@ async fn netdisk_same_layer_duplicate_names_refuse_at_root_and_nested() {
                 .id,
             None,
             None,
+            0,
+            100,
         )
         .await
         .unwrap()
@@ -3380,5 +3382,93 @@ async fn netdisk_folder_delete_cascades_and_reclaims_blobs() {
     assert!(
         blob.is_some(),
         "the re-uploaded blob exists (the cascade reclaimed the dead copy)"
+    );
+}
+
+#[tokio::test]
+async fn netdisk_own_scope_pagination() {
+    let (state, token) = matrix_setup().await;
+    for i in 0..5 {
+        mk_folder(&state, &token, &format!("f{i}"), None).await;
+    }
+    // Page 1: 3 items.
+    let (_, e1) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "own", "offset": 0, "limit": 3}),
+    )
+    .await;
+    assert_eq!(e1["result"]["total"], 5);
+    assert_eq!(e1["result"]["items"].as_array().unwrap().len(), 3);
+    // Page 2: remaining 2.
+    let (_, e2) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "own", "offset": 3, "limit": 3}),
+    )
+    .await;
+    assert_eq!(e2["result"]["items"].as_array().unwrap().len(), 2);
+    // No overlap, no gap.
+    let ids1: Vec<&str> = e1["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap())
+        .collect();
+    let ids2: Vec<&str> = e2["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids1.iter().all(|id| !ids2.contains(id)),
+        "pages do not overlap"
+    );
+    assert_eq!(ids1.len() + ids2.len(), 5, "no gap");
+}
+
+#[tokio::test]
+async fn netdisk_files_chain_answers_ancestors() {
+    let (state, token) = matrix_setup().await;
+    let a = mk_folder(&state, &token, "a", None).await;
+    let b = mk_folder(&state, &token, "b", Some(a.clone())).await;
+
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.chain",
+        serde_json::json!({"folder_id": b}),
+    )
+    .await;
+    let chain = envelope["result"].as_array().unwrap();
+    assert_eq!(chain.len(), 2, "root → b: {chain:?}");
+    assert_eq!(chain[0]["name"], "a");
+    assert_eq!(chain[1]["name"], "b");
+}
+
+#[tokio::test]
+async fn netdisk_rename_precheck_answers_friendly_conflict() {
+    let (state, token) = matrix_setup().await;
+    let _a = mk_folder(&state, &token, "alpha", None).await;
+    let b = mk_folder(&state, &token, "beta", None).await;
+
+    // Rename "beta" to "alpha" → 409 (same-layer duplicate).
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "files.update",
+        serde_json::json!({"id": b, "name": "alpha"}),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32007);
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("already exists"),
+        "the friendly message names the conflict: {envelope}"
     );
 }

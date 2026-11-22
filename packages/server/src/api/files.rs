@@ -123,6 +123,11 @@ pub async fn upload(
 
     // Quota: the caller's live bytes + this upload against their limit
     // (user override ?? the global default; None = unlimited).
+    // TOCTOU boundary: the check-then-write window is bounded by the
+    // upload semaphore (≤ upload_concurrency concurrent slots × the
+    // per-file limit); a burst at the exact boundary can overshoot by
+    // at most that many files' worth — accepted as the transition-era
+    // trade-off, documented here so the next reader knows.
     if let Some(quota) = user.quota_bytes {
         let used = state.store.sum_live_sizes(user.id).await?;
         if used + data.len() as i64 > quota {
