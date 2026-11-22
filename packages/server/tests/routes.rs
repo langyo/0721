@@ -113,8 +113,9 @@ async fn login(state: &AppState, username: &str, password: &str) -> String {
         "the cookie must be HttpOnly: {cookie}"
     );
     assert!(
-        cookie.contains("SameSite=Strict"),
-        "the cookie must be Strict: {cookie}"
+        cookie.contains("SameSite=Lax"),
+        "the cookie must be Lax (Strict would strip it on a top-level \
+         navigation that follows an external share link): {cookie}"
     );
     let token = cookie
         .split(';')
@@ -5924,5 +5925,58 @@ async fn mcp_reupload_of_own_bytes_still_faces_the_quota_gate() {
     assert!(
         is_error && text.contains("quota"),
         "an over-quota re-upload must NOT ride the dedupe shortcut: {text}"
+    );
+}
+
+/// The session cookie policy (public-exposure hardening): `SameSite=Lax`
+/// always — `Strict` would strip the cookie from a top-level navigation
+/// that follows a share link from another site, which is this service's
+/// bread and butter — and `Secure` exactly when the deployment is https.
+#[tokio::test]
+async fn session_cookie_is_lax_and_secure_only_over_https() {
+    // http dev deployment: Lax, no Secure.
+    let (state, _admin) = test_state().await;
+    let response = app(&state)
+        .oneshot(login_request("admin", "admin-password"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .expect("login sets the cookie")
+        .to_owned();
+    assert!(cookie.contains("SameSite=Lax"), "Lax, not Strict: {cookie}");
+    assert!(!cookie.contains("Strict"), "no Strict left: {cookie}");
+    assert!(
+        !cookie.contains("Secure"),
+        "plain-http dev keeps working: {cookie}"
+    );
+
+    // https deployment (the public origin pinned): the same login adds
+    // Secure.
+    let (state2, _admin2) = test_state().await;
+    let mut config = state2.config.as_ref().clone();
+    config.public_origin = Some("https://res.example".to_owned());
+    let https_state = i0721_server::state::AppState::new(
+        state2.store.clone(),
+        state2.blobs.clone(),
+        std::sync::Arc::new(config),
+    );
+    let response = app(&https_state)
+        .oneshot(login_request("admin", "admin-password"))
+        .await
+        .unwrap();
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .expect("cookie")
+        .to_owned();
+    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
+    assert!(
+        cookie.contains("Secure"),
+        "an https deployment must mark the cookie Secure: {cookie}"
     );
 }

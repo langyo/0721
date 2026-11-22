@@ -30,3 +30,18 @@ pub(crate) fn public_origin(state: &AppState, headers: &HeaderMap) -> Option<Str
     );
     Some(format!("http://{host}"))
 }
+
+/// The scheme the request is served under: the configured public origin
+/// wins, else the forwarded/actual scheme. `true` means https (which is
+/// what the cookie's `Secure` flag keys off).
+#[must_use]
+pub(crate) fn serves_https(state: &AppState, headers: &HeaderMap) -> bool {
+    if let Some(origin) = state.config.public_origin.as_deref() {
+        return origin.starts_with("https://");
+    }
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(|proto| proto.split(',').next().unwrap_or(proto).trim() == "https")
+        .unwrap_or(false)
+}
