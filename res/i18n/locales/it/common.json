@@ -40,7 +40,9 @@
     "failed": "Nome utente o password non validi",
     "orContinue": "oppure continua con",
     "passwordDisabled": "Login con password disattivato: usa un provider qui sotto.",
-    "noMethods": "Nessun metodo di accesso disponibile: un amministratore deve attivare un provider o il login con password."
+    "noMethods": "Nessun metodo di accesso disponibile: un amministratore deve attivare un provider o il login con password.",
+    "passwordChannel": "Password",
+    "submit": "Accedi"
   },
   "portal": {
     "title": "Immagini",
