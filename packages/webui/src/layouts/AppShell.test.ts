@@ -72,6 +72,9 @@ beforeEach(() => {
 
 afterEach(() => {
   wrapper?.unmount();
+  // Restored here, not at the end of the test body: a failing assertion
+  // must not leak the stubbed fetch into later tests of this file.
+  vi.unstubAllGlobals();
 });
 
 describe("AppShell (family grouped chrome)", () => {
@@ -85,7 +88,10 @@ describe("AppShell (family grouped chrome)", () => {
     // A second, independent pin on the same gating: the admin pages'
     // own labels must not render for a member either (with this, the
     // guarantee no longer rests on the group-label line alone).
-    expect(text).not.toContain(i18n.global.t("common.users.title"));
+    // providers.title is the one admin label that is alias-free in ALL
+    // 12 locales (users.title collides with status.member in 5 locales,
+    // nav.settings with chrome.settings in 4) — a colliding label would
+    // let this negative assertion silently mis-target the wrong string.
     expect(text).not.toContain(i18n.global.t("common.providers.title"));
     // The member's own pages ride the content/access groups.
     expect(text).toContain(i18n.global.t("common.files.title"));
@@ -127,7 +133,6 @@ describe("AppShell (family grouped chrome)", () => {
     expect(bar.props("version")).toBe(__APP_VERSION__);
     // No RPC client in a unit test: the transport probe reads disconnected.
     expect(bar.props("connectionStatus")).toBe("disconnected");
-    vi.unstubAllGlobals();
   });
 
   it("renders the page into the shell's content host", async () => {
