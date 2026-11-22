@@ -172,6 +172,7 @@
     "creditsJoiner": ", creado por ",
     "creditsRole": "",
     "author": "伊欧",
-    "copyright": "Celestia Island"
+    "copyright": "Celestia Island",
+    "engineVersion": "Versión del motor"
   }
 }

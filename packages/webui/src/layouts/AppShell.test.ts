@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // run for real (they degrade to disconnected/null without a client).
 vi.mock("@/api", () => ({ health: vi.fn().mockRejectedValue(new Error("no net")) }));
 
-import { HkStatusBar } from "@celestia-island/hikari";
+import { HkMenu, HkStatusBar } from "@celestia-island/hikari";
 
 import AppShell from "./AppShell.vue";
 import { useAuthStore } from "@/stores/auth";
@@ -64,6 +64,16 @@ async function mountShell(role: UserDto["role"]): Promise<VueWrapper> {
   });
 }
 
+/** The SIDEBAR menu (the shell's own nav), not the header's avatar menu —
+ * both are HkMenu instances. */
+function sidebarGroups(wrapper: VueWrapper): number {
+  const sidebar = wrapper
+    .findAllComponents(HkMenu)
+    .find((menu) => menu.props("variant") === "sidebar");
+  expect(sidebar, "sidebar HkMenu must exist").toBeTruthy();
+  return (sidebar!.props("items") as unknown[]).length;
+}
+
 let wrapper: VueWrapper | null = null;
 
 beforeEach(() => {
@@ -88,11 +98,16 @@ describe("AppShell (family grouped chrome)", () => {
     // A second, independent pin on the same gating: the admin pages'
     // own labels must not render for a member either (with this, the
     // guarantee no longer rests on the group-label line alone).
-    // providers.title is the one admin label that is alias-free in ALL
-    // 12 locales (users.title collides with status.member in 5 locales,
-    // nav.settings with chrome.settings in 4) — a colliding label would
-    // let this negative assertion silently mis-target the wrong string.
+    // providers.title measured alias-free in all 12 locales (users.title
+    // shares status.member's value in de/ja/ko/zh-Hans/zh-Hant,
+    // nav.settings shares chrome.settings' in ar/en/ja/ko) — a colliding
+    // label would let this negative assertion mis-target.
     expect(text).not.toContain(i18n.global.t("common.providers.title"));
+    // And the gating is pinned on the DATA path too, independent of any
+    // label: the menu receives two groups for a member, three for an
+    // admin. Label assertions above cannot cover a wiring change that
+    // keeps labels out of the DOM but hands the menu a third group.
+    expect(sidebarGroups(wrapper!)).toBe(2);
     // The member's own pages ride the content/access groups.
     expect(text).toContain(i18n.global.t("common.files.title"));
     expect(text).toContain(i18n.global.t("common.keys.title"));
@@ -112,6 +127,7 @@ describe("AppShell (family grouped chrome)", () => {
     expect(text).toContain(i18n.global.t("common.users.title"));
     expect(text).toContain(i18n.global.t("common.providers.title"));
     expect(text).toContain(i18n.global.t("common.nav.settings"));
+    expect(sidebarGroups(wrapper!)).toBe(3);
   });
 
   it("feeds the family status bar the live engine identity and probe state", async () => {

@@ -4,6 +4,7 @@ import {
   HkSettingsDialog,
   HkSettingsGroup,
   HkThemePanelContent,
+  type HAboutComponentVersion,
   type HAboutCredit,
   type HAboutLink,
 } from "@celestia-island/hikari";
@@ -62,7 +63,19 @@ const credits = computed<HAboutCredit[]>(() => [
 
 const licenses: HAboutLink[] = [{ label: "Apache-2.0", href: "https://www.apache.org/licenses/LICENSE-2.0" }];
 
-const engineVersion = computed(() => report.value?.version ?? __APP_VERSION__);
+/** The About body's `version` slot means the APPLICATION version, so it
+ * is the panel's own build identity; the server/engine identity is a
+ * separate fact and rides a component row (HkAboutBody's anatomy for
+ * "engines"), never the app slot. */
+const appVersion: string = __APP_VERSION__;
+
+const componentRows = computed<HAboutComponentVersion[]>(() => {
+  const rows: HAboutComponentVersion[] = [];
+  if (report.value?.version) {
+    rows.push({ label: t("common.about.engineVersion"), value: report.value.version });
+  }
+  return rows;
+});
 </script>
 
 <template>
@@ -103,11 +116,12 @@ const engineVersion = computed(() => report.value?.version ?? __APP_VERSION__);
            Celestia front end mounts (no decorative backdrop). -->
       <HkAboutBody
         app-name="0721"
-        :version="engineVersion"
+        :version="appVersion"
         logo-src="/logo.webp"
         :tagline="t('common.about.tagline')"
         :credits="credits"
         :licenses="licenses"
+        :component-versions="componentRows"
         :copyright="t('common.about.copyright')"
       />
     </template>
