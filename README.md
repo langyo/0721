@@ -157,6 +157,17 @@ and `?token=` stay open for non-browser clients, tried in that order:
 - `users.list {offset, limit}` · `users.create {username, password, display_name?, role?}` · `users.delete {id}` — admin role required
 - `settings.get` · `settings.put` — admin role required; `put` takes the COMPLETE strict document (missing sections/leaves → error, never a silent default reset)
 
+**Transport**: the webui prefers the WebSocket (heartbeat + latency);
+the HTTP POST fallback on the same method map rides the session cookie.
+The WS upgrade carries a ONE-TIME admission ticket in its `?token=`
+slot: minted by `POST /api/v1/auth/ws-ticket` (≤30 s, user-bound),
+consumed by the opening itself, worth exactly one socket — a leaked
+ticket has bounded value, and the session JWT never rides a URL.
+(Declared deviation: the credential extractor exists twice —
+`api/auth.rs` for REST and `rpc.rs` for the WS/POST lanes — an
+intentional dual-write pending a shared auth module; both keep the
+same four-channel order.)
+
 Error codes: the JSON-RPC family plus `-32005` auth/permission,
 `-32006` not found, `-32007` conflict, `-32008` too large, `-32009`
 deferred-ops disabled (this instance serves no `ops.*`).
@@ -167,6 +178,7 @@ deferred-ops disabled (this instance serves no `ops.*`).
 - `POST /api/v1/auth/login` — password login; plants the `i0721-token` httpOnly cookie (the body carries NO token)
 - `POST /api/v1/auth/refresh` — cookie rotation (Set-Cookie needs HTTP, so refresh lives here, not on the RPC table)
 - `POST /api/v1/auth/logout` — expires the cookie and supersedes all outstanding tokens
+- `POST /api/v1/auth/ws-ticket` — mints the one-time WebSocket admission ticket
 - `POST /api/v1/files` — multipart `file` upload (binary + progress events; optional `?name=`)
 - `GET /media/{key}[?thumbnail=true]` — the public path legacy image links depend on (referrer allow-list honored)
 

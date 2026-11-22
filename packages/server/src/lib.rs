@@ -15,3 +15,4 @@ pub mod routes;
 pub mod rpc;
 pub mod state;
 pub mod static_files;
+pub mod ws_tickets;

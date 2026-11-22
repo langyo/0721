@@ -21,5 +21,6 @@ pub fn router() -> Router<AppState> {
         .route("/auth/login", post(auth::login))
         .route("/auth/refresh", post(auth::refresh))
         .route("/auth/logout", post(auth::logout))
+        .route("/auth/ws-ticket", post(auth::ws_ticket))
         .nest("/files", files_api)
 }

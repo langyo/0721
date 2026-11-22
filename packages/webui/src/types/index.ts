@@ -25,3 +25,4 @@ export type { SiteConfigStrict } from "./SiteConfigStrict.ts";
 export type { UploadConfig } from "./UploadConfig.ts";
 export type { UploadConfigStrict } from "./UploadConfigStrict.ts";
 export type { UserDto } from "./UserDto.ts";
+export type { WsTicket } from "./WsTicket.ts";

@@ -1614,3 +1614,145 @@ async fn logout_expires_the_cookie_and_kills_the_session() {
         "the watermark bump kills the pre-logout token everywhere"
     );
 }
+
+// ── the one-time WS admission ticket lane ───────────────────────────────
+
+/// Mint a ticket over REST (the browser's pre-connect step).
+async fn mint_ticket(state: &AppState, token: &str) -> String {
+    let response = app(state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/ws-ticket")
+                .body(Body::empty())
+                .unwrap(),
+            token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    serde_json::from_slice::<serde_json::Value>(&body).unwrap()["ticket"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn ws_ticket_mint_requires_a_session() {
+    let (state, _) = test_state().await;
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/ws-ticket")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_ticket_opens_the_socket_and_dies_with_the_opening() {
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let ticket = mint_ticket(&state, &token).await;
+    let addr = spawn_listener(state).await;
+
+    let upgrade = format!(
+        "GET /api/rpc?token={ticket} HTTP/1.1\r\nHost: {addr}\r\nConnection: Upgrade\r\n\
+         Upgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
+
+    // First use: 101 — the ticket admits.
+    let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    stream.write_all(upgrade.as_bytes()).await.unwrap();
+    let first = read_http_head(&mut stream).await;
+    assert!(
+        first.starts_with("HTTP/1.1 101"),
+        "a fresh ticket upgrades: {}",
+        first.lines().next().unwrap_or_default()
+    );
+
+    // Replay: the SAME ticket is dead — 401 (single use).
+    let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    stream.write_all(upgrade.as_bytes()).await.unwrap();
+    let replay = read_http_head(&mut stream).await;
+    assert!(
+        replay.starts_with("HTTP/1.1 401"),
+        "a used ticket never admits again: {}",
+        replay.lines().next().unwrap_or_default()
+    );
+}
+
+/// Read an HTTP response head (up to the blank line; a 101 upgrade
+/// holds the socket open, so EOF would hang).
+async fn read_http_head(stream: &mut tokio::net::TcpStream) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut head = Vec::new();
+    let mut buf = [0_u8; 1];
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buf)).await {
+            Ok(Ok(0)) | Err(_) | Ok(Err(_)) => break,
+            Ok(Ok(n)) => {
+                head.extend_from_slice(&buf[..n]);
+                if head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(&head).to_string()
+}
+
+/// End-to-end: a ticket-opened socket carries a REAL frame — the
+/// session the ticket established (its bound user) answers auth.verify.
+#[tokio::test]
+async fn a_ticket_opened_socket_answers_a_real_frame() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let ticket = mint_ticket(&state, &token).await;
+    let addr = spawn_listener(state).await;
+
+    let mut request = format!("ws://{addr}/api/rpc?token={ticket}")
+        .into_client_request()
+        .unwrap();
+    // Deliberately NO cookie, NO auth header: the ticket alone must
+    // carry the upgrade.
+    request.headers_mut().remove(header::COOKIE);
+    let (mut ws, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert_eq!(response.status(), 101);
+
+    ws.send(Message::Text(
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 77,
+            "method": "auth.verify",
+            "params": null,
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let reply = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+        .await
+        .expect("a reply frame")
+        .expect("stream open")
+        .expect("a text frame");
+    let Message::Text(text) = reply else {
+        panic!("expected a text frame");
+    };
+    let envelope: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(envelope["result"]["username"], "admin");
+    ws.close(None).await.ok();
+}

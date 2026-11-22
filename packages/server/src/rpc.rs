@@ -104,18 +104,36 @@ fn params<T: serde::de::DeserializeOwned>(ctx: &RpcRequestCtx) -> Result<T, Json
         .map_err(|err| JsonRpcError::invalid_params(&err.to_string()))
 }
 
-/// The session cookie name. The browser session rides this httpOnly cookie
-/// (set at login); the four extraction channels in `extract_token` below
-/// exist for non-browser clients (cookie, Bearer header, subprotocol,
-/// query parameter).
+// NOTE (declared deviation): this extractor and `api::auth::extract_token`
+// are an intentional dual-write pending a shared auth module; both must
+// keep the same four-channel order (cookie, Bearer, subprotocol, query).
+// The RPC copy additionally labels WHICH channel carried the credential
+// (the one-time WS ticket is honored on the query channel only — see
+// `verify_identity`).
+
+/// The session cookie name. The browser session rides this httpOnly
+/// cookie (set at login); the four extraction channels in
+/// `extract_token` below exist for non-browser clients (cookie, Bearer
+/// header, subprotocol, query parameter).
 const TOKEN_COOKIE: &str = "i0721-token";
 
-/// NOTE (declared deviation): this extractor and `api::auth::extract_token`
-/// are an intentional dual-write pending a shared auth module; both must
-/// keep the same four-channel order (cookie, Bearer, subprotocol, query).
-/// Extract the credential, the chest four-channel order (see the module
-/// doc). Pure header/URL reading — proving happens in `verify_identity`.
-fn extract_token(headers: &HeaderMap, uri: &Uri) -> Option<String> {
+/// Which channel a credential arrived on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CredentialChannel {
+    /// The httpOnly session cookie (the browser path).
+    Cookie,
+    /// `Authorization: Bearer`.
+    Bearer,
+    /// `Sec-WebSocket-Protocol: jwt.<t>`.
+    Subprotocol,
+    /// `?token=` — the one-time WS admission ticket's slot.
+    Query,
+}
+
+/// Extract the credential and its channel, the chest four-channel
+/// order. Pure header/URL reading — proving happens in
+/// `verify_identity`.
+fn extract_token(headers: &HeaderMap, uri: &Uri) -> Option<(String, CredentialChannel)> {
     // Channel 1: the session cookie (each channel falls THROUGH to the
     // next when it carries nothing — no early function exit).
     if let Some(cookie) = headers
@@ -126,7 +144,7 @@ fn extract_token(headers: &HeaderMap, uri: &Uri) -> Option<String> {
             let pair = pair.trim();
             if let Some(value) = pair.strip_prefix(&format!("{TOKEN_COOKIE}=")) {
                 if !value.is_empty() {
-                    return Some(value.to_owned());
+                    return Some((value.to_owned(), CredentialChannel::Cookie));
                 }
             }
         }
@@ -140,7 +158,7 @@ fn extract_token(headers: &HeaderMap, uri: &Uri) -> Option<String> {
                 .or_else(|| value.strip_prefix("bearer "))
         })
     {
-        return Some(bearer.to_owned());
+        return Some((bearer.to_owned(), CredentialChannel::Bearer));
     }
     // Sec-WebSocket-Protocol: jwt.<token> — keeps the credential out of
     // the URL (browser WebSocket cannot set headers).
@@ -149,16 +167,18 @@ fn extract_token(headers: &HeaderMap, uri: &Uri) -> Option<String> {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("jwt."))
     {
-        return Some(jwt.to_owned());
+        return Some((jwt.to_owned(), CredentialChannel::Subprotocol));
     }
-    // Last resort: the query parameter.
+    // Last resort: the query parameter. On the WS upgrade this slot
+    // carries the ONE-TIME admission ticket (see `ws_tickets`); a plain
+    // JWT here stays valid for non-browser clients.
     uri.query()
         .and_then(|query| {
             query
                 .split('&')
                 .find_map(|pair| pair.strip_prefix("token=").filter(|t| !t.is_empty()))
         })
-        .map(str::to_owned)
+        .map(|value| (value.to_owned(), CredentialChannel::Query))
 }
 
 /// Verify the credential and load the user (the REST lane's
@@ -168,8 +188,29 @@ async fn verify_identity(
     headers: &HeaderMap,
     uri: &Uri,
 ) -> Result<RpcIdentity, ApiError> {
-    let token = extract_token(headers, uri)
+    let (credential, channel) = extract_token(headers, uri)
         .ok_or_else(|| ApiError::unauthorized("missing bearer token"))?;
+
+    // The one-time WS admission ticket rides the QUERY channel only: a
+    // consumed ticket elsewhere (a Bearer header echoed by a client's
+    // HTTP fallback) is not an admission. Valid + unexpired → consume
+    // (single use) and establish the session as the bound user — the
+    // mint already ran the full JWT + watermark proof ≤30 s ago, so no
+    // re-verification here.
+    if channel == CredentialChannel::Query {
+        if let Some(user_id) = state.ws_tickets.consume(&credential) {
+            let user = state
+                .store
+                .get_user(user_id)
+                .await?
+                .ok_or_else(|| ApiError::unauthorized("user not found"))?;
+            return Ok(RpcIdentity { user });
+        }
+        // Not a live ticket: fall through — the query slot also accepts
+        // plain JWTs for non-browser clients.
+    }
+
+    let token = credential;
     let claims = state
         .signer
         .verify(&token)

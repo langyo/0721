@@ -4,31 +4,60 @@ import { RpcClient } from "@celestia-island/plana-rpc-client";
  * The JSON-RPC transport singleton (the chest web-transport shape,
  * minus the Tauri branch — this is a browser-only app).
  *
- * ## Where the credential lives
+ * ## The two-tier transport, and where each credential lives
  *
- * The session token rides the **httpOnly cookie** the REST login plants
- * (`i0721-token`): same-origin WebSocket and HTTP requests carry it
- * automatically, and no script on the page can read it. This client
- * therefore hands the RPC client a getToken that answers `null` —
- * ALWAYS — so the client never falls back to its `?token=` URL channel
- * (a JWT in a URL leaks into logs, history and proxies). The server
- * keeps `?token=` and `Sec-WebSocket-Protocol: jwt.<t>` open for
- * NON-browser clients; the webui production path is the cookie and
- * nothing else.
+ * - **WS is the preferred tier** (`/api/rpc` upgrade, heartbeat +
+ *   latency). The family's client only ATTEMPTS the upgrade when its
+ *   token getter answers non-null — and a session JWT must never ride
+ *   a URL. The reconciliation is the chest ws-bridge pattern: a
+ *   ONE-TIME admission ticket (minted by `POST /api/v1/auth/ws-ticket`,
+ *   ≤30 s, user-bound, consumed by the opening itself) occupies the
+ *   `?token=` slot. A leaked ticket is worth exactly one socket
+ *   opening inside half a minute — bounded by construction.
+ * - **The HTTP POST fallback** (same method map) authenticates with
+ *   the httpOnly session cookie (`credentials: include`); the client
+ *   also echoes the cached ticket into an Authorization header, but
+ *   the server reads the cookie FIRST, so the ticket is never burned
+ *   by a POST.
  *
- * One `RpcClient` from the family's plana-rpc-client rides the whole
- * app: lazy WebSocket to `/api/rpc` with the heartbeat protocol the
- * plana server pair speaks, HTTP POST fallback on the same method map,
- * and progressive reconnect.
+ * The session cookie is planted by the REST login and never leaves the
+ * server's Set-Cookie — no script on the page can read it.
+ * `rpcGetToken` therefore NEVER returns a session credential; it
+ * returns the cached one-time ticket only (pinned by
+ * transport.test.ts).
  */
 
 /**
- * The token source handed to the RPC client — deliberately inert.
- * Pinned by transport.test.ts: if this ever returns a stored token
- * again, the client would start putting JWTs into URLs.
+ * The cached one-time WS admission ticket (short-lived, single-use —
+ * refreshed before every connect/reconnect attempt wave).
+ */
+let cachedTicket: string | null = null;
+
+/**
+ * The token source handed to the RPC client: the CACHED ONE-TIME
+ * TICKET, never a session credential. Pinned by transport.test.ts: a
+ * session JWT must never appear here (it would ride URLs).
  */
 export function rpcGetToken(): string | null {
-  return null;
+  return cachedTicket;
+}
+
+/** Fetch a fresh admission ticket (the cookie authenticates the mint). */
+export async function refreshWsTicket(): Promise<void> {
+  try {
+    const response = await fetch("/api/v1/auth/ws-ticket", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    if (!response.ok) return;
+    const body = (await response.json()) as { ticket?: string };
+    if (typeof body.ticket === "string" && body.ticket) {
+      cachedTicket = body.ticket;
+    }
+  } catch {
+    // Offline mint: keep the previous ticket; the WS attempt simply
+    // falls to the POST fallback for this round.
+  }
 }
 
 let unauthorizedHandler: (() => void) | null = null;
@@ -46,3 +75,28 @@ export const rpcClient = new RpcClient({
   getToken: rpcGetToken,
   onAuthLost: () => unauthorizedHandler?.(),
 });
+
+// Keep the ticket cache fresh across reconnect waves: whenever the
+// client leaves the connected state (drop, recovery, manual retry),
+// mint a new ticket so the NEXT upgrade attempt reads a live one. A
+// stale or consumed ticket costs nothing — that attempt falls to the
+// POST fallback and the following attempt gets the fresh mint.
+rpcClient.on("state", (event) => {
+  if (event.state !== "connected") {
+    void refreshWsTicket();
+  }
+});
+
+/** Test seam: drop the cached ticket (between sessions). */
+export function clearWsTicket(): void {
+  cachedTicket = null;
+}
+
+/**
+ * Connect the transport with a freshly minted ticket (call after
+ * login/session-restore).
+ */
+export async function connectTransport(): Promise<void> {
+  await refreshWsTicket();
+  void rpcClient.connect();
+}

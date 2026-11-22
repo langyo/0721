@@ -4,8 +4,9 @@ import { computed, ref } from "vue";
 import * as api from "@/api";
 import { onUnauthorized } from "@/api/client";
 import { setProbeClient } from "@/composables/useConnectionProbe";
-import { onRpcAuthLost } from "@/transport";
 import { rpcClient } from "@/transport";
+import { connectTransport as connectRpcTransport } from "@/transport";
+import { onRpcAuthLost } from "@/transport";
 import type { UserDto } from "@/types";
 
 /**
@@ -28,7 +29,7 @@ export const useAuthStore = defineStore("auth", () => {
 
   function connectTransport(): void {
     setProbeClient(rpcClient);
-    void rpcClient.connect();
+    void connectRpcTransport();
   }
 
   async function login(username: string, password: string): Promise<UserDto> {

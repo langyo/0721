@@ -27,8 +27,10 @@ pub const COOKIE_ATTRIBUTES: &str = " HttpOnly; SameSite=Strict; Path=/";
 
 /// Extract the credential, the family's fixed four-channel order:
 /// cookie → `Authorization: Bearer` → `Sec-WebSocket-Protocol: jwt.<t>`
-/// → `?token=` (the last resort). The browser path is the cookie (the WS-side copy of this extractor lives in rpc.rs); the
-/// other channels stay for non-browser clients.
+/// → `?token=` (the last resort). The browser path is the cookie (a
+/// WS-side copy of this extractor lives in rpc.rs, where the query
+/// channel additionally honors one-time admission tickets); the other
+/// channels stay for non-browser clients.
 pub(crate) fn extract_token(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
     if let Some(cookie) = headers
         .get(axum::http::header::COOKIE)
@@ -229,6 +231,30 @@ pub async fn logout(
         "{TOKEN_COOKIE}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT{COOKIE_ATTRIBUTES}"
     );
     Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, cleared)]).into_response())
+}
+
+/// The one-time WebSocket admission ticket response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+pub struct WsTicket {
+    /// The single-use, ≤30 s ticket for the `?token=` slot of the WS
+    /// upgrade. Never a session credential.
+    pub ticket: String,
+}
+
+/// `POST /api/v1/auth/ws-ticket` — mint a one-time WebSocket admission
+/// ticket for the authenticated user (any of the four channels; the
+/// browser rides the cookie). The ticket opens the socket and dies with
+/// the opening — see `ws_tickets`.
+pub async fn ws_ticket(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Result<Json<WsTicket>, ApiError> {
+    let (_, user) = require_auth(&state, &headers, &uri).await?;
+    Ok(Json(WsTicket {
+        ticket: state.ws_tickets.mint(user.id),
+    }))
 }
 
 /// Wrap a session body with its Set-Cookie.
