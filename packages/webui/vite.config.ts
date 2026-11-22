@@ -1,8 +1,10 @@
 import vueSfc from "@vitejs/plugin-vue";
 import vueJsx from "@vitejs/plugin-vue-jsx";
-import { readdirSync, rmSync, readFileSync } from "fs";
+import { readdirSync, rmSync } from "fs";
 import { resolve } from "path";
 import { defineConfig, type Plugin } from "vitest/config";
+
+import { bareSpecifierGatePlugin } from "./src/build/bareSpecifierGate";
 
 const pkgDir = import.meta.dirname;
 
@@ -27,60 +29,6 @@ function cleanOutDirContents(outDir: string): Plugin {
       }
       for (const entry of entries) {
         rmSync(resolve(outDir, entry), { recursive: true, force: true });
-      }
-    },
-  };
-}
-
-// Post-build gate: the deployed binary embeds whatever dist/ contains, and
-// rolldown-vite SILENTLY EXTERNALIZES imports it fails to resolve — a
-// stale node_modules could ship chunks containing raw `from"lucide-vue-next"`
-// and every browser would throw "Failed to resolve module specifier" at
-// boot. Rollup would fail the build; rolldown just warns. This plugin scans
-// the written output for any surviving bare module specifier and turns it
-// into a hard build error, so the failure mode can never ship silently.
-// (Ported from the shittim-chest webui — the 2026-08-30 incident guard.)
-function bareSpecifierGatePlugin(outDir: string): Plugin {
-  // Bare specifier charset: starts with a letter or @, no spaces/colons —
-  // excludes relative ("./x", "../x") and absolute ("/x") forms as well as
-  // data:/http(s):/node: URLs and CSS-content strings like `from": "…`.
-  // The `from` alternative allows NO whitespace: the gate scans the
-  // MINIFIED bundle where a real re-export/statement import is always
-  // `}from"x"` / `from"x"`, while prose inside string constants keeps the
-  // human spacing and must not trip the gate (a false positive here makes
-  // every build fail).
-  const BARE_SPECIFIER = /(?:\bfrom["']|\bimport\s*\(\s*["'])([a-z@][a-z0-9@/._-]*)["']/g;
-  return {
-    name: "bare-specifier-gate",
-    apply: "build",
-    closeBundle() {
-      const offenders: string[] = [];
-      const scan = (dir: string) => {
-        let files: string[];
-        try {
-          files = readdirSync(dir);
-        } catch {
-          return;
-        }
-        for (const f of files) {
-          const p = resolve(dir, f);
-          if (!f.endsWith(".js")) continue;
-          const src = readFileSync(p, "utf-8");
-          for (const m of src.matchAll(BARE_SPECIFIER)) {
-            offenders.push(`${f}: ${m[1]}`);
-          }
-        }
-      };
-      scan(outDir);
-      scan(resolve(outDir, "assets"));
-      if (offenders.length > 0) {
-        throw new Error(
-          `[bare-specifier-gate] output contains unresolved bare module ` +
-            `specifiers (rolldown externalized them silently — the importing ` +
-            `package's node_modules is stale):\n  ` +
-            offenders.slice(0, 20).join("\n  ") +
-            (offenders.length > 20 ? `\n  …and ${offenders.length - 20} more` : ""),
-        );
       }
     },
   };
