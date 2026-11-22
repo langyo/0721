@@ -43,6 +43,8 @@ backends and an MCP surface for AI agents.
   progress, user roster, strict site settings, theme (light/dark/auto +
   palettes) — embedded into the release binary
 - Internationalization (JSON catalogs, 12 locales, en + zh-Hans baselines)
+- MCP surface for AI agents: API-key authenticated SSE transport, five
+  netdisk tools, copy-once key reveal
 - Deploy via Docker Compose
 - Written in Rust with a TypeScript frontend
 
@@ -157,7 +159,7 @@ required variable or an unparseable value refuses to start):
 | `I0721_S3_BUCKET` / `I0721_S3_REGION` | required with `s3` | bucket name / region (`auto` works for MinIO) |
 | `I0721_S3_ACCESS_KEY` / `I0721_S3_SECRET_KEY` | required with `s3` | credentials |
 | `I0721_IPFS_API` | required with `ipfs` | kubo RPC base URL (e.g. `http://127.0.0.1:5001`) |
-| `I0721_PUBLIC_ORIGIN` | — | the deployment's absolute https origin (OAuth redirect URIs); unset = Host-header derivation |
+| `I0721_PUBLIC_ORIGIN` | — | the deployment's absolute https origin (OAuth redirect URIs, MCP share links); unset = Host-header derivation |
 | `I0721_STATIC_DIR` | `dist/webui` | web UI dist directory (dev mode; the default build embeds the dist) |
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |
 | `I0721_LOG` | `i0721_server=info,tower_http=warn` | tracing filter |
@@ -255,6 +257,7 @@ and `?token=` stay open for non-browser clients, tried in that order:
 - `auth.verify` — the session's user projection
 - `files.list {offset, limit}` · `files.update {id, name}` · `files.delete {id}` (owner-or-admin)
 - `users.list {offset, limit}` · `users.create {username, password, display_name?, role?}` · `users.delete {id}` — admin role required
+- `keys.create {name}` · `keys.list` · `keys.revoke {id}` — the MCP API keys; `create` answers the plaintext key exactly once, `revoke` also kills the live MCP sessions that key opened
 - `settings.get` · `settings.put` — admin role required; `put` takes the COMPLETE strict document (missing sections/leaves → error, never a silent default reset)
 
 **Transport**: the webui prefers the WebSocket (heartbeat + latency);
@@ -281,6 +284,64 @@ deferred-ops disabled (this instance serves no `ops.*`).
 - `POST /api/v1/auth/ws-ticket` — mints the one-time WebSocket admission ticket
 - `POST /api/v1/files` — multipart `file` upload (binary + progress events; optional `?name=`)
 - `GET /media/{key}[?thumbnail=true]` — the public path legacy image links depend on (referrer allow-list honored)
+- `GET /api/mcp/sse` — the MCP stream handshake, authenticated by an `Authorization: Bearer i0721-…` API key (minted on the API keys page or via `keys.create`). The session cookie is deliberately NOT accepted here: an agent carries the key, not a browser session, and a cookie-authenticated stream would let any page a signed-in browser visits open one
+- `POST /api/mcp/message?sessionId=…` — one JSON-RPC frame for that stream; the session id comes from the stream's first `endpoint` frame, and the response is pushed back over the stream, so the POST itself only answers 202
+
+## MCP
+
+The MCP surface lets an AI agent drive the netdisk: five tools over the
+SSE transport, authenticated with an API key instead of a browser
+session.
+
+| Lane | Shape |
+|---|---|
+| `GET /api/mcp/sse` | the stream; `Authorization: Bearer i0721-…`. The first frame is `event: endpoint`, carrying `/api/mcp/message?sessionId=…` |
+| `POST /api/mcp/message?sessionId=…` | one JSON-RPC frame; answers 202 and pushes the response back through the stream |
+
+JSON-RPC 2.0 conventions on this surface: protocol failures (`-32600`
+invalid request, `-32601` unknown method, `-32602` unknown tool /
+invalid params, `-32700` parse error) answer the envelope's top-level
+`error` object, while a tool that RUNS and fails is a `result` with
+`isError: true`; a request without `id` is a notification
+(`notifications/initialized`) — 202 and no frame; a body the server
+cannot read at all answers an HTTP 400 whose body carries the prescribed
+`id: null` error frame. A session lives 30 minutes, dies with its
+stream, and is dropped the moment its key is revoked.
+
+| Tool | Arguments (`*` required) | Result |
+|---|---|---|
+| `list_files` | `folder_id`, `offset` (default 0), `limit` (default and cap 100) | one folder of the caller's tree, newest first |
+| `file_info` | `id`* | one file's metadata |
+| `upload_file` | `content_base64`*, `name`*, `folder_id` | the created file — the SAME chain as the REST upload lane (quota, folder ownership, WebP pipeline, configured storage backend) |
+| `get_share_link` | `file_id`*, `expires_at`, `allow_preview` (default true) | `{url, token}`; a live share is reused, an expired one is replaced, a folder is refused |
+| `search_files` | `query`*, `kind`, `offset` (default 0), `limit` (default and cap 500) | files whose name (or original name) matches, scanned page by page |
+
+`tools/list` carries a real JSON Schema `inputSchema` per tool, so a
+client discovers the arguments without guessing. Every call runs with
+the key owner as the acting user — an API key never elevates. The share
+URL's origin is `I0721_PUBLIC_ORIGIN` (else the request's `Host`); with
+neither configured `get_share_link` answers an explicit error instead of
+minting a `localhost` link nobody can open.
+
+**Keys**: create one on the webui's "API keys" page (or `keys.create` on
+`/api/rpc`) — the plaintext key is shown exactly ONCE; `keys.list` shows
+only the masked prefix, and `keys.revoke {id}` kills the key and every
+live session it opened.
+
+A copy-pasteable `mcpServers` entry for an SSE-speaking client (Claude
+Code, Cursor and friends) — replace the origin and the key:
+
+```json
+{
+  "mcpServers": {
+    "0721": {
+      "type": "sse",
+      "url": "https://res.example.com/api/mcp/sse",
+      "headers": { "Authorization": "Bearer i0721-<your-api-key>" }
+    }
+  }
+}
+```
 
 ## Debug
 
