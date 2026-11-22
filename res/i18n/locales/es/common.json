@@ -37,7 +37,10 @@
   "auth": {
     "title": "Iniciar sesión",
     "subtitle": "Continuar a 0721",
-    "failed": "Nombre de usuario o contraseña incorrectos"
+    "failed": "Nombre de usuario o contraseña incorrectos",
+    "orContinue": "o continúa con",
+    "passwordDisabled": "El acceso con contraseña está desactivado: usa un proveedor.",
+    "noMethods": "No hay ningún método de acceso disponible: un administrador debe activar un proveedor o el acceso con contraseña."
   },
   "portal": {
     "title": "Imágenes",
@@ -78,7 +81,9 @@
     "useSourceFileName": "Usar el nombre del archivo original",
     "bannerText": "Texto",
     "bannerUrl": "Enlace (opcional)",
-    "addBanner": "Añadir entrada de banner"
+    "addBanner": "Añadir entrada de banner",
+    "passwordLogin": "Permitir acceso con contraseña",
+    "passwordLoginHint": "Desactívalo cuando haya proveedores OAuth."
   },
   "chrome": {
     "settings": "Ajustes",
@@ -86,5 +91,24 @@
     "language": "Idioma",
     "about": "Acerca de",
     "signOut": "Cerrar sesión"
+  },
+  "providers": {
+    "title": "Proveedores de acceso",
+    "empty": "Sin proveedores configurados",
+    "create": "Añadir proveedor",
+    "id": "ID",
+    "displayName": "Nombre visible",
+    "type": "Tipo",
+    "clientId": "ID de cliente",
+    "clientSecret": "Secreto de cliente",
+    "secretHint": "Vacío = conservar el secreto guardado",
+    "secretSet": "Secreto definido",
+    "noSecret": "Sin secreto",
+    "baseUrl": "URL base (ERP)",
+    "issuerUrl": "URL del emisor (OIDC)",
+    "enabled": "Activo",
+    "deleteConfirm": "¿Eliminar el proveedor {id}?",
+    "scopes": "Ámbitos",
+    "scopesHint": "Separados por espacios. Los tipos integrados ignoran este valor (sus plantillas traen sus propios ámbitos)."
   }
 }

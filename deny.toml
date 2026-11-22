@@ -20,6 +20,10 @@ allow = [
     "Unlicense",
     "Zlib",
     "MPL-2.0",
+    # webpki-roots (reqwest's rustls-tls): the packaged Mozilla root
+    # store carries the Community Data License Agreement Permissive 2.0
+    # — a permissive data license, no copyleft obligations.
+    "CDLA-Permissive-2.0",
     "LicenseRef-SySL-1.0",
 ]
 confidence-threshold = 0.8

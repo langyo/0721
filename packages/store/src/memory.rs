@@ -20,6 +20,7 @@ struct Inner {
     users: Vec<UserRecord>,
     files: Vec<FileRecord>,
     settings: HashMap<String, serde_json::Value>,
+    oauth_identities: Vec<(String, String, Uuid)>,
 }
 
 /// The in-memory [`Store`].
@@ -247,6 +248,41 @@ impl Store for MemoryStore {
         };
         file.deleted_at = Some(Timestamp::now().to_string());
         Ok(true)
+    }
+
+    async fn get_oauth_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<Uuid>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .oauth_identities
+            .iter()
+            .find(|(p, s, _)| p == provider && s == subject)
+            .map(|(_, _, id)| *id))
+    }
+
+    async fn link_oauth_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+        user_id: Uuid,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        if inner
+            .oauth_identities
+            .iter()
+            .any(|(p, s, _)| p == provider && s == subject)
+        {
+            return Err(conflict(format!(
+                "identity {provider}/{subject} is already linked"
+            )));
+        }
+        inner
+            .oauth_identities
+            .push((provider.to_owned(), subject.to_owned(), user_id));
+        Ok(())
     }
 
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {

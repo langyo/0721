@@ -37,7 +37,10 @@
   "auth": {
     "title": "登录",
     "subtitle": "继续前往 0721",
-    "failed": "用户名或密码错误"
+    "failed": "用户名或密码错误",
+    "orContinue": "或使用以下方式继续",
+    "passwordDisabled": "密码登录已停用——请使用下方提供方登录。",
+    "noMethods": "没有任何可用的登录方式——需要管理员启用一个登录提供方或开启密码登录。"
   },
   "portal": {
     "title": "图片",
@@ -78,7 +81,9 @@
     "useSourceFileName": "使用源文件名",
     "bannerText": "文本",
     "bannerUrl": "链接（可选）",
-    "addBanner": "添加页脚条目"
+    "addBanner": "添加页脚条目",
+    "passwordLogin": "允许密码登录",
+    "passwordLoginHint": "配置好 OAuth 提供方后建议关闭。"
   },
   "chrome": {
     "settings": "设置",
@@ -86,5 +91,24 @@
     "language": "语言",
     "about": "关于",
     "signOut": "退出登录"
+  },
+  "providers": {
+    "title": "登录提供方",
+    "empty": "尚未配置提供方",
+    "create": "添加提供方",
+    "id": "标识",
+    "displayName": "显示名称",
+    "type": "类型",
+    "clientId": "客户端 ID",
+    "clientSecret": "客户端密钥",
+    "secretHint": "留空表示保留已存密钥",
+    "secretSet": "已设密钥",
+    "noSecret": "未设密钥",
+    "baseUrl": "基础 URL（ERP）",
+    "issuerUrl": "签发方 URL（OIDC）",
+    "enabled": "启用",
+    "deleteConfirm": "删除提供方 {id}？",
+    "scopes": "作用域",
+    "scopesHint": "空格分隔。内置类型忽略此值（模板自带作用域）。"
   }
 }

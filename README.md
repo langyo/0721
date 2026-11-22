@@ -1,23 +1,33 @@
-# 0721
-
 <div align="center">
   <img src="https://raw.githubusercontent.com/celestia-island/celestia-island.github.io/main/res/logos/0721.webp" alt="0721" width="180" />
 </div>
 
-![CI workflow](https://img.shields.io/github/actions/workflow/status/langyo/0721/ci.yml)
-![GitHub License](https://img.shields.io/github/license/langyo/0721)
-![GitHub Tag](https://img.shields.io/github/v/tag/langyo/0721)
+<h1 align="center">0721</h1>
 
-> Ciallo～(∠·ω< )⌒★
+<div align="center">
+  <strong>A simple engine for image hosting, netdisk and galleries, written in Rust.</strong>
+</div>
 
-A simple engine for image hosting written in Rust.
+<div align="center">
+  Ciallo～(∠・ω< )⌒★
+</div>
 
-> The service is being rebuilt on the Celestia island family stack
-> (axum + lacrymira + hikari webui): image hosting grows into a netdisk +
-> gallery with OAuth sign-in, S3/IPFS storage backends and an MCP surface
-> for AI agents. The current trunk carries the rewritten data layer and
-> service (PostgreSQL metadata, local-FS blobs, transition-era password +
-> JWT auth); feature waves land as squash-merged pull requests.
+<br />
+
+<div align="center">
+  <a href="https://github.com/langyo/0721/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/langyo/0721/ci.yml?label=CI" alt="CI" />
+  </a>
+  <a href="https://github.com/langyo/0721/blob/master/LICENSE">
+    <img src="https://img.shields.io/github/license/langyo/0721" alt="License: Apache-2.0" />
+  </a>
+  <a href="https://github.com/langyo/0721/tags">
+    <img src="https://img.shields.io/github/v/tag/langyo/0721" alt="Tag" />
+  </a>
+</div>
+
+Rebuilt on axum, lacrymira and hikari; OAuth sign-in, S3/IPFS storage
+backends and an MCP surface for AI agents.
 
 ## Features
 
@@ -25,6 +35,9 @@ A simple engine for image hosting written in Rust.
 - Automatic image compression via WebP (animated GIF included)
 - Netdisk-ready metadata schema (kinds, directories, soft delete, shares)
 - Basic account system (admin-gated user management)
+- OAuth dual-mode login: provider registry (GitHub / Feishu / ERP
+  templates + generic OIDC discovery), PKCE S256 authorization-code
+  flow, optional password login with a kill-switch
 - Site configuration stored in the database — no restart to apply
 - hikari web UI (Vue 3 + TypeScript): portal timeline with upload
   progress, user roster, strict site settings, theme (light/dark/auto +
@@ -95,6 +108,7 @@ required variable or an unparseable value refuses to start):
 | `JWT_SECRET` (container-side; compose sets it from `I0721_JWT_SECRET`) | required | HS256 secret for the transition-era tokens |
 | `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
 | `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it) |
+| `I0721_PUBLIC_ORIGIN` | — | the deployment's absolute https origin (OAuth redirect URIs); unset = Host-header derivation |
 | `I0721_STATIC_DIR` | `dist/webui` | web UI dist directory (dev mode; the default build embeds the dist) |
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |
 | `I0721_LOG` | `i0721_server=info,tower_http=warn` | tracing filter |
@@ -139,6 +153,43 @@ Two caveats worth knowing:
   default `Referer` header. It is a courtesy gate, not technical
   protection: any client that omits the header passes it. Hard
   access control is what permissions and share tokens are for.
+
+## Login (dual mode)
+
+The service offers two login modes, driven by configuration:
+
+1. **OAuth providers** (the open-source default): the admin registers
+   providers on the webui's "Login providers" page (or the
+   `providers.*` RPC) — a built-in endpoint template (`builtin:github`,
+   `builtin:feishu`, `builtin:erp` with its `base_url`) or a generic
+   OIDC issuer (endpoints via `/.well-known/openid-configuration`,
+   cached 10 min). Each provider row carries its `client_secret`
+   server-side; every public shape shows only `has_secret` + the last
+   four characters. The browser flow is a standard authorization-code
+   round trip with **PKCE S256** and a 600 s HttpOnly state cookie; a
+   first login mints a local account (`{provider}_{subject[0..8]}`,
+   no password) bound through the `oauth_identities` table — the same
+   (provider, subject) always signs into the same account.
+2. **Password login** (optional): on unless turned off. The switch
+   lives in the admin settings ("Allow password login") or the
+   settings row `auth_password_login`; the env pin
+   `I0721_PASSWORD_LOGIN=true|false` sits between the row and the
+   default (row > env > on). **Turn it off once OAuth is configured** —
+   a fresh deployment stays on so it cannot lock itself out.
+
+Security notes: the session credential is an httpOnly cookie (never in
+page-readable storage or URLs); the OAuth `client_secret` never leaves
+the server; the state cookie is strictly compared against the
+provider's echo AND carries the provider id (a state minted for one
+provider cannot be replayed against another); provider endpoint URLs
+must be absolute https (http survives only for localhost/127.0.0.1 —
+the local dev/stub lane); set `I0721_PUBLIC_ORIGIN`
+(https://your-domain.example in production) so the OAuth redirect URI
+follows the deployment's real origin instead of the Host header; the
+password kill-switch refuses to turn the password OFF while no OAuth
+provider is enabled (the no-login-method state is unreachable); no
+email-domain restriction ships in this first version (the admin gate +
+provider choice are the boundary).
 
 ## API sketch
 

@@ -40,6 +40,12 @@ export const router = createRouter({
           component: () => import("@/views/SettingsView.vue"),
           meta: { titleKey: "common.settings.title", admin: true },
         },
+        {
+          path: "providers",
+          name: "login-providers",
+          component: () => import("@/views/ProvidersView.vue"),
+          meta: { titleKey: "common.providers.title", admin: true },
+        },
       ],
     },
     { path: "/:pathMatch(.*)*", redirect: "/" },

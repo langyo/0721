@@ -37,7 +37,10 @@
   "auth": {
     "title": "Connexion",
     "subtitle": "Continuer vers 0721",
-    "failed": "Nom d'utilisateur ou mot de passe incorrect"
+    "failed": "Nom d'utilisateur ou mot de passe incorrect",
+    "orContinue": "ou continuer avec",
+    "passwordDisabled": "Connexion par mot de passe désactivée — utilisez un fournisseur ci-dessous.",
+    "noMethods": "Aucune méthode de connexion disponible — un administrateur doit activer un fournisseur ou la connexion par mot de passe."
   },
   "portal": {
     "title": "Images",
@@ -78,7 +81,9 @@
     "useSourceFileName": "Conserver le nom du fichier source",
     "bannerText": "Texte",
     "bannerUrl": "Lien (facultatif)",
-    "addBanner": "Ajouter une entrée de bannière"
+    "addBanner": "Ajouter une entrée de bannière",
+    "passwordLogin": "Autoriser la connexion par mot de passe",
+    "passwordLoginHint": "À désactiver une fois les fournisseurs OAuth configurés."
   },
   "chrome": {
     "settings": "Paramètres",
@@ -86,5 +91,24 @@
     "language": "Langue",
     "about": "À propos",
     "signOut": "Se déconnecter"
+  },
+  "providers": {
+    "title": "Fournisseurs de connexion",
+    "empty": "Aucun fournisseur configuré",
+    "create": "Ajouter un fournisseur",
+    "id": "ID",
+    "displayName": "Nom affiché",
+    "type": "Type",
+    "clientId": "ID client",
+    "clientSecret": "Secret client",
+    "secretHint": "Laisser vide pour conserver le secret",
+    "secretSet": "Secret défini",
+    "noSecret": "Aucun secret",
+    "baseUrl": "URL de base (ERP)",
+    "issuerUrl": "URL de l'émetteur (OIDC)",
+    "enabled": "Activé",
+    "deleteConfirm": "Supprimer le fournisseur {id} ?",
+    "scopes": "Scopes",
+    "scopesHint": "Séparés par des espaces. Les types intégrés ignorent cette valeur (leurs modèles apportent leurs scopes)."
   }
 }

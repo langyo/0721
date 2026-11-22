@@ -89,6 +89,9 @@ include_dir = "^0.7"
 
 futures = "^0.3"
 
+# Server-side OAuth calls (token exchange + OIDC discovery).
+reqwest = { version = "^0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # Dev-only: the WS-frame integration tests (the family's own dev lane).
 tokio-tungstenite = "^0.30"
 

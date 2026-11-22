@@ -133,6 +133,22 @@ pub trait Store: Send + Sync {
     async fn soft_delete_file(&self, id: Uuid) -> Result<bool, StoreError>;
 
     /// Read one settings row.
+    /// The local user bound to an OAuth identity, if any.
+    async fn get_oauth_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<Uuid>, StoreError>;
+
+    /// Bind an OAuth identity to a local user. Conflict when the
+    /// (provider, subject) binding already exists.
+    async fn link_oauth_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+        user_id: Uuid,
+    ) -> Result<(), StoreError>;
+
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError>;
 
     /// Write one settings row (upsert).

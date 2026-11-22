@@ -9,7 +9,7 @@ pub mod auth;
 pub mod files;
 pub mod settings;
 
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::state::AppState;
@@ -22,5 +22,11 @@ pub fn router() -> Router<AppState> {
         .route("/auth/refresh", post(auth::refresh))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/ws-ticket", post(auth::ws_ticket))
+        .route("/auth/login-methods", get(auth::login_methods))
+        .route("/auth/oauth/{provider}", get(crate::oauth::redirect))
+        .route(
+            "/auth/oauth/{provider}/callback",
+            get(crate::oauth::callback),
+        )
         .nest("/files", files_api)
 }

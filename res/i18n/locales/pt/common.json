@@ -37,7 +37,10 @@
   "auth": {
     "title": "Entrar",
     "subtitle": "Continuar para o 0721",
-    "failed": "Nome de usuário ou senha inválidos"
+    "failed": "Nome de usuário ou senha inválidos",
+    "orContinue": "ou continue com",
+    "passwordDisabled": "Login por senha desativado — use um provedor abaixo.",
+    "noMethods": "Nenhum método de login disponível — um administrador precisa ativar um provedor ou o login por senha."
   },
   "portal": {
     "title": "Imagens",
@@ -78,7 +81,9 @@
     "useSourceFileName": "Manter o nome do arquivo original",
     "bannerText": "Texto",
     "bannerUrl": "Link (opcional)",
-    "addBanner": "Adicionar entrada de banner"
+    "addBanner": "Adicionar entrada de banner",
+    "passwordLogin": "Permitir login por senha",
+    "passwordLoginHint": "Desative após configurar provedores OAuth."
   },
   "chrome": {
     "settings": "Ajustes",
@@ -86,5 +91,24 @@
     "language": "Idioma",
     "about": "Sobre",
     "signOut": "Sair"
+  },
+  "providers": {
+    "title": "Provedores de login",
+    "empty": "Nenhum provedor configurado",
+    "create": "Adicionar provedor",
+    "id": "ID",
+    "displayName": "Nome de exibição",
+    "type": "Tipo",
+    "clientId": "ID do cliente",
+    "clientSecret": "Segredo do cliente",
+    "secretHint": "Vazio = manter o segredo salvo",
+    "secretSet": "Segredo definido",
+    "noSecret": "Sem segredo",
+    "baseUrl": "URL base (ERP)",
+    "issuerUrl": "URL do emissor (OIDC)",
+    "enabled": "Ativo",
+    "deleteConfirm": "Excluir o provedor {id}?",
+    "scopes": "Escopos",
+    "scopesHint": "Separados por espaços. Os tipos integrados ignoram este valor (seus templates trazem escopos próprios)."
   }
 }

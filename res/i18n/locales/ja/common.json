@@ -37,7 +37,10 @@
   "auth": {
     "title": "ログイン",
     "subtitle": "0721 へ続行",
-    "failed": "ユーザー名またはパスワードが違います"
+    "failed": "ユーザー名またはパスワードが違います",
+    "orContinue": "または以下で続行",
+    "passwordDisabled": "パスワードログインは無効です。下のプロバイダーをご利用ください。",
+    "noMethods": "利用できるログイン方法がありません——管理者がプロバイダーまたはパスワードログインを有効にする必要があります。"
   },
   "portal": {
     "title": "画像",
@@ -78,7 +81,9 @@
     "useSourceFileName": "元のファイル名を使用する",
     "bannerText": "テキスト",
     "bannerUrl": "リンク（任意）",
-    "addBanner": "バナー項目を追加"
+    "addBanner": "バナー項目を追加",
+    "passwordLogin": "パスワードログインを許可",
+    "passwordLoginHint": "OAuth プロバイダー設定後は無効化を推奨。"
   },
   "chrome": {
     "settings": "設定",
@@ -86,5 +91,24 @@
     "language": "言語",
     "about": "このアプリについて",
     "signOut": "ログアウト"
+  },
+  "providers": {
+    "title": "ログインプロバイダー",
+    "empty": "プロバイダー未設定",
+    "create": "プロバイダーを追加",
+    "id": "ID",
+    "displayName": "表示名",
+    "type": "種類",
+    "clientId": "クライアント ID",
+    "clientSecret": "クライアントシークレット",
+    "secretHint": "空欄なら保存済みシークレットを維持",
+    "secretSet": "シークレット設定済み",
+    "noSecret": "シークレットなし",
+    "baseUrl": "ベース URL（ERP）",
+    "issuerUrl": "発行者 URL（OIDC）",
+    "enabled": "有効",
+    "deleteConfirm": "プロバイダー {id} を削除しますか？",
+    "scopes": "スコープ",
+    "scopesHint": "スペース区切り。内蔵タイプはこの値を無視します（テンプレート固有のスコープを使用）。"
   }
 }
