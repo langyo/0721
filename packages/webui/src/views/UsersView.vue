@@ -37,6 +37,9 @@ const loadError = ref<string | null>(null);
 const hasMore = computed(() => users.value.length < total.value);
 
 async function load(reset: boolean) {
+  // Re-entrancy guard: the paging offset below is read from the live
+  // list, so two overlapping calls would append the same page twice.
+  if (loading.value && !reset) return;
   loading.value = true;
   loadError.value = null;
   try {
@@ -198,7 +201,7 @@ const columns = computed<HTableColumn[]>(() => [
       </template>
 
       <template #cell-created="{ row }">
-        <HkDateTag :value="row.created_at" />
+        <HkDateTag :value="row.created_at" time seconds />
       </template>
 
       <template #cell-actions="{ row }">
@@ -222,6 +225,7 @@ const columns = computed<HTableColumn[]>(() => [
       <HkIconButton
         :size="28"
         variant="ghost"
+        :disabled="loading"
         :aria-label="t('common.actions.loadMore')"
         :title="t('common.actions.loadMore')"
         @click="load(false)"

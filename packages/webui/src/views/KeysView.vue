@@ -105,7 +105,6 @@ async function doRevoke() {
 
 <template>
   <section class="keys-page">
-    <p v-if="error" role="alert" class="err">{{ error }}</p>
     <!-- Copy-once card: shown immediately after creation -->
     <div v-if="created" class="copy-once" data-testid="copy-once-card">
       <p class="warning">{{ t("common.keys.copyOnceWarning") }}</p>
@@ -133,6 +132,7 @@ async function doRevoke() {
       :columns="columns"
       row-key="id"
       :loading="loading"
+      :error="error ?? undefined"
       :empty-title="t('common.keys.empty')"
     >
       <template #cell-name="{ row }">
@@ -186,17 +186,11 @@ async function doRevoke() {
 .key-name-cell { display: inline-flex; align-items: center; gap: 0.4rem; }
 .key-prefix { font-family: var(--hk-font-mono, ui-monospace, monospace); opacity: 0.8; }
 .keys-page { display: flex; flex-direction: column; gap: 1rem; }
-.err { color: rgb(220 38 38); }
 .copy-once { padding: 1rem; border: 2px solid rgb(217 138 43); border-radius: 0.75rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .warning { color: rgb(217 138 43); font-size: 0.85rem; margin: 0; }
 .copy-failed { color: rgb(220 38 38); font-size: 0.8rem; margin: 0; }
 .key-text { font-size: 0.9rem; padding: 0.5rem; border-radius: 0.4rem; background: color-mix(in srgb, currentColor 6%, transparent); word-break: break-all; }
 .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.icon { opacity: 0.5; }
-.name { font-weight: 600; font-size: 0.85rem; flex: 1; }
-.prefix { font-size: 0.78rem; opacity: 0.6; font-family: monospace; }
-.meta { font-size: 0.75rem; color: rgb(220 38 38); }
-.revoke { border: none; background: transparent; color: inherit; opacity: 0.5; cursor: pointer; padding: 0.25rem; border-radius: 0.35rem; }
 .revoke:hover { opacity: 1; color: rgb(220 38 38); }
 .dialog-body { display: flex; flex-direction: column; gap: 0.75rem; }
 </style>

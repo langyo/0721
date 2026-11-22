@@ -81,8 +81,47 @@ describe("UsersView (family table roster)", () => {
     expect(rows.length).toBe(2);
     expect(wrapper.text()).toContain("ALICE");
     expect(wrapper.text()).toContain("@alice");
-    // The server's total is the readout, not the page length.
-    expect(wrapper.text()).toContain(String(2));
+    // The Created column keeps the time-of-day (master rendered
+    // toLocaleString; the date tag's `time` flag is what preserves it).
+    expect(wrapper.text()).toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("reports the SERVER's total, which is not the page length", async () => {
+    // Distinct from the row count on purpose: a subtitle that rendered
+    // the page length instead of `total` used to pass unnoticed because
+    // both were 2.
+    listUsersMock.mockResolvedValue({
+      items: [user("me", "me", "admin"), user("u2", "alice", "member")],
+      total: 42,
+    });
+    wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain("42");
+    expect(wrapper.findAll("tbody tr").length).toBe(2);
+  });
+
+  it("refuses a second load-more while a page is still in flight", async () => {
+    // The paging offset is read from the live list, so two overlapping
+    // calls would append the same page twice.
+    listUsersMock.mockResolvedValueOnce({
+      items: [user("me", "me", "dummy" as "member")],
+      total: 3,
+    });
+    wrapper = mountView();
+    await flushPromises();
+    let release: (value: unknown) => void = () => undefined;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    listUsersMock.mockReturnValueOnce(pending);
+    const more = wrapper.find(`button[aria-label="${i18n.global.t("common.actions.loadMore")}"]`);
+    expect(more.exists()).toBe(true);
+    await more.trigger("click");
+    await more.trigger("click");
+    // Two presses, one request: the guard refuses the second.
+    expect(listUsersMock).toHaveBeenCalledTimes(2); // initial + one more
+    release({ items: [], total: 3 });
+    await flushPromises();
   });
 
   it("offers no delete affordance on the signed-in admin's own row", async () => {

@@ -85,10 +85,6 @@ async function revoke(token: string) {
 </template>
 
 <style scoped>
-.name { flex: 1; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.size { font-size: 0.75rem; opacity: 0.6; }
-.link { font-size: 0.75rem; opacity: 0.7; color: inherit; }
-.err { color: rgb(220 38 38); }
 .ok { color: rgb(22 128 61); font-size: 0.85rem; margin: 0; }
 .share-link { font-family: var(--hk-font-mono, ui-monospace, monospace); }
 </style>

@@ -192,3 +192,17 @@ describe("KeysView clipboard", () => {
     vi.useRealTimers();
   });
 });
+
+describe("KeysView error surface (family scaffold)", () => {
+  it("hands a list failure to the table scaffold instead of a bare paragraph", async () => {
+    listKeysMock.mockRejectedValue(new Error("boom"));
+    const wrapper = mount(KeysView, { global: { plugins: [createAppI18n()] } });
+    await flushPromises();
+    // The scaffold's alert is where a hard error belongs (the other three
+    // rosters bind it too); a hand-rolled <p class="err"> was the old
+    // shape and is gone from the template.
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.find(".err").exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
