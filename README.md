@@ -164,6 +164,7 @@ required variable or an unparseable value refuses to start):
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |
 | `I0721_LOG` | `i0721_server=info,tower_http=warn` | tracing filter |
 | `I0721_SEED_ADMIN_PASSWORD` | `admin` | first-boot admin password (empty user table only) |
+| `I0721_COOKIE_SECURE` | `auto` | session cookie `Secure` flag: `auto` (follow `X-Forwarded-Proto`), `always` (TLS edge that does not forward the scheme) or `never`; anything else refuses to start |
 | `I0721_TRUSTED_PROXIES` | *(empty)* | CIDR list whose `X-Forwarded-For` is honored for login throttling; empty = never trust the header |
 
 The site configuration (the old `Config.toml`) lives in the `settings`

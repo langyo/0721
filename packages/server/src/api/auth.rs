@@ -16,14 +16,30 @@ use crate::auth::{clears_watermark, effective_client_ip, verify_password, waterm
 pub const TOKEN_COOKIE: &str = "i0721-token";
 
 /// The cookie's attributes. `HttpOnly` keeps the JWT out of JS reach
-/// (the XSS-exposure class that motivated the session-layer move);
-/// `SameSite=Strict` rides the same-origin deployment (the reverse
-/// proxy fronts the service, so there is no cross-site legit caller —
-/// and CSRF on the cookie lane dies with Strict). No `Secure` flag:
-/// the backend serves plain HTTP behind the TLS-terminating proxy, and
-/// a Secure cookie would never be set over that hop (revisit if the
-/// service is ever exposed directly).
-pub const COOKIE_ATTRIBUTES: &str = " HttpOnly; SameSite=Strict; Path=/";
+/// (the XSS-exposure class that motivated the session-layer move).
+///
+/// `SameSite=Lax`, NOT `Strict`: this service's whole point is sharing
+/// links — a recipient who is already signed in and follows a share link
+/// from another site arrives on a TOP-LEVEL navigation, and `Strict`
+/// would strip the session cookie from exactly that request (they would
+/// look signed-out until they navigated internally). `Lax` still keeps
+/// the cookie off cross-site sub-requests and off state-changing POSTs,
+/// so the CSRF face the earlier comment worried about stays closed: our
+/// mutations ride POST/JSON-RPC, and every one of them is a non-top-level
+/// cross-site request.
+///
+/// `Secure` is added when the deployment is served over https (decided
+/// per request from [`crate::origin::serves_https`]) so the cookie is
+/// never sent over a plaintext hop in production, while local http dev
+/// keeps working.
+#[must_use]
+pub fn cookie_attributes(secure: bool) -> &'static str {
+    if secure {
+        " HttpOnly; SameSite=Lax; Path=/; Secure"
+    } else {
+        " HttpOnly; SameSite=Lax; Path=/"
+    }
+}
 
 /// Extract the credential, the family's fixed four-channel order:
 /// cookie → `Authorization: Bearer` → `Sec-WebSocket-Protocol: jwt.<t>`
@@ -244,7 +260,11 @@ pub async fn login(
         expires_at: expiry_rfc3339(now),
         user: user.into(),
     };
-    Ok(session_cookie(&token, session))
+    Ok(session_cookie(
+        &token,
+        session,
+        crate::origin::serves_https(&state, &headers),
+    ))
 }
 
 /// `POST /api/v1/auth/refresh` — cookie rotation: verifies the current
@@ -264,14 +284,18 @@ pub async fn refresh(
         expires_at: expiry_rfc3339(now),
         user: user.into(),
     };
-    Ok(session_cookie(&token, session))
+    Ok(session_cookie(
+        &token,
+        session,
+        crate::origin::serves_https(&state, &headers),
+    ))
 }
 
 /// `POST /api/v1/auth/logout` — expires the cookie and supersedes every
 /// outstanding token for the user (the watermark bump: the next request
-/// with ANY pre-logout credential fails). SameSite=Strict keeps the
-/// endpoint CSRF-safe; an unauthenticated call merely clears a cookie
-/// that was already dead.
+/// with ANY pre-logout credential fails). SameSite=Lax keeps the
+/// endpoint CSRF-safe (a cross-site POST never carries the cookie); an
+/// unauthenticated call merely clears a cookie that was already dead.
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -294,9 +318,9 @@ pub async fn logout(
             )
             .await?;
     }
-    let cleared = format!(
-        "{TOKEN_COOKIE}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT{COOKIE_ATTRIBUTES}"
-    );
+    let attributes = cookie_attributes(crate::origin::serves_https(&state, &headers));
+    let cleared =
+        format!("{TOKEN_COOKIE}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT{attributes}");
     Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, cleared)]).into_response())
 }
 
@@ -325,11 +349,11 @@ pub async fn ws_ticket(
 }
 
 /// Wrap a session body with its Set-Cookie.
-fn session_cookie(token: &str, session: AuthSession) -> Response {
+fn session_cookie(token: &str, session: AuthSession, secure: bool) -> Response {
     let cookie = format!(
         "{TOKEN_COOKIE}={token}; Max-Age={}{}",
         crate::auth::TOKEN_TTL_DAYS * 24 * 3600,
-        COOKIE_ATTRIBUTES
+        cookie_attributes(secure)
     );
     (
         StatusCode::OK,

@@ -56,6 +56,7 @@ fn base_config() -> Config {
         seed_admin_password: "admin-password".to_owned(),
         trusted_proxies: Vec::new(),
         public_origin: None,
+        cookie_secure: "auto".to_owned(),
         storage_backend: "local".to_owned(),
     }
 }
@@ -113,8 +114,9 @@ async fn login(state: &AppState, username: &str, password: &str) -> String {
         "the cookie must be HttpOnly: {cookie}"
     );
     assert!(
-        cookie.contains("SameSite=Strict"),
-        "the cookie must be Strict: {cookie}"
+        cookie.contains("SameSite=Lax"),
+        "the cookie must be Lax (Strict would strip it on a top-level \
+         navigation that follows an external share link): {cookie}"
     );
     let token = cookie
         .split(';')
@@ -350,6 +352,11 @@ async fn rpc_auth_flow_verify_refresh() {
         .to_str()
         .unwrap();
     assert!(cookie.starts_with("i0721-token="));
+    // The rotation carries the same attribute contract as the login
+    // (Lax always; Secure follows the request's scheme).
+    assert!(cookie.contains("SameSite=Lax"), "refresh: {cookie}");
+    assert!(!cookie.contains("Strict"), "refresh: {cookie}");
+    assert!(!cookie.contains("Secure"), "plain-http refresh: {cookie}");
 
     // Tampered token: the auth hook refuses the request outright.
     let tampered = format!("{token}x");
@@ -1610,7 +1617,12 @@ async fn logout_expires_the_cookie_and_kills_the_session() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     let cookie = response.headers().get(header::SET_COOKIE).unwrap();
-    assert!(cookie.to_str().unwrap().contains("Max-Age=0"));
+    let cleared = cookie.to_str().unwrap();
+    assert!(cleared.contains("Max-Age=0"));
+    // The clearing cookie carries the SAME attributes as the planted one
+    // — a mismatched Path/SameSite would leave the live cookie in place.
+    assert!(cleared.contains("SameSite=Lax"), "logout: {cleared}");
+    assert!(cleared.contains("HttpOnly"), "logout: {cleared}");
 
     let (status, _) = rpc(&state, &token, "auth.verify", serde_json::Value::Null).await;
     assert_eq!(
@@ -2086,6 +2098,11 @@ async fn oauth_end_to_end_against_a_local_stub_provider() {
         .find(|c| c.starts_with("i0721-token="))
         .expect("the OAuth login plants the session cookie");
     assert!(session.contains("HttpOnly"));
+    // The OAuth-planted session rides the same attribute contract.
+    assert!(
+        session.contains("SameSite=Lax"),
+        "oauth session cookie: {session}"
+    );
     // The flow cookie is cleared alongside.
     assert!(set_cookies
         .iter()
@@ -5925,4 +5942,76 @@ async fn mcp_reupload_of_own_bytes_still_faces_the_quota_gate() {
         is_error && text.contains("quota"),
         "an over-quota re-upload must NOT ride the dedupe shortcut: {text}"
     );
+}
+
+/// The session cookie policy (public-exposure hardening): `SameSite=Lax`
+/// always — `Strict` would strip the cookie from a top-level navigation
+/// that follows a share link from another site, which is this service's
+/// bread and butter — and `Secure` decided per REQUEST (the edge's
+/// `X-Forwarded-Proto`) with `I0721_COOKIE_SECURE` as the pin for edges
+/// that terminate TLS without forwarding the scheme.
+#[tokio::test]
+async fn session_cookie_is_lax_and_secure_only_over_https() {
+    async fn login_cookie(state: &AppState, extra: Option<(&'static str, &'static str)>) -> String {
+        let mut request = login_request("admin", "admin-password");
+        if let Some((name, value)) = extra {
+            request.headers_mut().insert(
+                header::HeaderName::from_static(name),
+                header::HeaderValue::from_static(value),
+            );
+        }
+        let response = app(state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .expect("login sets the cookie")
+            .to_owned()
+    }
+
+    // Plain http, no forwarded scheme: Lax, no Secure (the LAN dev lane
+    // must be able to log in at all).
+    let (state, _admin) = test_state().await;
+    let cookie = login_cookie(&state, None).await;
+    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
+    assert!(!cookie.contains("Strict"), "no Strict left: {cookie}");
+    assert!(!cookie.contains("Secure"), "http keeps working: {cookie}");
+
+    // Behind a TLS edge that forwards the scheme: Secure appears.
+    let cookie = login_cookie(&state, Some(("x-forwarded-proto", "https"))).await;
+    assert!(cookie.contains("Secure"), "https edge: {cookie}");
+    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
+
+    // The pin for edges that do not forward the scheme.
+    let (state_always, _) = test_state().await;
+    let mut config = state_always.config.as_ref().clone();
+    config.cookie_secure = "always".to_owned();
+    let pinned = i0721_server::state::AppState::new(
+        state_always.store.clone(),
+        state_always.blobs.clone(),
+        std::sync::Arc::new(config),
+    );
+    let cookie = login_cookie(&pinned, None).await;
+    assert!(cookie.contains("Secure"), "pinned always: {cookie}");
+}
+
+/// `I0721_COOKIE_SECURE` is validated at startup: a typo must refuse to
+/// start rather than silently degrade to `auto` (which is how a
+/// production https edge would end up with a non-Secure session cookie).
+#[tokio::test]
+async fn cookie_secure_rejects_an_unknown_value() {
+    let result = i0721_server::config::Config::from_env_with(|key| match key {
+        "I0721_DATABASE_URL" => Some("postgres://x/y".to_owned()),
+        "JWT_SECRET" => Some("s".to_owned()),
+        "I0721_COOKIE_SECURE" => Some("Secure".to_owned()),
+        _ => None,
+    });
+    match result {
+        Err(err) => assert!(
+            format!("{err}").contains("I0721_COOKIE_SECURE"),
+            "the error names the variable: {err}"
+        ),
+        Ok(_) => panic!("an unknown I0721_COOKIE_SECURE must refuse to start"),
+    }
 }

@@ -608,7 +608,10 @@ pub async fn callback(
 
     let redirect_uri = callback_uri(&state, &headers, &provider);
 
-    match run_exchange_and_session(&state, config, &redirect_uri, code, verifier).await {
+    let secure_cookie = crate::origin::serves_https(&state, &headers);
+    match run_exchange_and_session(&state, config, &redirect_uri, code, verifier, secure_cookie)
+        .await
+    {
         Ok(response) => {
             // Clear the flow cookie alongside the session.
             let cleared = format!(
@@ -637,6 +640,7 @@ async fn run_exchange_and_session(
     redirect_uri: &str,
     code: &str,
     verifier: &str,
+    secure_cookie: bool,
 ) -> Result<Response, ApiError> {
     let token_url = match token_endpoint(config) {
         Some(url) => url,
@@ -739,7 +743,7 @@ async fn run_exchange_and_session(
     let cookie = format!(
         "i0721-token={token}; Max-Age={}{}",
         TOKEN_TTL_DAYS * 24 * 3600,
-        crate::api::auth::COOKIE_ATTRIBUTES,
+        crate::api::auth::cookie_attributes(secure_cookie),
     );
     Ok((
         StatusCode::FOUND,
