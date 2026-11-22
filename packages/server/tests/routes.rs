@@ -707,16 +707,6 @@ async fn settings_get_put_and_referer_gate() {
 }
 
 #[tokio::test]
-async fn placeholder_index_serves() {
-    let (state, _) = test_state().await;
-    let response = app(&state)
-        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-}
-
-#[tokio::test]
 async fn settings_put_requires_the_complete_document() {
     let (state, admin) = test_state().await;
     let token = state.signer.sign(admin.id, Timestamp::now());
