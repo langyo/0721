@@ -129,6 +129,9 @@ export function putPasswordLogin(enabled: boolean): Promise<void> {
 
 // The wire shapes are the ts-rs bindings — never hand-written here
 // (AGENTS 「类型单向」): the generated barrel is the single source.
+// (Re-export AND import: `export ... from` does not bind the local
+// names these functions below reference.)
+import type { ApiKeyCreated, ApiKeyPublic } from "@/types";
 export type { ApiKeyCreated, ApiKeyPublic } from "@/types";
 
 export function createKey(name: string): Promise<ApiKeyCreated> {

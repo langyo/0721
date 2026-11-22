@@ -52,7 +52,7 @@ function mountView() {
   document.body.appendChild(host);
   return mount(Harness, {
     attachTo: host,
-    global: { plugins: [createAppI18n("en")] },
+    global: { plugins: [createAppI18n()] },
   });
 }
 
