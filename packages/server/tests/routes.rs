@@ -56,6 +56,7 @@ fn base_config() -> Config {
         seed_admin_password: "admin-password".to_owned(),
         trusted_proxies: Vec::new(),
         public_origin: None,
+        storage_backend: "local".to_owned(),
     }
 }
 
@@ -4027,4 +4028,293 @@ async fn deleting_a_file_purges_its_share_rows() {
         .await
         .unwrap();
     assert_eq!(meta.status(), StatusCode::NOT_FOUND, "the token is dead");
+}
+
+// ── the IPFS blob backend against an in-process kubo stub ──────────────
+
+/// An axum stub speaking the kubo RPC subset: /add, /files/cp,
+/// /files/read, /files/stat, /files/rm, /files/mkdir, /pin/rm.
+struct KuboStub {
+    /// CID → bytes.
+    content: std::sync::Mutex<std::collections::HashMap<String, bytes::Bytes>>,
+    /// MFS path → CID.
+    mfs: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    /// The pin/rm calls (for the delete assertion).
+    unpinned: std::sync::Mutex<Vec<String>>,
+    /// True when the stub should answer 500 for the NEXT add call.
+    fail_next_add: std::sync::atomic::AtomicBool,
+}
+
+impl KuboStub {
+    fn router(self: std::sync::Arc<Self>) -> Router {
+        let add = self.clone();
+        let cp = self.clone();
+        let read = self.clone();
+        let stat = self.clone();
+        let rm = self.clone();
+        let mkdir = self.clone();
+        let pin_rm = self.clone();
+        Router::new()
+            .route(
+                "/api/v0/add",
+                axum::routing::post(move |body: String| {
+                    let stub = add.clone();
+                    async move {
+                        use axum::response::IntoResponse;
+                        if stub
+                            .fail_next_add
+                            .swap(false, std::sync::atomic::Ordering::Relaxed)
+                        {
+                            return (StatusCode::INTERNAL_SERVER_ERROR, "kubo exploded")
+                                .into_response();
+                        }
+                        // Extract the file payload from the multipart envelope
+                        // (between the first blank line and the trailing boundary).
+                        let payload = body
+                            .split_once("\r\n\r\n")
+                            .map(|(_, rest)| rest)
+                            .and_then(|rest| rest.rfind("\r\n--").map(|end| &rest[..end]))
+                            .unwrap_or(&body);
+                        let cid = format!("Qm{:x}", payload.len());
+                        stub.content.lock().unwrap().insert(
+                            cid.clone(),
+                            bytes::Bytes::copy_from_slice(payload.as_bytes()),
+                        );
+                        axum::Json(serde_json::json!({"Name": "file", "Hash": cid, "Size": 0}))
+                            .into_response()
+                    }
+                }),
+            )
+            .route(
+                "/api/v0/files/cp",
+                axum::routing::post(
+                    move |axum::extract::Query(q): axum::extract::Query<Vec<(String, String)>>| {
+                        let stub = cp.clone();
+                        async move {
+                            use axum::response::IntoResponse;
+                            let args: Vec<&str> = q
+                                .iter()
+                                .filter(|(k, _)| k == "arg")
+                                .map(|(_, v)| v.as_str())
+                                .collect();
+                            if args.len() != 2 {
+                                return (StatusCode::BAD_REQUEST, "need 2 args").into_response();
+                            }
+                            let source = args[0].trim_start_matches("/ipfs/");
+                            let target = args[1];
+                            stub.mfs
+                                .lock()
+                                .unwrap()
+                                .insert(target.to_owned(), source.to_owned());
+                            (StatusCode::OK, "").into_response()
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v0/files/read",
+                axum::routing::post(
+                    move |axum::extract::Query(q): axum::extract::Query<Vec<(String, String)>>| {
+                        let stub = read.clone();
+                        async move {
+                            use axum::response::IntoResponse;
+                            let Some((_, path)) = q.iter().find(|(k, _)| k == "arg") else {
+                                return (StatusCode::BAD_REQUEST, "missing arg").into_response();
+                            };
+                            let mfs = stub.mfs.lock().unwrap();
+                            match mfs.get(path.as_str()) {
+                                Some(cid) => {
+                                    let content = stub.content.lock().unwrap();
+                                    match content.get(cid) {
+                                        Some(bytes) => {
+                                            (StatusCode::OK, bytes.clone()).into_response()
+                                        }
+                                        None => (StatusCode::INTERNAL_SERVER_ERROR, "CID vanished")
+                                            .into_response(),
+                                    }
+                                }
+                                None => (StatusCode::INTERNAL_SERVER_ERROR, "file does not exist")
+                                    .into_response(),
+                            }
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v0/files/stat",
+                axum::routing::post(
+                    move |axum::extract::Query(q): axum::extract::Query<Vec<(String, String)>>| {
+                        let stub = stat.clone();
+                        async move {
+                            use axum::response::IntoResponse;
+                            let Some((_, path)) = q.iter().find(|(k, _)| k == "arg") else {
+                                return (StatusCode::BAD_REQUEST, "missing arg").into_response();
+                            };
+                            let mfs = stub.mfs.lock().unwrap();
+                            match mfs.get(path.as_str()) {
+                                Some(cid) => {
+                                    (StatusCode::OK, axum::Json(serde_json::json!({"Hash": cid})))
+                                        .into_response()
+                                }
+                                None => (StatusCode::INTERNAL_SERVER_ERROR, "file does not exist")
+                                    .into_response(),
+                            }
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v0/files/rm",
+                axum::routing::post(
+                    move |axum::extract::Query(q): axum::extract::Query<Vec<(String, String)>>| {
+                        let stub = rm.clone();
+                        async move {
+                            use axum::response::IntoResponse;
+                            let Some((_, path)) = q.iter().find(|(k, _)| k == "arg") else {
+                                return (StatusCode::BAD_REQUEST, "missing arg").into_response();
+                            };
+                            stub.mfs.lock().unwrap().remove(path.as_str());
+                            (StatusCode::OK, "").into_response()
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v0/files/mkdir",
+                axum::routing::post(move || {
+                    let _ = mkdir;
+                    async move { (StatusCode::OK, "") }
+                }),
+            )
+            .route(
+                "/api/v0/pin/rm",
+                axum::routing::post(
+                    move |axum::extract::Query(q): axum::extract::Query<Vec<(String, String)>>| {
+                        let stub = pin_rm.clone();
+                        async move {
+                            use axum::response::IntoResponse;
+                            let Some((_, cid)) = q.iter().find(|(k, _)| k == "arg") else {
+                                return (StatusCode::BAD_REQUEST, "missing arg").into_response();
+                            };
+                            stub.unpinned.lock().unwrap().push(cid.clone());
+                            (StatusCode::OK, "").into_response()
+                        }
+                    },
+                ),
+            )
+    }
+}
+
+async fn ipfs_stub_state() -> (AppState, std::sync::Arc<KuboStub>) {
+    let (state, _) = test_state().await;
+    let stub = std::sync::Arc::new(KuboStub {
+        content: std::sync::Mutex::new(std::collections::HashMap::new()),
+        mfs: std::sync::Mutex::new(std::collections::HashMap::new()),
+        unpinned: std::sync::Mutex::new(Vec::new()),
+        fail_next_add: std::sync::atomic::AtomicBool::new(false),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = stub.clone().router();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let store =
+        i0721_server::blob_ipfs::IpfsBlobStore::open(&i0721_server::blob_ipfs::IpfsConfig {
+            api_url: format!("http://127.0.0.1:{}", addr.port()),
+        });
+    // Rebuild state with the IPFS blob store.
+    let new_state = i0721_server::state::AppState::new(
+        state.store.clone(),
+        std::sync::Arc::new(store),
+        state.config.clone(),
+    );
+    (new_state, stub)
+}
+
+#[tokio::test]
+async fn ipfs_put_get_delete_round_trip() {
+    use i0721_server::blob::BlobSlot;
+    let (state, stub) = ipfs_stub_state().await;
+
+    // put
+    let data = b"hello ipfs world";
+    state
+        .blobs
+        .put(BlobSlot::Media, "test-key", data)
+        .await
+        .unwrap();
+
+    // The MFS entry exists.
+    assert!(stub
+        .mfs
+        .lock()
+        .unwrap()
+        .contains_key("/i0721/media/test-key"));
+
+    // get returns the bytes.
+    let got = state.blobs.get(BlobSlot::Media, "test-key").await.unwrap();
+    assert_eq!(got.as_deref(), Some(&data[..]));
+
+    // delete removes the MFS entry + unpins.
+    state
+        .blobs
+        .delete(BlobSlot::Media, "test-key")
+        .await
+        .unwrap();
+    assert!(!stub
+        .mfs
+        .lock()
+        .unwrap()
+        .contains_key("/i0721/media/test-key"));
+    let unpinned = stub.unpinned.lock().unwrap().clone();
+    assert_eq!(unpinned.len(), 1, "one unpin call: {unpinned:?}");
+
+    // get after delete → None.
+    let gone = state.blobs.get(BlobSlot::Media, "test-key").await.unwrap();
+    assert!(gone.is_none());
+}
+
+#[tokio::test]
+async fn ipfs_kubo_error_surfaces() {
+    use i0721_server::blob::BlobSlot;
+    let (state, stub) = ipfs_stub_state().await;
+    stub.fail_next_add
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let result = state.blobs.put(BlobSlot::Media, "err-key", b"data").await;
+    assert!(result.is_err(), "a kubo 500 must surface as an IoError");
+}
+
+#[tokio::test]
+async fn ipfs_delete_absent_key_is_fine() {
+    use i0721_server::blob::BlobSlot;
+    let (state, _stub) = ipfs_stub_state().await;
+    // Delete a key that was never put — no error.
+    state
+        .blobs
+        .delete(BlobSlot::Cache, "never-existed")
+        .await
+        .unwrap();
+}
+
+/// Upload writes the backend tag into the file row.
+#[tokio::test]
+async fn upload_records_storage_backend_tag() {
+    let (state, token) = test_state_with_token().await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "tag.png").await;
+    // The local lane (default) writes "local".
+    // (The RPC response doesn't carry storage_backend; read via the
+    // store directly.)
+    let file_id = uuid::Uuid::parse_str(dto["id"].as_str().unwrap()).unwrap();
+    let record = state.store.get_file(file_id).await.unwrap().unwrap();
+    assert_eq!(
+        record.storage_backend, "local",
+        "the local lane writes its tag"
+    );
+}
+
+async fn test_state_with_token() -> (AppState, String) {
+    let (state, admin) = test_state().await;
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    (state, token)
 }

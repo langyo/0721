@@ -43,6 +43,7 @@ ts-rs = { workspace = true }
 plana-rpc-server = { workspace = true }
 plana = { workspace = true }
 reqwest = { workspace = true }
+object_store = { workspace = true }
 include_dir = { workspace = true, optional = true }
 
 [dev-dependencies]

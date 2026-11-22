@@ -46,6 +46,34 @@ backends and an MCP surface for AI agents.
 - Deploy via Docker Compose
 - Written in Rust with a TypeScript frontend
 
+## Storage backends
+
+The blob backend is selected at startup by `I0721_STORAGE_BACKEND`
+(`local` | `s3` | `ipfs`; default `local`). All three implement the same
+put/get/delete surface; thumbnails (the Cache slot) follow the same
+backend. Multi-backend coexistence and per-file overrides are a future
+wave — this is a deployment-shape choice.
+
+| Backend | Env | Notes |
+|---|---|---|
+| `local` (default) | `I0721_MEDIA_ROOT` (default `data`) | Two directories: `media/` + `media-cache/` |
+| `s3` | `I0721_S3_ENDPOINT` `I0721_S3_BUCKET` `I0721_S3_REGION` `I0721_S3_ACCESS_KEY` `I0721_S3_SECRET_KEY` | Works with AWS S3, MinIO, R2. Endpoint present = path-style; absent = AWS. Keys: `media/{sha}` and `cache/{sha}.webp` |
+| `ipfs` | `I0721_IPFS_API` (e.g. `http://127.0.0.1:5001`) | kubo RPC. put = `/api/v0/add?pin=true` + MFS link; get = MFS read; delete = MFS rm + best-effort unpin |
+
+Semantic differences:
+- **S3** has no local cache — every read is a network round-trip. For
+  single-node deployments with a local MinIO this is still fast.
+- **IPFS** deletion is content-addressed: `delete` unpins the CID, but
+  another row referencing the same content keeps it alive; kubo's
+  garbage collector reclaims unpinned CIDs on its schedule. The
+  key-to-CID mapping rides kubo's MFS (`/i0721/{slot}/{key}`) —
+  node-local state; a multi-node cluster would need the mapping in the
+  metadata database instead.
+
+Deployment examples: `deploy/docker-compose.s3.yml` (service + MinIO +
+create-bucket init) and `deploy/docker-compose.ipfs.yml` (service +
+kubo).
+
 ## Deploy
 
 The compose file (`deploy/docker-compose.yml`) brings up PostgreSQL 17

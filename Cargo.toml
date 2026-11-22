@@ -89,11 +89,15 @@ include_dir = "^0.7"
 
 futures = "^0.3"
 
+# S3-compatible blob backend (Apache-2.0; aws feature covers sigv4
+# against minio/R2/AWS).
+object_store = { version = "^0.12", features = ["aws"] }
+
 # The OS RNG primitive (share tokens).
 getrandom = "^0.3"
 
 # Server-side OAuth calls (token exchange + OIDC discovery).
-reqwest = { version = "^0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "^0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 
 # Dev-only: the WS-frame integration tests (the family's own dev lane).
 tokio-tungstenite = "^0.30"
