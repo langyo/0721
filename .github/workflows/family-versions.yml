@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 jobs:
   family-versions:
-    uses: celestia-island/celestia-devtools/.github/workflows/family-versions.yml@c45f1881e00cb55d0a2a1fcf57b28734ece119bb
+    uses: celestia-island/celestia-devtools/.github/workflows/family-versions.yml@7440a4546a0699201214e4fa76836ef9df05fa74
     with:
-      devtools-ref: c45f1881e00cb55d0a2a1fcf57b28734ece119bb
+      devtools-ref: 7440a4546a0699201214e4fa76836ef9df05fa74
+      runner: '["ubuntu-latest"]'
