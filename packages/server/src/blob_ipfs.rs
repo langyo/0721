@@ -148,7 +148,11 @@ impl BlobStore for IpfsBlobStore {
         let resp = self
             .client
             .post(self.url("/api/v0/files/cp"))
-            .query(&[("arg", source.as_str()), ("arg", target.as_str())])
+            .query(&[
+                ("arg", source.as_str()),
+                ("arg", target.as_str()),
+                ("force", "true"),
+            ])
             .send()
             .await
             .map_err(io("files/cp"))?;
@@ -176,8 +180,24 @@ impl BlobStore for IpfsBlobStore {
                 let bytes = resp.bytes().await.map_err(io("files/read body"))?;
                 Ok(Some(bytes))
             }
-            // kubo answers 500 with "file does not exist" for MFS misses.
-            500 => Ok(None),
+            // kubo answers 500 for BOTH "file does not exist" (MFS
+            // miss = our None) and genuine errors. Differentiate by the
+            // body text — the same conservative face the delete path
+            // uses: existence-related 500s are None; anything else
+            // surfaces as an IoError.
+            500 => {
+                let body = resp.text().await.unwrap_or_default();
+                if body.contains("does not exist")
+                    || body.contains("not exist")
+                    || body.contains("no such")
+                {
+                    Ok(None)
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "IPFS files/read {path}: 500 {body}"
+                    )))
+                }
+            }
             code => {
                 let body = resp.text().await.unwrap_or_default();
                 Err(std::io::Error::other(format!(

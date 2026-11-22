@@ -107,6 +107,10 @@ i18n-check:
 webui-lockfile-check:
     pnpm install --frozen-lockfile --lockfile-only
 
+# Opt-in S3 real-endpoint lane (needs a reachable minio/R2 + S3 env).
+s3-test:
+    I0721_TEST_S3=1 cargo test -p i0721-server --test routes s3_real -- --ignored --nocapture
+
 # One-shot gate, both sides: rust (fmt -> clippy -> test+bindings
 # staleness -> deny) with the embedded dist built first, then the webui
 # lane (vitest), the barrel bijection pin, the lockfile chain and the

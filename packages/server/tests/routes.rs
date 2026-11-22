@@ -4318,3 +4318,37 @@ async fn test_state_with_token() -> (AppState, String) {
     let token = state.signer.sign(admin.id, Timestamp::now());
     (state, token)
 }
+
+// ── the opt-in S3 real-endpoint lane ────────────────────────────────────
+// Run with: I0721_TEST_S3=1 I0721_S3_* env → `cargo test -- --ignored s3`
+// (or `just s3-test`). Fail-closed: set I0721_TEST_S3 with unreachable
+// credentials → panic, not skip.
+
+#[tokio::test]
+#[ignore = "opt-in: set I0721_TEST_S3=1 + I0721_S3_* env"]
+async fn s3_real_endpoint_round_trip() {
+    use i0721_server::blob::{BlobSlot, BlobStore};
+
+    if std::env::var("I0721_TEST_S3").is_err() {
+        panic!(
+            "I0721_TEST_S3 is not set — this lane is opt-in (fail-closed, never silently skipped)"
+        );
+    }
+    let config = i0721_server::blob_s3::S3Config::from_env(|key| std::env::var(key).ok())
+        .expect("I0721_TEST_S3 is set — the S3 env must be complete");
+    let store = i0721_server::blob_s3::S3BlobStore::open(&config)
+        .expect("the S3 client must construct against the real endpoint");
+
+    let key = format!("test-round-trip-{}", uuid::Uuid::new_v4().simple());
+    let data = b"s3 round trip payload";
+
+    store.put(BlobSlot::Media, &key, data).await.expect("put");
+    let got = store.get(BlobSlot::Media, &key).await.expect("get");
+    assert_eq!(got.as_deref(), Some(&data[..]));
+    store.delete(BlobSlot::Media, &key).await.expect("delete");
+    let gone = store
+        .get(BlobSlot::Media, &key)
+        .await
+        .expect("get after delete");
+    assert!(gone.is_none());
+}

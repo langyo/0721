@@ -70,6 +70,20 @@ Semantic differences:
   node-local state; a multi-node cluster would need the mapping in the
   metadata database instead.
 
+**Backend switching**: changing `I0721_STORAGE_BACKEND` affects NEW
+uploads only — existing blobs stay on their original backend (the
+`files.storage_backend` column records each row's home). After a
+switch, requests for rows on the old backend will 404 if the old
+backend is unreachable. A blob-migration tool arrives with a later
+wave.
+
+**Security note**: `I0721_S3_ENDPOINT` with `http://` sends credentials
+in cleartext — this is safe ONLY for internal-network MinIO (the
+compose example). Production deployments must use `https://`.
+
+`I0721_MEDIA_ROOT` has no effect when the backend is `s3` or `ipfs`
+(it only configures the `local` backend's directory layout).
+
 Deployment examples: `deploy/docker-compose.s3.yml` (service + MinIO +
 create-bucket init) and `deploy/docker-compose.ipfs.yml` (service +
 kubo).

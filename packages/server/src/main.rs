@@ -7,7 +7,6 @@ use i0721_proto::Role;
 use i0721_store::{CreateUser, PgStore, Store};
 
 use i0721_server::auth;
-use i0721_server::blob::LocalBlobStore;
 use i0721_server::config::Config;
 use i0721_server::routes;
 use i0721_server::state::AppState;
@@ -29,34 +28,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     seed_default_admin(&store, &config.seed_admin_password).await?;
 
-    let blobs: std::sync::Arc<dyn i0721_server::blob::BlobStore> =
-        match config.storage_backend.as_str() {
-            "local" => std::sync::Arc::new(LocalBlobStore::open(&config.media_root)?),
-            "s3" => {
-                let s3_config =
-                    i0721_server::blob_s3::S3Config::from_env(|key| std::env::var(key).ok())
-                        .map_err(|err| {
-                            eprintln!("storage backend 's3' selected but misconfigured: {err}");
-                            std::process::exit(1);
-                        })?;
-                std::sync::Arc::new(i0721_server::blob_s3::S3BlobStore::open(&s3_config)?)
-            }
-            "ipfs" => {
-                let ipfs_config =
-                    i0721_server::blob_ipfs::IpfsConfig::from_env(|key| std::env::var(key).ok())
-                        .map_err(|err| {
-                            eprintln!("storage backend 'ipfs' selected but misconfigured: {err}");
-                            std::process::exit(1);
-                        })?;
-                std::sync::Arc::new(i0721_server::blob_ipfs::IpfsBlobStore::open(&ipfs_config))
-            }
-            other => {
-                eprintln!(
-                    "I0721_STORAGE_BACKEND={other:?} is not a valid backend (local | s3 | ipfs)"
-                );
+    let blobs =
+        i0721_server::blob_selection::select_blob_backend(&config, |key| std::env::var(key).ok())
+            .unwrap_or_else(|err| {
+                eprintln!("blob backend selection failed: {err}");
                 std::process::exit(1);
-            }
-        };
+            });
     let listen = config.listen;
     let state = AppState::new(Arc::new(store), blobs, Arc::new(config));
 
