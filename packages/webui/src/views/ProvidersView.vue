@@ -220,7 +220,7 @@ async function confirmDelete() {
  * the cell-slot name. The secret column is copy-exempt (it renders a
  * mask, never the value). */
 const columns = computed<HTableColumn[]>(() => [
-  { key: "name", title: t("common.providers.title") },
+  { key: "name", title: t("common.providers.displayName") },
   { key: "secret", title: t("common.providers.secret"), copyable: false },
   { key: "enabled", title: t("common.providers.enabled"), align: "center", copyable: false },
   { key: "actions", title: "", align: "right", width: "6rem", copyable: false },
@@ -233,6 +233,7 @@ const columns = computed<HTableColumn[]>(() => [
     <HkAdminTablePage
       :title="t('common.providers.title')"
       :subtitle="t('common.status.total', { count: rows.length })"
+      :count-readout="false"
       :icon="Unplug"
       :rows="rows"
       :columns="columns"

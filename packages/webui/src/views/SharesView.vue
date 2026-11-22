@@ -16,10 +16,20 @@ const shares = ref<ShareDto[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 
+/** Failure text for the roster banner: never empty. A JSON-RPC/WS lane
+ * commonly rejects with a bare string, and an empty message renders no
+ * alert at all (the scaffold's message is falsy-checked), which would
+ * show a silent "no rows yet" over a real failure. */
+function errorText(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  if (typeof e === "string" && e.length > 0) return e;
+  return t("common.status.error");
+}
+
 async function load() {
   error.value = null;
   loading.value = true;
-  try { shares.value = await files.shareList(); } catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { loading.value = false; }
+  try { shares.value = await files.shareList(); } catch (e) { error.value = errorText(e); } finally { loading.value = false; }
 }
 onMounted(() => void load());
 usePageRefresh(() => load(), { loading });
@@ -28,9 +38,9 @@ usePageRefresh(() => load(), { loading });
  * the cell-slot name. The token column is copy-exempt (its rendered value
  * is truncated — the full token rides the link href). */
 const columns = computed<HTableColumn[]>(() => [
-  { key: "name", title: t("common.files.fileName") },
-  { key: "size", title: t("common.files.size"), align: "right" },
-  { key: "link", title: t("common.files.shareLink"), copyable: false },
+  { key: "fileName", title: t("common.files.fileName") },
+  { key: "fileSize", title: t("common.files.size"), align: "right" },
+  { key: "token", title: t("common.files.shareLink"), copyable: false },
   { key: "actions", title: "", align: "right", width: "3.5rem", copyable: false },
 ]);
 
@@ -59,15 +69,15 @@ async function revoke(token: string) {
       :stale-error="shares.length > 0 ? (error ?? undefined) : undefined"
       :empty-title="t('common.files.noShares')"
     >
-      <template #cell-name="{ row }">
+      <template #cell-fileName="{ row }">
         <span class="share-name">{{ row.file_name }}</span>
       </template>
 
-      <template #cell-size="{ row }">
+      <template #cell-fileSize="{ row }">
         <span class="share-size">{{ row.file_size }} B</span>
       </template>
 
-      <template #cell-link="{ row }">
+      <template #cell-token="{ row }">
         <a :href="`/s/${row.token}`" class="share-link">/s/{{ row.token.slice(0, 12) }}…</a>
       </template>
 

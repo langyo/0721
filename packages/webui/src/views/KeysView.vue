@@ -42,10 +42,20 @@ const columns = computed<HTableColumn[]>(() => [
   { key: "actions", title: "", align: "right", width: "3.5rem", copyable: false },
 ]);
 
+/** Failure text for the roster banner: never empty. A JSON-RPC/WS lane
+ * commonly rejects with a bare string, and an empty message renders no
+ * alert at all (the scaffold's message is falsy-checked), which would
+ * show a silent "no rows yet" over a real failure. */
+function errorText(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  if (typeof e === "string" && e.length > 0) return e;
+  return t("common.status.error");
+}
+
 async function load() {
   error.value = null;
   loading.value = true;
-  try { keys.value = await api.listKeys(); } catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { loading.value = false; }
+  try { keys.value = await api.listKeys(); } catch (e) { error.value = errorText(e); } finally { loading.value = false; }
 }
 onMounted(() => void load());
 usePageRefresh(() => load(), { loading });
@@ -61,7 +71,7 @@ async function doCreate() {
     created.value = await api.createKey(newName.value.trim());
     createOpen.value = false;
     await load();
-  } catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { createBusy.value = false; }
+  } catch (e) { error.value = errorText(e); } finally { createBusy.value = false; }
 }
 
 /// The MCP endpoint an agent connects to (the SSE lane).
@@ -100,7 +110,7 @@ async function doRevoke() {
   if (!pendingRevoke.value || revokeBusy.value) return;
   revokeBusy.value = true;
   try { await api.revokeKey(pendingRevoke.value.id); pendingRevoke.value = null; void load(); }
-  catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { revokeBusy.value = false; }
+  catch (e) { error.value = errorText(e); } finally { revokeBusy.value = false; }
 }
 </script>
 

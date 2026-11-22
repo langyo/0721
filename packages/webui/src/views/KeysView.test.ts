@@ -203,6 +203,18 @@ describe("KeysView error surface (family scaffold)", () => {
     // shape and is gone from the template.
     expect(wrapper.find(".hk-alert").exists()).toBe(true);
     expect(wrapper.find(".err").exists()).toBe(false);
+  });
+
+  it("still reports a non-Error rejection instead of showing a silent empty roster", async () => {
+    // A JSON-RPC/WS lane commonly rejects with a bare string; the old
+    // fallback turned that into "" which renders NO alert at all, so a
+    // failed cold start read as "no keys yet".
+    listKeysMock.mockRejectedValue("rpc timeout");
+    const wrapper = mount(KeysView, { global: { plugins: [createAppI18n()] } });
+    await flushPromises();
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain("rpc timeout");
+    wrapper.unmount();
     wrapper.unmount();
   });
 });
