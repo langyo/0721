@@ -15,6 +15,7 @@ pub mod error;
 pub mod mcp;
 pub mod media;
 pub mod oauth;
+pub mod origin;
 pub mod pipeline;
 pub mod routes;
 pub mod rpc;

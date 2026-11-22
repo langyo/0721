@@ -860,28 +860,16 @@ pub async fn find_or_create_user(
 
 // ── shared helpers ─────────────────────────────────────────────────────
 
-/// The callback URI as the provider sees it: the configured public
-/// origin (`I0721_PUBLIC_ORIGIN`, the deployment's A-layer fact) when
-/// present; otherwise derived from the request Host with a warning —
-/// a derivation the reverse proxy's Host preservation makes right in
-/// practice, but which the env pin makes explicit and auditable.
+/// The callback URI as the provider sees it: the deployment's public
+/// origin ([`crate::origin::public_origin`] — `I0721_PUBLIC_ORIGIN` when
+/// set, else the request Host with a warning). The OAuth lane keeps a
+/// `localhost` last resort: a redirect URI that no provider can call back
+/// is still better than refusing the flow outright (the misconfiguration
+/// is visible in the provider's own error). The MCP share lane, which
+/// hands the URL to a human, refuses instead.
 fn callback_uri(state: &AppState, headers: &HeaderMap, provider: &str) -> String {
-    let origin = state
-        .config
-        .public_origin
-        .as_deref()
-        .map(str::to_owned)
-        .unwrap_or_else(|| {
-            let host = headers
-                .get(header::HOST)
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or("localhost");
-            tracing::warn!(
-                host,
-                "I0721_PUBLIC_ORIGIN unset — deriving the OAuth redirect URI from the Host header",
-            );
-            format!("http://{host}")
-        });
+    let origin = crate::origin::public_origin(state, headers)
+        .unwrap_or_else(|| "http://localhost".to_owned());
     format!("{origin}/api/v1/auth/oauth/{provider}/callback")
 }
 
