@@ -25,6 +25,10 @@ use crate::{migrations, CreateUser, Store, StoreError};
 /// A [`Store`] over a PostgreSQL connection pool.
 #[derive(Debug, Clone)]
 pub struct PgStore {
+    /// The underlying PostgreSQL executor. PUB for the pg_lane tests'
+    /// escape hatch (hand-planted pre-migration rows, index drops).
+    /// Business code must go through the Store trait — raw SQL is the
+    /// documented escape hatch (`Command::Sql`), never `executor`.
     pub executor: PgExecutor,
 }
 
@@ -324,6 +328,18 @@ impl Store for PgStore {
     }
 
     async fn rename_file(&self, id: Uuid, name: &str) -> Result<Option<FileRecord>, StoreError> {
+        // Same-layer uniqueness (the partial unique index's mirror —
+        // exclude self; friendly Conflict instead of a raw 23505).
+        if let Some(current) = self.get_file(id).await? {
+            if self
+                .folder_name_taken(current.owner_id, current.parent_id, name, Some(id))
+                .await?
+            {
+                return Err(StoreError::Conflict(format!(
+                    "name {name:?} already exists in this folder"
+                )));
+            }
+        }
         // Single guarded UPDATE: `WHERE id = $1 AND deleted_at IS NULL`.
         // No read-then-write window — a concurrent soft delete makes this
         // answer `None` (0 rows) instead of resurrecting the row.
@@ -420,6 +436,23 @@ impl Store for PgStore {
                 }
             }
         }
+    }
+
+    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError> {
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(
+                FileColumn::DeletedAt
+                    .is_null()
+                    .into_inner()
+                    .and(FileColumn::ThumbnailKey.eq(key).into_inner()),
+            ),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self.query_all::<FileModel>(cmd).await?.len() as u64)
     }
 
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {
@@ -562,6 +595,19 @@ impl Store for PgStore {
     }
 
     async fn set_parent(&self, id: Uuid, parent_id: Option<Uuid>) -> Result<(), StoreError> {
+        // Same-layer uniqueness at the TARGET (the RPC pre-checks too;
+        // the store layer is the final gate against a raw 23505).
+        if let Some(current) = self.get_file(id).await? {
+            if self
+                .folder_name_taken(current.owner_id, parent_id, &current.name, Some(id))
+                .await?
+            {
+                return Err(StoreError::Conflict(format!(
+                    "name {:?} already exists in the target folder",
+                    current.name
+                )));
+            }
+        }
         let cmd = update_command::<FileModel>(
             vec![(
                 "parent_id",
@@ -582,6 +628,7 @@ impl Store for PgStore {
         // Iterative walk through the entity layer (the raw recursive
         // CTE hits the driver's binary-decoding path for UUID columns).
         let mut chain = Vec::new();
+        let mut visited = std::collections::HashSet::from([id]);
         let mut cursor = id;
         loop {
             let Some(row) = self.get_file(cursor).await? else {
@@ -590,6 +637,10 @@ impl Store for PgStore {
             let Some(parent) = row.parent_id else {
                 break;
             };
+            // Cycle guard (corrupted parent chains).
+            if !visited.insert(parent) {
+                break;
+            }
             chain.push(parent);
             cursor = parent;
         }

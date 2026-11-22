@@ -84,7 +84,8 @@
     "addBanner": "Add banner entry",
     "passwordLogin": "Allow password login",
     "passwordLoginHint": "Turn off once OAuth providers are configured.",
-    "defaultQuota": "Default storage quota (bytes)"
+    "defaultQuota": "Default storage quota (bytes)",
+    "defaultQuotaHint": "Empty = unlimited. Applies when a user has no per-user override."
   },
   "chrome": {
     "settings": "Settings",

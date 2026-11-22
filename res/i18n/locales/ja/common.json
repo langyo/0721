@@ -84,7 +84,8 @@
     "addBanner": "バナー項目を追加",
     "passwordLogin": "パスワードログインを許可",
     "passwordLoginHint": "OAuth プロバイダー設定後は無効化を推奨。",
-    "defaultQuota": "デフォルトのストレージクォータ（バイト）"
+    "defaultQuota": "デフォルトのストレージクォータ（バイト）",
+    "defaultQuotaHint": "空欄 = 無制限。ユーザーごとの上書きがない場合に適用されます。"
   },
   "chrome": {
     "settings": "設定",

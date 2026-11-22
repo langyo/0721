@@ -84,7 +84,8 @@
     "addBanner": "Ajouter une entrée de bannière",
     "passwordLogin": "Autoriser la connexion par mot de passe",
     "passwordLoginHint": "À désactiver une fois les fournisseurs OAuth configurés.",
-    "defaultQuota": "Quota de stockage par défaut (octets)"
+    "defaultQuota": "Quota de stockage par défaut (octets)",
+    "defaultQuotaHint": "Vide = illimité. S'applique quand un utilisateur n'a pas de remplacement individuel."
   },
   "chrome": {
     "settings": "Paramètres",

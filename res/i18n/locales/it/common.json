@@ -84,7 +84,8 @@
     "addBanner": "Aggiungi voce banner",
     "passwordLogin": "Consenti login con password",
     "passwordLoginHint": "Da disattivare dopo la configurazione OAuth.",
-    "defaultQuota": "Quota di archiviazione predefinita (byte)"
+    "defaultQuota": "Quota di archiviazione predefinita (byte)",
+    "defaultQuotaHint": "Vuoto = illimitato. Si applica quando un utente non ha un override individuale."
   },
   "chrome": {
     "settings": "Impostazioni",

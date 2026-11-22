@@ -84,7 +84,8 @@
     "addBanner": "Banner-Eintrag hinzufügen",
     "passwordLogin": "Passwort-Login erlauben",
     "passwordLoginHint": "Nach OAuth-Einrichtung empfehlen wir Deaktivieren.",
-    "defaultQuota": "Standard-Speicherkontingent (Bytes)"
+    "defaultQuota": "Standard-Speicherkontingent (Bytes)",
+    "defaultQuotaHint": "Leer = unbegrenzt. Gilt, wenn ein Benutzer keine eigene Überschreitung hat."
   },
   "chrome": {
     "settings": "Einstellungen",

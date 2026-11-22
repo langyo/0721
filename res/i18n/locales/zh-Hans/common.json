@@ -84,7 +84,8 @@
     "addBanner": "添加页脚条目",
     "passwordLogin": "允许密码登录",
     "passwordLoginHint": "配置好 OAuth 提供方后建议关闭。",
-    "defaultQuota": "默认存储配额（字节）"
+    "defaultQuota": "默认存储配额（字节）",
+    "defaultQuotaHint": "留空 = 不限。仅对未设置个人覆盖的用户生效。"
   },
   "chrome": {
     "settings": "设置",

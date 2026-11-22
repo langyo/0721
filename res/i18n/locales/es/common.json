@@ -84,7 +84,8 @@
     "addBanner": "Añadir entrada de banner",
     "passwordLogin": "Permitir acceso con contraseña",
     "passwordLoginHint": "Desactívalo cuando haya proveedores OAuth.",
-    "defaultQuota": "Cuota de almacenamiento predeterminada (bytes)"
+    "defaultQuota": "Cuota de almacenamiento predeterminada (bytes)",
+    "defaultQuotaHint": "Vacío = sin límite. Se aplica cuando un usuario no tiene una anulación individual."
   },
   "chrome": {
     "settings": "Ajustes",

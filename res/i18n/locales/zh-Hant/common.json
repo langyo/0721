@@ -84,7 +84,8 @@
     "addBanner": "新增頁腳條目",
     "passwordLogin": "允許密碼登入",
     "passwordLoginHint": "設定好 OAuth 提供者後建議關閉。",
-    "defaultQuota": "預設儲存配額（位元組）"
+    "defaultQuota": "預設儲存配額（位元組）",
+    "defaultQuotaHint": "留空 = 不限。僅對未設定個人覆蓋的用戶生效。"
   },
   "chrome": {
     "settings": "設定",

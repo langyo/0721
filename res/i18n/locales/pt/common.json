@@ -84,7 +84,8 @@
     "addBanner": "Adicionar entrada de banner",
     "passwordLogin": "Permitir login por senha",
     "passwordLoginHint": "Desative após configurar provedores OAuth.",
-    "defaultQuota": "Cota de armazenamento padrão (bytes)"
+    "defaultQuota": "Cota de armazenamento padrão (bytes)",
+    "defaultQuotaHint": "Vazio = ilimitado. Aplica-se quando um usuário não tem uma substituição individual."
   },
   "chrome": {
     "settings": "Ajustes",

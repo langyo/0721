@@ -314,6 +314,15 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .files
+            .iter()
+            .filter(|f| f.deleted_at.is_none() && f.thumbnail_key.as_deref() == Some(key))
+            .count() as u64)
+    }
+
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {
         Ok(self
             .inner
@@ -431,11 +440,17 @@ impl Store for MemoryStore {
     async fn ancestor_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let mut chain = Vec::new();
+        let mut visited = std::collections::HashSet::from([id]);
         let mut cursor = id;
         while let Some(row) = inner.files.iter().find(|f| f.id == cursor) {
             let Some(parent) = row.parent_id else {
                 break;
             };
+            // Cycle guard: corrupted parent chains (a loop) must not
+            // spin forever — bail on a revisited node.
+            if !visited.insert(parent) {
+                break;
+            }
             chain.push(parent);
             cursor = parent;
         }

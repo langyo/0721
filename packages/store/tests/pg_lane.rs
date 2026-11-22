@@ -441,13 +441,12 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
         .await
         .unwrap();
 
-    // Hand-plant the PRE-MIGRATION shape: drop the unique index, insert
-    // two same-owner same-layer same-name live rows with different
-    // sha256 values (what two master-era uploads with
-    // use_source_file_name=true would produce).
+    // Hand-plant the PRE-MIGRATION COLLISION shape: two "cat.png" +
+    // a pre-existing "cat.png (2)" — the exact form the reviewer asked
+    // for (naive rn assignment would give the second cat.png rn=2,
+    // colliding with the existing "cat.png (2)").
     {
         use lacrymira::{Command, Value};
-        // Drop the index so the raw INSERTs pass.
         let drop = Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
             text: "DROP INDEX IF EXISTS files_owner_folder_name_live_key".to_owned(),
@@ -455,17 +454,25 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
         };
         store.executor.execute(&drop).await.unwrap();
 
-        for sha in ["aaaa0000", "bbbb0000"] {
+        for (name, sha, delay_ms) in [
+            ("cat.png", "aaaa0000", 0),
+            ("cat.png", "bbbb0000", 10),
+            ("cat.png (2)", "cccc0000", 20),
+        ] {
+            if delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
             let insert = Command::Sql {
                 dialect: lacrymira::Dialect::Postgres,
                 text:
                     "INSERT INTO files (id, owner_id, parent_id, name, kind, mime, size, sha256, \
                      storage_backend, storage_key, original_name) \
-                     VALUES (gen_random_uuid(), $1, NULL, 'cat.png', 'image', 'image/webp', \
-                     100, $2, 'local', $2, 'cat.png')"
+                     VALUES (gen_random_uuid(), $1, NULL, $2, 'image', 'image/webp', \
+                     100, $3, 'local', $3, $2)"
                         .to_owned(),
                 params: vec![
                     Value::Uuid(user.id.to_string()),
+                    Value::Text(name.to_owned()),
                     Value::Text(sha.to_owned()),
                 ],
             };
@@ -473,8 +480,7 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
         }
     }
 
-    // Run the migration-0004 cleansing UPDATE directly (the same SQL the
-    // migration carries, extracted as a testable constant).
+    // Run the avoidance-based cleansing.
     {
         use lacrymira::Command;
         let cleanse = Command::Sql {
@@ -485,19 +491,29 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
         store.executor.execute(&cleanse).await.unwrap();
     }
 
-    // Verify: one row is "cat.png", the other "cat.png (2)".
+    // All three rows must now have UNIQUE names.
     let files = store
         .list_folder(user.id, None, None, 0, 100)
         .await
         .unwrap();
-    assert_eq!(files.len(), 2, "both rows live: {files:?}");
+    assert_eq!(files.len(), 3, "all rows live: {files:?}");
     let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+    // The first cat.png keeps its name; the second (rn=2) must NOT
+    // collide with the pre-existing "cat.png (2)" — it takes (3).
+    assert!(names.contains(&"cat.png"), "the earliest keeps: {names:?}");
     assert!(
-        names.contains(&"cat.png") && names.contains(&"cat.png (2)"),
-        "the later duplicate got the suffix: {names:?}"
+        names.contains(&"cat.png (2)"),
+        "the pre-existing (2) stays: {names:?}"
     );
+    assert!(
+        names.contains(&"cat.png (3)"),
+        "the duplicate avoided (2) and took (3): {names:?}"
+    );
+    // All unique.
+    let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
+    assert_eq!(unique.len(), 3, "all three names are unique: {names:?}");
 
-    // Rebuild the index.
+    // Rebuild the index — it must succeed now.
     {
         use lacrymira::Command;
         let rebuild = Command::Sql {
@@ -511,7 +527,7 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
         store.executor.execute(&rebuild).await.unwrap();
     }
 
-    // The index now enforces: another "cat.png" insert is refused.
+    // The index enforces.
     let dup = store.create_folder(user.id, None, "cat.png").await;
     assert!(
         matches!(dup, Err(StoreError::Conflict(_))),

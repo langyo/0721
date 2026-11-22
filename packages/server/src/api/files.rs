@@ -128,7 +128,17 @@ pub async fn upload(
     // per-file limit); a burst at the exact boundary can overshoot by
     // at most that many files' worth — accepted as the transition-era
     // trade-off, documented here so the next reader knows.
-    if let Some(quota) = user.quota_bytes {
+    // The SAME resolver as files.quota_get: user row ?? site default.
+    let quota = match user.quota_bytes {
+        Some(q) => Some(q),
+        None => {
+            crate::api::settings::site_config(&state)
+                .await?
+                .upload
+                .default_quota_bytes
+        }
+    };
+    if let Some(quota) = quota {
         let used = state.store.sum_live_sizes(user.id).await?;
         if used + data.len() as i64 > quota {
             return Err(ApiError::too_large(format!(

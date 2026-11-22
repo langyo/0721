@@ -396,17 +396,20 @@ pub fn build_server(state: AppState) -> RpcServer {
                         limit: args.limit,
                     }
                     .sanitize();
-                    // Count first (unpaginated), then page.
-                    let all = state
+                    // Count (unpaginated read), then page (true pushdown:
+                    // offset+limit go to the store, not the full list).
+                    let total = state
                         .store
                         .list_folder(user.id, args.folder_id, args.kind.clone(), 0, u64::MAX / 2)
                         .await
-                        .map_err(store_err)?;
-                    let total = all.len() as u64;
-                    let items = all
+                        .map_err(store_err)?
+                        .len() as u64;
+                    let items = state
+                        .store
+                        .list_folder(user.id, args.folder_id, args.kind, offset, limit)
+                        .await
+                        .map_err(store_err)?
                         .into_iter()
-                        .skip(offset as usize)
-                        .take(limit as usize)
                         .map(FileDto::from)
                         .collect::<Vec<_>>();
                     return to_value(PageResult { total, offset, limit, items });
@@ -527,9 +530,8 @@ pub fn build_server(state: AppState) -> RpcServer {
                     }
                     // Reclaim with the single-file lane's
                     // compare-and-restore guard, per slot.
-                    async fn reclaim_key(
+                    async fn reclaim_media(
                         state: &AppState,
-                        slot: crate::blob::BlobSlot,
                         key: &str,
                     ) -> Result<(), crate::error::ApiError> {
                         let still_live = state
@@ -540,12 +542,12 @@ pub fn build_server(state: AppState) -> RpcServer {
                         if still_live == 0 {
                             let snapshot = state
                                 .blobs
-                                .get(slot, key)
+                                .get(crate::blob::BlobSlot::Media, key)
                                 .await
                                 .map_err(crate::error::ApiError::from)?;
                             state
                                 .blobs
-                                .delete(slot, key)
+                                .delete(crate::blob::BlobSlot::Media, key)
                                 .await
                                 .map_err(crate::error::ApiError::from)?;
                             if state
@@ -558,7 +560,51 @@ pub fn build_server(state: AppState) -> RpcServer {
                                 if let Some(bytes) = snapshot {
                                     state
                                         .blobs
-                                        .put(slot, key, &bytes)
+                                        .put(crate::blob::BlobSlot::Media, key, &bytes)
+                                        .await
+                                        .map_err(crate::error::ApiError::from)?;
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    async fn reclaim_cache(
+                        state: &AppState,
+                        key: &str,
+                    ) -> Result<(), crate::error::ApiError> {
+                        // THUMBNAIL liveness: a thumbnail survives while
+                        // any live row still references it via
+                        // thumbnail_key — NOT storage_key (another
+                        // owner's same-content file shares the media
+                        // blob but has its OWN thumbnail row; deleting
+                        // one owner's tree must not kill the other's).
+                        let still_live = state
+                            .store
+                            .count_live_files_by_thumbnail_key(key)
+                            .await
+                            .map_err(crate::error::ApiError::from)?;
+                        if still_live == 0 {
+                            let snapshot = state
+                                .blobs
+                                .get(crate::blob::BlobSlot::Cache, key)
+                                .await
+                                .map_err(crate::error::ApiError::from)?;
+                            state
+                                .blobs
+                                .delete(crate::blob::BlobSlot::Cache, key)
+                                .await
+                                .map_err(crate::error::ApiError::from)?;
+                            if state
+                                .store
+                                .count_live_files_by_thumbnail_key(key)
+                                .await
+                                .map_err(crate::error::ApiError::from)?
+                                > 0
+                            {
+                                if let Some(bytes) = snapshot {
+                                    state
+                                        .blobs
+                                        .put(crate::blob::BlobSlot::Cache, key, &bytes)
                                         .await
                                         .map_err(crate::error::ApiError::from)?;
                                 }
@@ -567,12 +613,12 @@ pub fn build_server(state: AppState) -> RpcServer {
                         Ok(())
                     }
                     for (key, ()) in media_keys {
-                        reclaim_key(&state, crate::blob::BlobSlot::Media, &key)
+                        reclaim_media(&state, &key)
                             .await
                             .map_err(api_err)?;
                     }
                     for (key, ()) in cache_keys {
-                        reclaim_key(&state, crate::blob::BlobSlot::Cache, &key)
+                        reclaim_cache(&state, &key)
                             .await
                             .map_err(api_err)?;
                     }

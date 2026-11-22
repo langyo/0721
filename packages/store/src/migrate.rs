@@ -21,21 +21,55 @@ use lacrymira_pg::Migration;
 /// itself is a one-shot on a fresh database, but the cleansing logic
 /// must be provable on real PostgreSQL).
 pub const MIGRATION_0004_DEDUPE_SQL: &str = r#"WITH ranked AS (
-                SELECT id,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY owner_id,
-                                        COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid),
-                                        name
-                           ORDER BY created_at, id
-                       ) AS rn
-                FROM files
-                WHERE deleted_at IS NULL
-            )
-            UPDATE files f
-            SET name = f.name || ' (' || ranked.rn || ')'
-            FROM ranked
-            WHERE ranked.id = f.id AND ranked.rn > 1;"#;
+    SELECT id, owner_id, name,
+           COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid) AS layer_key,
+           ROW_NUMBER() OVER (
+               PARTITION BY owner_id,
+                            COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                            name
+               ORDER BY created_at, id
+           ) AS rn
+    FROM files WHERE deleted_at IS NULL
+),
+existing AS (
+    SELECT DISTINCT f.owner_id, f.name,
+           COALESCE(f.parent_id, '00000000-0000-0000-0000-000000000000'::uuid) AS layer_key
+    FROM files f WHERE f.deleted_at IS NULL
+),
+suffix AS (
+    -- AVOIDANCE-BASED assignment: for each duplicate (rn > 1), pick
+    -- the SMALLEST n >= rn such that "name (n)" is NOT already a live
+    -- name in the same (owner, layer). This avoids collisions with
+    -- pre-existing suffixed names (e.g. a pre-existing "x (2)" from a
+    -- prior migration forces the second duplicate of "x" to take (3)).
+    -- ROW_NUMBER guarantees distinct rn per same-name group, so
+    -- duplicates of the SAME name never collide with each other.
+    SELECT r.id, r.name, r.rn,
+           COALESCE(
+               (SELECT candidate.n
+                FROM generate_series(
+                    GREATEST(r.rn, 2),
+                    GREATEST(r.rn, 2) + 998
+                ) AS candidate(n)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM existing e
+                    WHERE e.owner_id = r.owner_id
+                      AND e.layer_key = r.layer_key
+                      AND e.name = r.name || ' (' || candidate.n || ')'
+                )
+                ORDER BY candidate.n
+                LIMIT 1),
+               GREATEST(r.rn, 2) + 999
+           ) AS n
+    FROM ranked r
+    WHERE r.rn > 1
+)
+UPDATE files f
+SET name = sfx.name || ' (' || sfx.n || ')'
+FROM suffix sfx
+WHERE sfx.id = f.id"#;
 
+/// The baseline schema plus the settings seed.
 /// The baseline schema plus the settings seed.
 ///
 /// The seed row uses `ON CONFLICT DO NOTHING`, so a database whose
@@ -147,44 +181,17 @@ pub fn migrations() -> Vec<Migration> {
         Migration::new(
             "20261122000004",
             "netdisk: folders, per-user quota, folder-name uniqueness (reentrant + legacy dedupe)",
-            r#"
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS quota_bytes BIGINT;
-
-            -- The folder kind joins the CHECK (rebuilt idempotently).
+            format!(
+                r#"ALTER TABLE users ADD COLUMN IF NOT EXISTS quota_bytes BIGINT;
             ALTER TABLE files DROP CONSTRAINT IF EXISTS files_kind_check;
             ALTER TABLE files ADD CONSTRAINT files_kind_check
                 CHECK (kind IN ('folder', 'image', 'document', 'media', 'archive', 'other'));
-
-            -- LEGACY DATA CLEANSING before the unique index: master-era
-            -- rows can carry same-owner same-layer same-name live rows
-            -- (two uploads with use_source_file_name=true). Strategy:
-            -- the EARLIEST row (by created_at) keeps the name; later
-            -- duplicates get " (2)", " (3)", … appended so the index can
-            -- be built without startup failure.
-            WITH ranked AS (
-                SELECT id,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY owner_id,
-                                        COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid),
-                                        name
-                           ORDER BY created_at, id
-                       ) AS rn
-                FROM files
-                WHERE deleted_at IS NULL
-            )
-            UPDATE files f
-            SET name = f.name || ' (' || ranked.rn || ')'
-            FROM ranked
-            WHERE ranked.id = f.id AND ranked.rn > 1;
-
-            -- Same-layer name uniqueness per owner, live rows only. The
-            -- COALESCE folds "root" (NULL parent) into a sentinel uuid so
-            -- the unique index also catches root-level duplicates (plain
-            -- NULLs are distinct in a unique index).
+            {};
             CREATE UNIQUE INDEX IF NOT EXISTS files_owner_folder_name_live_key
                 ON files (owner_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name)
-                WHERE deleted_at IS NULL;
-            "#,
+                WHERE deleted_at IS NULL;"#,
+                MIGRATION_0004_DEDUPE_SQL
+            ),
         ),
     ]
 }

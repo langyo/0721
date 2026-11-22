@@ -128,6 +128,11 @@ pub trait Store: Send + Sync {
     /// netdisk-wave concern).
     async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError>;
 
+    /// Live rows referencing a thumbnail key (the Cache-slot blob's
+    /// liveness signal — distinct from storage_key because thumbnails
+    /// are shared across owners whose blobs dedupe by content).
+    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError>;
+
     /// Record a freshly uploaded file; `(owner_id, sha256)` must be
     /// unique among that owner's live files ([`StoreError::Conflict`]
     /// otherwise). The storage key may be shared with other owners' rows

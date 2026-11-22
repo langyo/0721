@@ -3743,3 +3743,139 @@ async fn netdisk_memory_list_folder_pagination() {
     assert!(ids1.iter().all(|id| !ids2.contains(id)));
     assert_eq!(ids1.len() + ids2.len(), 5);
 }
+
+// ── W5 C1 pins ─────────────────────────────────────────────────────────
+
+/// The upload lane's quota gate uses the SAME resolver as quota_get:
+/// no per-user override + a site default → 413 on the WRITE path.
+#[tokio::test]
+async fn c1_upload_quota_gate_uses_site_default() {
+    let (state, token) = matrix_setup().await;
+    let user = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap();
+
+    // No per-user override; set a site default of 2 KiB.
+    let strict = full_settings_json(|json| {
+        json["upload"]["default-quota-bytes"] = serde_json::json!(2048);
+    });
+    let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+    let (status, _) = rpc(&state, &token, "settings.put", strict).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The user row is NULL → the SITE default gates the upload.
+    let response = upload_raw(&state, &token, vec![0u8; 4096], "big.png", None).await;
+    assert_eq!(
+        response.0,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "site default gates the upload: {}",
+        response.1
+    );
+    assert!(
+        response.1.contains("quota exceeded"),
+        "the message names the quota"
+    );
+    assert!(
+        response.1.contains("2048"),
+        "the message carries the limit: {}",
+        response.1
+    );
+    let _ = user;
+}
+
+/// Cross-owner thumbnail survival: user B's same-content upload keeps
+/// the shared thumbnail alive when admin deletes their own tree.
+#[tokio::test]
+async fn c1_cross_owner_thumbnail_survives_cascade() {
+    let (state, token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    // Member B (with a password so they can upload).
+    let _member = state
+        .store
+        .create_user(CreateUser {
+            username: "thumbmate".to_owned(),
+            display_name: "ThumbMate".to_owned(),
+            role: Role::Member,
+            password_hash: Some(hash_password("member-pass").unwrap()),
+        })
+        .await
+        .unwrap();
+    let member_token = login(&state, "thumbmate", "member-pass").await;
+
+    // Admin uploads a PNG into their folder; member uploads the SAME
+    // bytes (shared blob, per-owner rows, own thumbnail).
+    let f = state
+        .store
+        .create_folder(admin_id, None, "mine")
+        .await
+        .unwrap();
+    let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
+    let a_id = uuid::Uuid::parse_str(a["id"].as_str().unwrap()).unwrap();
+    state.store.set_parent(a_id, Some(f.id)).await.unwrap();
+
+    let (_, b) = upload(&state, &member_token, tiny_png(), "b.png").await;
+    let _ = b;
+
+    let sha = a["sha256"].as_str().unwrap().to_owned();
+    let thumb_key = format!("{sha}.webp");
+
+    // Admin deletes their folder — member's row still lives.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": f.id.to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // The member's thumbnail survives (their live row references it).
+    let thumb = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(
+        thumb.is_some(),
+        "the member's thumbnail survives the admin's cascade (thumbnail-key count, not storage-key)"
+    );
+}
+
+/// PG rename pre-check: same-layer duplicate refuses at the store layer.
+#[tokio::test]
+async fn c1_memory_rename_precheck_friendly_conflict() {
+    let (state, _token) = matrix_setup().await;
+    let admin_id = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let a = state
+        .store
+        .create_folder(admin_id, None, "one")
+        .await
+        .unwrap();
+    let b = state
+        .store
+        .create_folder(admin_id, None, "two")
+        .await
+        .unwrap();
+    let result = state.store.rename_file(b.id, "one").await;
+    assert!(
+        matches!(result, Err(i0721_store::StoreError::Conflict(ref msg)) if msg.contains("already exists")),
+        "store-layer rename pre-check: {result:?}"
+    );
+    let _ = a;
+}

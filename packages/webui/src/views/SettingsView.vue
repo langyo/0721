@@ -76,7 +76,9 @@ function fill(config: SiteConfig) {
   form.imageSizeLimit = config.upload["image-size-limit"];
   form.webpAutoConvert = config.upload["webp-auto-convert"];
   form.useSourceFileName = config.upload["use-source-file-name"];
-  form.defaultQuota = config.upload["default-quota-bytes"]?.toString() ?? "";
+  form.defaultQuota = config.upload["default-quota-bytes"] != null
+    ? config.upload["default-quota-bytes"]!.toString()
+    : "";
 }
 
 async function load() {
@@ -134,8 +136,22 @@ const timezoneError = computed(() =>
   Number.isInteger(form.timezone) && Math.abs(form.timezone) <= 14 ? null : "-14..=14",
 );
 
+const quotaError = computed(() => {
+  const raw = form.defaultQuota.trim();
+  if (!raw) return null; // empty = unlimited (explicit semantics)
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+    return "must be a non-negative integer (or empty for unlimited)";
+  }
+  return null;
+});
+
 const valid = computed(
-  () => mediaPathError.value === null && sizeLimitError.value === null && timezoneError.value === null,
+  () =>
+    mediaPathError.value === null &&
+    sizeLimitError.value === null &&
+    timezoneError.value === null &&
+    quotaError.value === null,
 );
 
 async function save() {
@@ -164,7 +180,7 @@ async function save() {
         "webp-auto-convert": form.webpAutoConvert,
         "use-source-file-name": form.useSourceFileName,
         "default-quota-bytes": form.defaultQuota.trim()
-          ? BigInt(form.defaultQuota.trim())
+          ? BigInt(Math.trunc(Number(form.defaultQuota)))
           : null,
       },
     };
@@ -278,6 +294,18 @@ async function save() {
 
       <HkSectionCard :title="t('common.settings.sectionUpload')">
         <div class="grid">
+          <label class="field">
+            <span>{{ t("common.settings.defaultQuota") }}</span>
+            <HkInput
+              v-model="form.defaultQuota"
+              name="default-quota"
+              type="number"
+              placeholder="unlimited"
+              :error="quotaError ?? undefined"
+              data-testid="default-quota-input"
+            />
+            <small class="hint">{{ t("common.settings.defaultQuotaHint") }}</small>
+          </label>
           <label class="field">
             <span>{{ t("common.settings.imageSizeLimit") }}</span>
             <HkInput

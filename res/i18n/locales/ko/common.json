@@ -84,7 +84,8 @@
     "addBanner": "배너 항목 추가",
     "passwordLogin": "비밀번호 로그인 허용",
     "passwordLoginHint": "OAuth 제공자 구성 후 끄기를 권장.",
-    "defaultQuota": "기본 저장 공간 할당량(바이트)"
+    "defaultQuota": "기본 저장 공간 할당량(바이트)",
+    "defaultQuotaHint": "비워 두면 무제한. 사용자별 재정의가 없을 때 적용됩니다."
   },
   "chrome": {
     "settings": "설정",
