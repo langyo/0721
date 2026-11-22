@@ -168,8 +168,6 @@ pub trait Store: Send + Sync {
 
     // ── netdisk: scoped listing, folders, moves, shares, quota ──────
 
-    /// List one folder's live children (own-tree scope): the caller's
-    /// files whose parent is `parent_id` (None = root).
     /// Count the live rows in a folder listing without fetching them.
     async fn count_folder(
         &self,
@@ -178,6 +176,8 @@ pub trait Store: Send + Sync {
         kind: Option<String>,
     ) -> Result<u64, StoreError>;
 
+    /// List one folder's live children (own-tree scope): the caller's
+    /// files whose parent is `parent_id` (None = root).
     async fn list_folder(
         &self,
         owner_id: Uuid,

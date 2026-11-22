@@ -81,7 +81,6 @@ WHERE fr.id = f.id
   AND fr.free_rank = fr.rename_rank"#;
 
 /// The baseline schema plus the settings seed.
-/// The baseline schema plus the settings seed.
 ///
 /// The seed row uses `ON CONFLICT DO NOTHING`, so a database whose
 /// operator deleted the row keeps that choice on re-run.
