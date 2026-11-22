@@ -540,6 +540,7 @@ mod tests {
 
     fn new_file(owner: Uuid, sha: &str) -> NewFile {
         NewFile {
+            parent_id: None,
             owner_id: owner,
             name: sha.to_owned(),
             kind: FileKind::Image,
