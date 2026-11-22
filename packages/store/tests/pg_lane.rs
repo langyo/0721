@@ -148,6 +148,7 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
         .expect("other owner");
 
     let file = |owner_id, sha: &str| NewFile {
+        parent_id: None,
         owner_id,
         name: sha.to_owned(),
         kind: FileKind::Image,
