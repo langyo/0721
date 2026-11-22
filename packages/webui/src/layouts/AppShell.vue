@@ -24,7 +24,7 @@ import {
   Unplug,
   Users as UsersIcon,
 } from "lucide-vue-next";
-import { computed, ref, type Component, type VNode } from "vue";
+import { computed, ref, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
@@ -150,13 +150,6 @@ async function handleLogout(): Promise<void> {
   await router.push({ name: "login" });
 }
 
-/** The shell hands the header a page-owned centre RENDERER (or none);
- * render it through a one-off functional node so template slots stay
- * declarative. */
-function centerNode(center?: () => VNode[]): Component | null {
-  return center ? (() => center()) as Component : null;
-}
-
 // ── Footer: the family status bar over the transport probe ───────────
 
 const appVersion: string = __APP_VERSION__;
@@ -191,8 +184,7 @@ const statusBarState = computed<"connected" | "reconnecting" | "disconnected" | 
         :locale-options="localeOptions"
         :current-locale="locale"
         :actions="actions"
-        :aria-label="t('common.chrome.settings')"
-        :avatar-trigger-label="t('common.chrome.settings')"
+        :avatar-trigger-label="t('common.menu.account')"
         :locale-menu-label="t('common.chrome.language')"
         @locale-select="(code: string) => setLocale(code)"
         @logout="handleLogout"
@@ -210,8 +202,11 @@ const statusBarState = computed<"connected" | "reconnecting" | "disconnected" | 
             <template #icon><Settings :size="16" /></template>
           </HkIconButton>
         </template>
+        <!-- The shell hands the header the page-owned centre renderer;
+             a render function IS a functional component — mount it
+             directly instead of wrapping it in a fresh identity. -->
         <template v-if="center" #center>
-          <component :is="centerNode(center)" />
+          <component :is="center" />
         </template>
         <template #avatar-modal="{ open, onUpdateOpen }">
           <HkModal
