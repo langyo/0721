@@ -715,10 +715,12 @@ async fn pg_find_share_by_file_is_owner_scoped() {
         .create_user(scratch_user())
         .await
         .expect("other owner");
-    let file = |owner_id| NewFile {
+    // Same-layer uniqueness (migration 0004) forbids two live rows named
+    // alike under one owner, so each file carries its own name.
+    let file = |owner_id, name: &str| NewFile {
         parent_id: None,
         owner_id,
-        name: "share.bin".to_owned(),
+        name: name.to_owned(),
         kind: FileKind::Other,
         mime: "application/octet-stream".to_owned(),
         size: 3,
@@ -726,10 +728,16 @@ async fn pg_find_share_by_file_is_owner_scoped() {
         storage_backend: "local".to_owned(),
         storage_key: format!("sh{}", uuid::Uuid::new_v4().simple()),
         thumbnail_key: None,
-        original_name: "share.bin".to_owned(),
+        original_name: name.to_owned(),
     };
-    let a = store.create_file(file(owner.id)).await.expect("file a");
-    let b = store.create_file(file(owner.id)).await.expect("file b");
+    let a = store
+        .create_file(file(owner.id, "share-a.bin"))
+        .await
+        .expect("file a");
+    let b = store
+        .create_file(file(owner.id, "share-b.bin"))
+        .await
+        .expect("file b");
 
     assert!(
         store
