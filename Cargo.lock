@@ -1531,9 +1531,8 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "plana"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41480eb06faec44f188d4199806f5129b9ed44b3924582e2b9dc6174963a286e"
+version = "0.8.0"
+source = "git+https://github.com/celestia-island/plana?branch=master#a32ae3dca5ad9b734f4844bf3d97a105fb1bde2f"
 dependencies = [
  "anyhow",
  "axum",
@@ -1556,8 +1555,7 @@ dependencies = [
 [[package]]
 name = "plana-rpc-server"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76acc35ed3c970542a4e670a5e73dd17b51c82ab739aac8fbf705f21209fe1f6"
+source = "git+https://github.com/celestia-island/plana?branch=master#a32ae3dca5ad9b734f4844bf3d97a105fb1bde2f"
 dependencies = [
  "axum",
  "futures",

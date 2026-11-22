@@ -75,4 +75,7 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Registry fallback (see Cargo.toml): the family ORM master carries the
 # find/insert helpers the service is built on.
-allow-git = ["https://github.com/celestia-island/lacrymira"]
+allow-git = [
+    "https://github.com/celestia-island/lacrymira",
+    "https://github.com/celestia-island/plana",
+]
