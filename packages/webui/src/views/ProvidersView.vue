@@ -68,6 +68,7 @@ function emptyForm() {
     client_secret: "",
     base_url: "",
     issuer_url: "",
+    scopes: "",
     enabled: true,
   };
 }
@@ -89,6 +90,7 @@ function openEdit(row: OAuthProviderPublic) {
     client_secret: "",
     base_url: row.base_url ?? "",
     issuer_url: row.issuer_url ?? "",
+    scopes: row.scopes ?? "",
     enabled: row.enabled,
   };
   saveError.value = null;
@@ -134,7 +136,8 @@ async function save() {
       client_secret: form.value.client_secret,
       base_url: form.value.base_url.trim() || null,
       issuer_url: form.value.issuer_url.trim() || null,
-      scopes: null,
+      // Empty = null = the server's per-template default scopes.
+      scopes: form.value.scopes.trim() || null,
       enabled: form.value.enabled,
       icon: null,
     });

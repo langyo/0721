@@ -107,6 +107,7 @@
     "baseUrl": "ベース URL（ERP）",
     "issuerUrl": "発行者 URL（OIDC）",
     "enabled": "有効",
-    "deleteConfirm": "プロバイダー {id} を削除しますか？"
+    "deleteConfirm": "プロバイダー {id} を削除しますか？",
+    "scopes": "スコープ"
   }
 }

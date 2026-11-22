@@ -76,9 +76,14 @@ const DISCOVERY_CACHE_MAX: usize = 32;
 
 // ── the registry rows ──────────────────────────────────────────────────
 
-/// One provider row as stored in settings (secrets server-held).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
-#[ts(export, export_to = "../../webui/src/types/")]
+/// One provider row as stored in settings. This is the STORAGE form:
+/// it serializes the client_secret (the settings row is server-side
+/// only — every public wire shape goes through [`OAuthProvider::masked`],
+/// and `skip_serializing` here would WIPE the secret on every save and
+/// leave a row the loader cannot parse back). It deliberately carries
+/// no ts-rs export: the webui speaks `OAuthProviderUpsert` (input) and
+/// `OAuthProviderPublic` (masked output), never this shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OAuthProvider {
     /// Registry id (`[a-z0-9][a-z0-9._-]*`).
     pub id: String,
@@ -90,9 +95,8 @@ pub struct OAuthProvider {
     pub provider_type: String,
     /// OAuth client id (the app id on feishu).
     pub client_id: String,
-    /// The client secret. NEVER serialized to any public shape — the
-    /// admin list carries `has_secret` + the tail instead.
-    #[serde(skip_serializing)]
+    /// The client secret (server-held; the masked projection is the
+    /// only public shape).
     pub client_secret: String,
     /// The ERP panel's origin (`builtin:erp` only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -107,8 +111,9 @@ pub struct OAuthProvider {
     /// Disabled providers vanish from login-methods and refuse flows.
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Login-button icon (http(s)/data URI passthrough; unused by the
-    /// bundled webui which renders initials).
+    /// Login-button icon (http(s)/data URI passthrough; the bundled
+    /// webui decorates every button with a uniform key glyph and does
+    /// not read this field).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
 }

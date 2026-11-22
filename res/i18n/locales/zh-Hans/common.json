@@ -107,6 +107,7 @@
     "baseUrl": "基础 URL（ERP）",
     "issuerUrl": "签发方 URL（OIDC）",
     "enabled": "启用",
-    "deleteConfirm": "删除提供方 {id}？"
+    "deleteConfirm": "删除提供方 {id}？",
+    "scopes": "作用域"
   }
 }

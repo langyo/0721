@@ -2698,3 +2698,60 @@ async fn password_off_with_no_enabled_provider_is_refused() {
     .await;
     assert_eq!(status, StatusCode::OK, "{envelope}");
 }
+
+/// The scopes round-trip: upsert carries scopes, the masked list
+/// answers them back (the edit form re-fills from exactly this).
+#[tokio::test]
+async fn provider_scopes_round_trip_through_the_masked_list() {
+    let (state, _stub, _base, admin) = oauth_test_state_with_stub().await;
+    let admin_token = state.signer.sign(admin.id, Timestamp::now());
+
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.upsert",
+        serde_json::json!({
+            "id": "stub", "display_name": "Stub", "type": "builtin:erp",
+            "client_id": "stub-client", "client_secret": "",
+            "base_url": "http://127.0.0.1:1", "enabled": true,
+            "scopes": "openid profile email",
+        }),
+    )
+    .await;
+    assert_eq!(
+        envelope["result"]["scopes"], "openid profile email",
+        "the upsert response echoes the scopes"
+    );
+
+    // And back through the LIST (what the edit form reads).
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.list",
+        serde_json::Value::Null,
+    )
+    .await;
+
+    let row = envelope["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "stub")
+        .unwrap();
+    assert_eq!(row["scopes"], "openid profile email");
+
+    // Empty → null (the server-side per-template defaults apply).
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.upsert",
+        serde_json::json!({
+            "id": "stub", "display_name": "Stub", "type": "builtin:erp",
+            "client_id": "stub-client", "client_secret": "",
+            "base_url": "http://127.0.0.1:1", "enabled": true,
+            "scopes": null,
+        }),
+    )
+    .await;
+    assert_eq!(envelope["result"]["scopes"], serde_json::Value::Null);
+}

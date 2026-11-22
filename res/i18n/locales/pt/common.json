@@ -107,6 +107,7 @@
     "baseUrl": "URL base (ERP)",
     "issuerUrl": "URL do emissor (OIDC)",
     "enabled": "Ativo",
-    "deleteConfirm": "Excluir o provedor {id}?"
+    "deleteConfirm": "Excluir o provedor {id}?",
+    "scopes": "Escopos"
   }
 }

@@ -107,6 +107,7 @@
     "baseUrl": "기본 URL(ERP)",
     "issuerUrl": "발급자 URL(OIDC)",
     "enabled": "활성",
-    "deleteConfirm": "제공자 {id}을(를) 삭제할까요?"
+    "deleteConfirm": "제공자 {id}을(를) 삭제할까요?",
+    "scopes": "스코프"
   }
 }

@@ -186,3 +186,22 @@ describe("LoginView dead state (W4 R2)", () => {
     expect(wrapper.text()).toContain("No login method is available");
   });
 });
+
+describe("LoginView password kill-switch (W4 closing)", () => {
+  it("surfaces the disabled message on a 403, distinct from bad credentials", async () => {
+    loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
+    loginMock.mockRejectedValue(new ApiError(403, "password login is disabled"));
+    const { wrapper } = await mountView();
+    const inputs = wrapper.findAll("input");
+    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
+    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
+    await flushPromises();
+    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
+    await flushPromises();
+    const alert = wrapper.find('[role="alert"]');
+    expect(alert.exists()).toBe(true);
+    // The kill-switch copy, NOT the 401 invalid-credentials copy.
+    expect(alert.text()).toBe("Password login is disabled — use a provider below.");
+    expect(alert.text()).not.toContain("Invalid username");
+  });
+});

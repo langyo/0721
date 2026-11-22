@@ -107,6 +107,7 @@
     "baseUrl": "Базовый URL (ERP)",
     "issuerUrl": "URL эмитента (OIDC)",
     "enabled": "Включён",
-    "deleteConfirm": "Удалить провайдера {id}?"
+    "deleteConfirm": "Удалить провайдера {id}?",
+    "scopes": "Области"
   }
 }

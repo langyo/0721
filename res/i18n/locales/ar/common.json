@@ -107,6 +107,7 @@
     "baseUrl": "العنوان الأساسي (ERP)",
     "issuerUrl": "عنوان المُصدر (OIDC)",
     "enabled": "مُفعّل",
-    "deleteConfirm": "حذف المزوّد {id}؟"
+    "deleteConfirm": "حذف المزوّد {id}؟",
+    "scopes": "النطاقات"
   }
 }

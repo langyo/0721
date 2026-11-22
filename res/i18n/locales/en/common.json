@@ -107,6 +107,7 @@
     "baseUrl": "Base URL (ERP)",
     "issuerUrl": "Issuer URL (OIDC)",
     "enabled": "Enabled",
-    "deleteConfirm": "Delete provider {id}?"
+    "deleteConfirm": "Delete provider {id}?",
+    "scopes": "Scopes"
   }
 }

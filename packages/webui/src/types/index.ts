@@ -15,7 +15,6 @@ export type { HealthReport } from "./HealthReport.ts";
 export type { LoginMethodProvider } from "./LoginMethodProvider.ts";
 export type { LoginMethods } from "./LoginMethods.ts";
 export type { LoginRequest } from "./LoginRequest.ts";
-export type { OAuthProvider } from "./OAuthProvider.ts";
 export type { OAuthProviderPublic } from "./OAuthProviderPublic.ts";
 export type { OAuthProviderUpsert } from "./OAuthProviderUpsert.ts";
 export type { PageArgs } from "./PageArgs.ts";
