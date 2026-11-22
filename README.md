@@ -102,7 +102,7 @@ required variable or an unparseable value refuses to start):
 | `I0721_TRUSTED_PROXIES` | *(empty)* | CIDR list whose `X-Forwarded-For` is honored for login throttling; empty = never trust the header |
 
 The site configuration (the old `Config.toml`) lives in the `settings`
-table and is edited through the admin API (`GET/PUT /api/v1/settings`) —
+table and is edited through the admin RPC lane (`settings.get` / `settings.put`) —
 changes apply on the next request, no container restart:
 
 ```json
@@ -142,11 +142,32 @@ Two caveats worth knowing:
 
 ## API sketch
 
-- `GET /api/health`
-- `POST /api/v1/auth/login` · `GET /api/v1/auth/verify` · `POST /api/v1/auth/refresh` — password + JWT (15-day tokens, 5 logins/min/IP)
-- `GET /api/v1/files` · `POST /api/v1/files` (multipart `file`, optional `?name=`) · `PATCH /api/v1/files/{id}` · `DELETE /api/v1/files/{id}` (soft delete)
-- `GET /api/v1/users` · `POST /api/v1/users` · `DELETE /api/v1/users/{id}` — admin role required
-- `GET /api/v1/settings` · `PUT /api/v1/settings` — admin role required
+Two lanes share the surface. The primary lane is the strict WebSocket
+JSON-RPC 2.0 endpoint **`/api/rpc`** (GET = WS upgrade; POST on the same
+path and method table = HTTP fallback) — the webui's transport. The
+REST lane is a deliberate whitelist for what a JSON control lane cannot
+carry (session cookies, binary bodies, probes).
+
+**JSON-RPC methods (`/api/rpc`)** — auth = the httpOnly session cookie
+(browsers); `Authorization: Bearer`, `Sec-WebSocket-Protocol: jwt.<t>`
+and `?token=` stay open for non-browser clients, tried in that order:
+
+- `auth.verify` — the session's user projection
+- `files.list {offset, limit}` · `files.update {id, name}` · `files.delete {id}` (owner-or-admin)
+- `users.list {offset, limit}` · `users.create {username, password, display_name?, role?}` · `users.delete {id}` — admin role required
+- `settings.get` · `settings.put` — admin role required; `put` takes the COMPLETE strict document (missing sections/leaves → error, never a silent default reset)
+
+Error codes: the JSON-RPC family plus `-32005` auth/permission,
+`-32006` not found, `-32007` conflict, `-32008` too large, `-32009`
+deferred-ops disabled (this instance serves no `ops.*`).
+
+**REST whitelist**:
+
+- `GET /api/health` — probe / container healthcheck
+- `POST /api/v1/auth/login` — password login; plants the `i0721-token` httpOnly cookie (the body carries NO token)
+- `POST /api/v1/auth/refresh` — cookie rotation (Set-Cookie needs HTTP, so refresh lives here, not on the RPC table)
+- `POST /api/v1/auth/logout` — expires the cookie and supersedes all outstanding tokens
+- `POST /api/v1/files` — multipart `file` upload (binary + progress events; optional `?name=`)
 - `GET /media/{key}[?thumbnail=true]` — the public path legacy image links depend on (referrer allow-list honored)
 
 ## Debug
