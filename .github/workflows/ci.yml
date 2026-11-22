@@ -74,6 +74,7 @@ jobs:
 
       - name: TS bindings are not stale
         run: |
+          python3 scripts/gen_types_barrel.py --check && \
           git diff --exit-code -- packages/webui/src/types || {
             echo "packages/webui/src/types drifted from the Rust definitions — regenerate with 'just webui-types' and commit"; exit 1; }
 

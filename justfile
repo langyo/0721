@@ -32,16 +32,24 @@ webui-test:
 webui-serve:
     pnpm --filter @celestia-island/i0721-webui exec vite preview --outDir ../../dist/webui --port 4173
 
-# Regenerate the Rust→TS bindings into packages/webui/src/types. Run
-# after changing an exported proto/server DTO, then commit the diff
-# (the generated files live in the tree; never hand-write them).
+# Regenerate the Rust→TS bindings AND the types barrel into
+# packages/webui/src/types. Run after changing an exported proto/server
+# DTO, then commit the diff (the generated files live in the tree; never
+# hand-write them). The barrel is derived from the binding files on disk
+# (scripts/gen_types_barrel.py), so a new #[ts(export)] can never land
+# as a file the barrel silently fails to re-export.
 webui-types:
     cargo test -p i0721-proto -p i0721-server --quiet
+    python3 scripts/gen_types_barrel.py
 
-# Fail when the committed TS bindings drifted from the Rust definitions:
-# regenerate and git-diff. CI + gate both pin this so a stale contract
-# can never merge.
-webui-types-check: webui-types
+# Fail when the committed TS bindings or the barrel drifted: the barrel
+# is first checked against the disk file set (a hand-edited or stale
+# index.ts is a bijection break), then everything is regenerated and
+# git-diffed. CI + gate both pin this so a stale contract can never
+# merge.
+webui-types-check:
+    python3 scripts/gen_types_barrel.py --check
+    just webui-types
     git diff --exit-code -- packages/webui/src/types
 
 # ── rust ────────────────────────────────────────────────────────────────
