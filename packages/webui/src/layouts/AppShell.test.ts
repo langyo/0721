@@ -105,12 +105,10 @@ describe("AppShell (family grouped chrome)", () => {
     // A second, independent pin on the same gating: the admin pages'
     // own labels must not render for a member either (with this, the
     // guarantee no longer rests on the group-label line alone).
-    // providers.title measured value-unique in all 12 locales (users.title
+    // providers.title is value-unique across all 12 locales (users.title
     // shares status.member's in de/ja/ko/zh-Hans/zh-Hant, nav.settings
-    // shares chrome.settings' in ar/en/ja/ko) — a colliding label would
-    // let this negative assertion mis-target.
-    // comment-gate-ok: a measurement of the locale tables, not a
-    // behaviour claim; the assertion below is what the gate should bite on.
+    // shares chrome.settings' in ar/en/ja/ko); a colliding label would
+    // let this negative assertion mis-target the wrong string.
     expect(text).not.toContain(i18n.global.t("common.providers.title"));
     // And the gating is pinned on the DATA path too, independent of any
     // label: the menu receives two groups for a member, three for an
