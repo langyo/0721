@@ -98,6 +98,7 @@ required variable or an unparseable value refuses to start):
 | `JWT_SECRET` (container-side; compose sets it from `I0721_JWT_SECRET`) | required | HS256 secret for the transition-era tokens |
 | `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
 | `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it) |
+| `I0721_PUBLIC_ORIGIN` | — | the deployment's absolute https origin (OAuth redirect URIs); unset = Host-header derivation |
 | `I0721_STATIC_DIR` | `dist/webui` | web UI dist directory (dev mode; the default build embeds the dist) |
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |
 | `I0721_LOG` | `i0721_server=info,tower_http=warn` | tracing filter |
@@ -169,8 +170,16 @@ The service offers two login modes, driven by configuration:
 Security notes: the session credential is an httpOnly cookie (never in
 page-readable storage or URLs); the OAuth `client_secret` never leaves
 the server; the state cookie is strictly compared against the
-provider's echo (CSRF); no email-domain restriction ships in this first
-version (the admin gate + provider choice are the boundary).
+provider's echo AND carries the provider id (a state minted for one
+provider cannot be replayed against another); provider endpoint URLs
+must be absolute https (http survives only for localhost/127.0.0.1 —
+the local dev/stub lane); set `I0721_PUBLIC_ORIGIN`
+(https://res.celestia.world in production) so the OAuth redirect URI
+follows the deployment's real origin instead of the Host header; the
+password kill-switch refuses to turn the password OFF while no OAuth
+provider is enabled (the no-login-method state is unreachable); no
+email-domain restriction ships in this first version (the admin gate +
+provider choice are the boundary).
 
 ## API sketch
 

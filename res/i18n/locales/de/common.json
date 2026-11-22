@@ -39,7 +39,8 @@
     "subtitle": "Weiter zu 0721",
     "failed": "Ungültiger Benutzername oder falsches Passwort",
     "orContinue": "oder fortfahren mit",
-    "passwordDisabled": "Passwort-Login ist deaktiviert — nutzen Sie unten einen Anbieter."
+    "passwordDisabled": "Passwort-Login ist deaktiviert — nutzen Sie unten einen Anbieter.",
+    "noMethods": "Keine Anmeldemethode verfügbar — ein Administrator muss einen Anbieter oder das Passwort-Login aktivieren."
   },
   "portal": {
     "title": "Bilder",

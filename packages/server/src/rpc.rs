@@ -58,8 +58,8 @@ use crate::auth::{clears_watermark, hash_password, watermark_key};
 use crate::blob::BlobSlot;
 use crate::error::ApiError;
 use crate::oauth::{
-    load_providers, save_providers, valid_provider_id, valid_provider_type, OAuthProvider,
-    OAuthProviderUpsert,
+    load_providers, save_providers, valid_provider_id, valid_provider_type, valid_provider_url,
+    OAuthProvider, OAuthProviderUpsert,
 };
 use crate::state::AppState;
 
@@ -646,6 +646,19 @@ pub fn build_server(state: AppState) -> RpcServer {
                         "type must be builtin:github | builtin:feishu | builtin:erp | oidc",
                     )));
                 }
+                // https-only endpoints (http survives for loopback — the
+                // local stub/dev lane); an http base would POST the
+                // client secret in cleartext.
+                if !valid_provider_url(upsert.base_url.as_deref()) {
+                    return Err(api_err(ApiError::bad_request(
+                        "base_url must be an absolute https URL (http only for localhost/127.0.0.1)",
+                    )));
+                }
+                if !valid_provider_url(upsert.issuer_url.as_deref()) {
+                    return Err(api_err(ApiError::bad_request(
+                        "issuer_url must be an absolute https URL (http only for localhost/127.0.0.1)",
+                    )));
+                }
                 let mut providers = load_providers(&state).await;
                 // Empty secret = keep the stored one (the admin form
                 // never echoes secrets back).
@@ -717,6 +730,21 @@ pub fn build_server(state: AppState) -> RpcServer {
                 let params: PutParams = params(&ctx)?;
                 let caller = user_of(&ctx);
                 require_admin(&caller).await?;
+                // The dead-state guard: turning the password OFF with no
+                // enabled provider would leave the deployment with NO
+                // login method at all — refuse (the row stays; the
+                // admin enables a provider first or keeps the password).
+                if !params.enabled {
+                    let any_provider = load_providers(&state)
+                        .await
+                        .iter()
+                        .any(|p| p.enabled);
+                    if !any_provider {
+                        return Err(api_err(ApiError::bad_request(
+                            "cannot disable password login while no OAuth provider is enabled",
+                        )));
+                    }
+                }
                 state
                     .store
                     .set_setting(

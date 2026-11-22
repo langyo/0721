@@ -39,7 +39,8 @@
     "subtitle": "Continuer vers 0721",
     "failed": "Nom d'utilisateur ou mot de passe incorrect",
     "orContinue": "ou continuer avec",
-    "passwordDisabled": "Connexion par mot de passe désactivée — utilisez un fournisseur ci-dessous."
+    "passwordDisabled": "Connexion par mot de passe désactivée — utilisez un fournisseur ci-dessous.",
+    "noMethods": "Aucune méthode de connexion disponible — un administrateur doit activer un fournisseur ou la connexion par mot de passe."
   },
   "portal": {
     "title": "Images",

@@ -27,6 +27,9 @@ const { t } = useI18n();
 const rows = ref<OAuthProviderPublic[]>([]);
 const loading = ref(false);
 const loadError = ref<string | null>(null);
+/** A toggle failure's visible message (the enable/disable lane's own
+ *  error row — a silent rollback reads as success). */
+const toggleError = ref<string | null>(null);
 
 const PROVIDER_TYPES = ["builtin:github", "builtin:feishu", "builtin:erp", "oidc"] as const;
 
@@ -148,6 +151,7 @@ async function save() {
 
 async function toggle(row: OAuthProviderPublic, enabled: boolean) {
   const previous = rows.value;
+  toggleError.value = null;
   rows.value = rows.value.map((r) => (r.id === row.id ? { ...r, enabled } : r));
   try {
     await api.upsertProvider({
@@ -164,7 +168,8 @@ async function toggle(row: OAuthProviderPublic, enabled: boolean) {
     });
   } catch (err) {
     rows.value = previous;
-    loadError.value = err instanceof Error ? err.message : t("common.status.error");
+    // The failure must be VISIBLE (the row just snapped back — say why).
+    toggleError.value = err instanceof Error ? err.message : t("common.status.error");
   }
 }
 
@@ -214,6 +219,7 @@ async function confirmDelete() {
     <HkEmptyState v-else-if="rows.length === 0" boxed :icon="Unplug" :title="t('common.providers.empty')" />
 
     <template v-else>
+      <p v-if="toggleError" class="toggle-error" role="alert">{{ toggleError }}</p>
       <ul class="provider-list">
         <li v-for="row in rows" :key="row.id" class="provider-row">
           <button type="button" class="row-main" @click="openEdit(row)">
@@ -432,8 +438,16 @@ async function confirmDelete() {
   }
 }
 
-.dialog-error {
+.dialog-error,
+.toggle-error {
   color: rgb(220 38 38);
   font-size: 0.85rem;
+}
+
+.toggle-error {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, rgb(220 38 38) 12%, transparent);
 }
 </style>

@@ -65,6 +65,13 @@ pub enum ConfigError {
         /// The raw value.
         value: String,
     },
+    /// `I0721_PUBLIC_ORIGIN` is not an absolute https origin (the http
+    /// exception is localhost/127.0.0.1/::1 only).
+    #[error("I0721_PUBLIC_ORIGIN `{value}` is not an absolute https origin (http only for localhost/127.0.0.1, no path, no userinfo)")]
+    PublicOrigin {
+        /// The raw value.
+        value: String,
+    },
 }
 
 /// Widen one address into its singleton network (`/32` or `/128`).
@@ -132,6 +139,10 @@ pub struct Config {
     /// Networks whose `X-Forwarded-For` is honored for client-IP
     /// derivation (login throttling). Empty = never trust the header.
     pub trusted_proxies: Vec<IpNet>,
+    /// The deployment's public origin (`I0721_PUBLIC_ORIGIN`), an
+    /// absolute https URL (http allowed for localhost/127.0.0.1 dev).
+    /// Drives the OAuth redirect URI; absent = Host derivation.
+    pub public_origin: Option<String>,
 }
 
 impl Config {
@@ -183,6 +194,30 @@ impl Config {
             Some(raw) => parse_trusted_proxies(&raw)?,
             None => Vec::new(),
         };
+        let public_origin = match lookup("I0721_PUBLIC_ORIGIN") {
+            Some(raw) => {
+                let raw = raw.trim().to_owned();
+                let parsed = url::Url::parse(&raw)
+                    .map_err(|_| ConfigError::PublicOrigin { value: raw.clone() })?;
+                let scheme_ok = parsed.scheme() == "https"
+                    || (parsed.scheme() == "http"
+                        && matches!(
+                            parsed.host_str(),
+                            Some("localhost") | Some("127.0.0.1") | Some("::1")
+                        ));
+                let pathless = parsed.path() == "/" || parsed.path() == "";
+                if !scheme_ok || !pathless || parsed.username() != "" {
+                    return Err(ConfigError::PublicOrigin { value: raw });
+                }
+                // Normalize without the trailing slash.
+                let mut origin = parsed.to_string();
+                while origin.ends_with('/') {
+                    origin.pop();
+                }
+                Some(origin)
+            }
+            None => None,
+        };
         Ok(Self {
             database_url,
             listen,
@@ -193,6 +228,7 @@ impl Config {
             log_filter,
             seed_admin_password,
             trusted_proxies,
+            public_origin,
         })
     }
 }

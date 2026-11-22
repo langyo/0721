@@ -175,3 +175,14 @@ describe("LoginView dual-mode (W4)", () => {
     expect(wrapper.findAll(".provider-button").length).toBe(1);
   });
 });
+
+describe("LoginView dead state (W4 R2)", () => {
+  it("renders the guidance when no login method exists", async () => {
+    loginMethodsMock.mockResolvedValue({ password: false, providers: [] });
+    const { wrapper } = await mountView();
+    await flushPromises();
+    expect(wrapper.find(".provider-button").exists()).toBe(false);
+    expect(wrapper.find(".s-auth-card").exists()).toBe(false);
+    expect(wrapper.text()).toContain("No login method is available");
+  });
+});

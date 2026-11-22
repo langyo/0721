@@ -259,6 +259,27 @@ pub fn valid_provider_id(id: &str) -> bool {
         })
 }
 
+/// Validate a provider URL field (base_url / issuer_url): an absolute
+/// https URL, or http for loopback only (the local stub/dev lane) —
+/// an http URL elsewhere would carry the client secret in cleartext.
+pub fn valid_provider_url(raw: Option<&str>) -> bool {
+    let Some(raw) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return true; // absent is fine (fields are per-type optional)
+    };
+    let Ok(parsed) = url::Url::parse(raw) else {
+        return false;
+    };
+    if parsed.username().is_empty() && parsed.scheme() == "https" {
+        return true;
+    }
+    parsed.scheme() == "http"
+        && parsed.username().is_empty()
+        && matches!(
+            parsed.host_str(),
+            Some("localhost") | Some("127.0.0.1") | Some("::1")
+        )
+}
+
 /// Validate the type tag.
 pub fn valid_provider_type(provider_type: &str) -> bool {
     matches!(
@@ -279,7 +300,7 @@ fn authorize_url(
     let encoded_redirect = urlencode(redirect_uri);
     let mut url = match provider.provider_type.as_str() {
         "builtin:github" => format!(
-            "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read%3Auser+user%3Aemail&state={}&code_challenge={}&code_challenge_method=S256",
+            "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read%3Auser&state={}&code_challenge={}&code_challenge_method=S256",
             urlencode(&provider.client_id), encoded_redirect, state_param, challenge,
         ),
         "builtin:feishu" => format!(
@@ -510,7 +531,7 @@ pub async fn redirect(
 
     let state_param = Uuid::new_v4().simple().to_string();
     let (verifier, challenge) = pkce_s256_pair();
-    let redirect_uri = callback_uri(&headers, &provider);
+    let redirect_uri = callback_uri(&state, &headers, &provider);
 
     let Some(url) = resolve_authorize_url(&state, config, &redirect_uri, &state_param, &challenge)
         .await
@@ -523,9 +544,12 @@ pub async fn redirect(
 
     // state + verifier in ONE HttpOnly cookie (600 s), scoped to the
     // callback path, SameSite=Lax (the provider's redirect back is a
-    // top-level navigation).
+    // top-level navigation). The PROVIDER rides the value too
+    // (`|`-joined: provider ids allow dots, but never a pipe), so a
+    // state minted for one provider cannot be replayed against
+    // another's callback.
     let cookie = format!(
-        "{OAUTH_STATE_COOKIE}={state_param}.{verifier}; Max-Age={OAUTH_STATE_MAX_AGE_SECS}; \
+        "{OAUTH_STATE_COOKIE}={provider}|{state_param}|{verifier}; Max-Age={OAUTH_STATE_MAX_AGE_SECS}; \
          HttpOnly; SameSite=Lax; Path=/api/v1/auth/oauth"
     );
     (
@@ -542,13 +566,21 @@ pub async fn callback(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
-    // Strict state check: cookie vs provider echo (CSRF defense).
+    // Strict state check: cookie vs provider echo (CSRF defense), with
+    // the provider segment bound in — the cookie must name THIS
+    // provider (a state minted for another one is a replay).
     let Some(cookie_value) = cookie_value(&headers, OAUTH_STATE_COOKIE) else {
         return forbidden("OAuth state cookie missing — restart the login");
     };
-    let Some((cookie_state, verifier)) = cookie_value.split_once('.') else {
+    let Some((cookie_provider, rest)) = cookie_value.split_once('|') else {
         return forbidden("malformed OAuth state cookie");
     };
+    let Some((cookie_state, verifier)) = rest.split_once('|') else {
+        return forbidden("malformed OAuth state cookie");
+    };
+    if cookie_provider != provider {
+        return forbidden("OAuth state cookie was minted for another provider");
+    }
     let Some(provider_state) = params.get("state") else {
         return forbidden("OAuth callback missing state parameter");
     };
@@ -564,7 +596,7 @@ pub async fn callback(
         return bad_request("OAuth provider not configured or disabled");
     };
 
-    let redirect_uri = callback_uri(&headers, &provider);
+    let redirect_uri = callback_uri(&state, &headers, &provider);
 
     match run_exchange_and_session(&state, config, &redirect_uri, code, verifier).await {
         Ok(response) => {
@@ -670,11 +702,19 @@ async fn run_exchange_and_session(
         None => token_json,
     };
 
-    // Subject: `sub` (oidc/erp) | `id` (github) | `open_id` (feishu).
+    // Subject: `sub` (oidc/erp) | `id` (github, a JSON NUMBER) |
+    // `open_id` (feishu). Numbers stringify — GitHub's /user answers
+    // `{"id": 12345678}`, and an `as_str()`-only read would reject every
+    // GitHub login with 502.
     let subject = ["sub", "id", "open_id"]
         .iter()
-        .find_map(|key| userinfo.get(*key).and_then(|v| v.as_str()))
-        .map(str::to_owned)
+        .find_map(|key| {
+            userinfo.get(*key).and_then(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .or_else(|| v.as_u64().filter(|_| *key == "id").map(|n| n.to_string()))
+            })
+        })
         .ok_or_else(|| ApiError::bad_gateway("userinfo carried no subject"))?;
     let display_name = ["name", "preferred_username", "login", "display_name"]
         .iter()
@@ -808,14 +848,29 @@ pub async fn find_or_create_user(
 
 // ── shared helpers ─────────────────────────────────────────────────────
 
-/// The callback URI as the provider sees it, derived from the
-/// request's own Host (the reverse proxy preserves it).
-fn callback_uri(headers: &HeaderMap, provider: &str) -> String {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("localhost");
-    format!("http://{host}/api/v1/auth/oauth/{provider}/callback")
+/// The callback URI as the provider sees it: the configured public
+/// origin (`I0721_PUBLIC_ORIGIN`, the deployment's A-layer fact) when
+/// present; otherwise derived from the request Host with a warning —
+/// a derivation the reverse proxy's Host preservation makes right in
+/// practice, but which the env pin makes explicit and auditable.
+fn callback_uri(state: &AppState, headers: &HeaderMap, provider: &str) -> String {
+    let origin = state
+        .config
+        .public_origin
+        .as_deref()
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            let host = headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("localhost");
+            tracing::warn!(
+                host,
+                "I0721_PUBLIC_ORIGIN unset — deriving the OAuth redirect URI from the Host header",
+            );
+            format!("http://{host}")
+        });
+    format!("{origin}/api/v1/auth/oauth/{provider}/callback")
 }
 
 /// Read one cookie's value from a Cookie header.

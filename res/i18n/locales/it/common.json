@@ -39,7 +39,8 @@
     "subtitle": "Continua su 0721",
     "failed": "Nome utente o password non validi",
     "orContinue": "oppure continua con",
-    "passwordDisabled": "Login con password disattivato: usa un provider qui sotto."
+    "passwordDisabled": "Login con password disattivato: usa un provider qui sotto.",
+    "noMethods": "Nessun metodo di accesso disponibile: un amministratore deve attivare un provider o il login con password."
   },
   "portal": {
     "title": "Immagini",

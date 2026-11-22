@@ -39,7 +39,8 @@
     "subtitle": "Continue to 0721",
     "failed": "Invalid username or password",
     "orContinue": "or continue with",
-    "passwordDisabled": "Password login is disabled — use a provider below."
+    "passwordDisabled": "Password login is disabled — use a provider below.",
+    "noMethods": "No login method is available — an administrator must enable a provider or password login."
   },
   "portal": {
     "title": "Portal",

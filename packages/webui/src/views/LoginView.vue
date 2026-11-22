@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { HkSignInCard } from "@celestia-island/hikari";
-import { KeyRound } from "lucide-vue-next";
+import { HkEmptyState, HkSignInCard } from "@celestia-island/hikari";
+import { KeyRound, Unplug } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -97,7 +97,7 @@ async function onSubmit(username: string, password: string) {
       </HkSignInCard>
 
       <!-- Password disabled: the providers ARE the page. -->
-      <div v-else-if="methods" class="providers-only">
+      <div v-else-if="methods?.providers?.length" class="providers-only">
         <h1 class="providers-title">{{ t("common.auth.title") }}</h1>
         <p v-if="error" class="login-error" role="alert">{{ error }}</p>
         <div class="provider-buttons">
@@ -113,6 +113,16 @@ async function onSubmit(username: string, password: string) {
           </button>
         </div>
       </div>
+
+      <!-- The dead state (no password, no provider): unreachable when
+           the server guards the kill-switch, rendered honestly anyway. -->
+      <HkEmptyState
+        v-else-if="methods"
+        boxed
+        :icon="Unplug"
+        :title="t('common.status.empty')"
+        :description="t('common.auth.noMethods')"
+      />
 
       <p v-if="error && methods?.password" class="login-error" role="alert">{{ error }}</p>
     </div>
