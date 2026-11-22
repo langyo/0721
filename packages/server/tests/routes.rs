@@ -2415,34 +2415,44 @@ async fn provider_crud_masks_secrets_and_empty_upsert_keeps_the_stored_one() {
 /// The stub, GitHub-shaped: a NUMERIC userinfo id (GitHub's `/user`
 /// answers `{"id": 12345678}`) and the id arriving as a number must
 /// still mint a session.
-#[tokio::test]
-async fn oauth_subject_extraction_accepts_a_numeric_github_id() {
-    let (state, stub, base, _admin) = oauth_test_state_with_stub().await;
-    // Re-point userinfo at a numeric-id variant served by a tiny side
-    // route on the stub's base? Simpler: swap the stored provider row's
-    // userinfo behavior is server-side code — instead assert the
-    // extraction directly (unit-level, through the same function the
-    // callback uses).
-    let userinfo = serde_json::json!({
-        "id": 12345678,
-        "login": "octocat",
-        "name": "Octo Cat",
-    });
-    let subject = ["sub", "id", "open_id"]
-        .iter()
-        .find_map(|key| {
-            userinfo.get(*key).and_then(|v| {
-                v.as_str()
-                    .map(str::to_owned)
-                    .or_else(|| v.as_u64().filter(|_| *key == "id").map(|n| n.to_string()))
-            })
-        })
-        .expect("a numeric id extracts as the subject");
-    assert_eq!(subject, "12345678");
-    // And the full flow still works against the string-id stub.
-    let response = oauth_login_round(&state).await;
-    assert_eq!(response.status(), StatusCode::FOUND);
-    let _ = (stub, base);
+/// The subject-extraction contract, exercised DIRECTLY through the
+/// same function the callback uses (no inline copy that could drift):
+/// numeric GitHub ids, string subjects, feishu open_id, and the
+/// no-subject refusal.
+#[test]
+fn oauth_subject_extraction_accepts_all_provider_shapes() {
+    use i0721_server::oauth::subject_from_userinfo;
+
+    // GitHub: `/user` answers a NUMERIC id — the shape that broke every
+    // GitHub login before the numeric arm existed.
+    assert_eq!(
+        subject_from_userinfo(&serde_json::json!({
+            "id": 12345678, "login": "octocat", "name": "Octo Cat",
+        }))
+        .as_deref(),
+        Some("12345678")
+    );
+    // oidc/erp: the string `sub`.
+    assert_eq!(
+        subject_from_userinfo(&serde_json::json!({
+            "sub": "subject-abcdef01", "name": "Stub User",
+        }))
+        .as_deref(),
+        Some("subject-abcdef01")
+    );
+    // feishu: `open_id` (no sub/id present).
+    assert_eq!(
+        subject_from_userinfo(&serde_json::json!({"open_id": "ou_9bc"})).as_deref(),
+        Some("ou_9bc")
+    );
+    // No subject anywhere: None (the callback turns it into a 502).
+    assert_eq!(
+        subject_from_userinfo(&serde_json::json!({"name": "Nobody"})),
+        None
+    );
+    // The numeric arm is id-ONLY: a numeric sub must NOT extract (a
+    // provider answering a numeric sub is malformed, not a GitHub id).
+    assert_eq!(subject_from_userinfo(&serde_json::json!({"sub": 42})), None);
 }
 
 /// https-only provider URLs: an external http base is refused at

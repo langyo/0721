@@ -702,19 +702,7 @@ async fn run_exchange_and_session(
         None => token_json,
     };
 
-    // Subject: `sub` (oidc/erp) | `id` (github, a JSON NUMBER) |
-    // `open_id` (feishu). Numbers stringify — GitHub's /user answers
-    // `{"id": 12345678}`, and an `as_str()`-only read would reject every
-    // GitHub login with 502.
-    let subject = ["sub", "id", "open_id"]
-        .iter()
-        .find_map(|key| {
-            userinfo.get(*key).and_then(|v| {
-                v.as_str()
-                    .map(str::to_owned)
-                    .or_else(|| v.as_u64().filter(|_| *key == "id").map(|n| n.to_string()))
-            })
-        })
+    let subject = subject_from_userinfo(&userinfo)
         .ok_or_else(|| ApiError::bad_gateway("userinfo carried no subject"))?;
     let display_name = ["name", "preferred_username", "login", "display_name"]
         .iter()
@@ -752,6 +740,20 @@ async fn run_exchange_and_session(
         axum::Json(session),
     )
         .into_response())
+}
+
+/// Extract the provider subject from a userinfo payload: `sub`
+/// (oidc/erp) | `id` (github, a JSON NUMBER) | `open_id` (feishu).
+/// Numbers stringify — GitHub's /user answers `{"id": 12345678}`, and
+/// an `as_str()`-only read would reject every GitHub login with 502.
+pub fn subject_from_userinfo(userinfo: &serde_json::Value) -> Option<String> {
+    ["sub", "id", "open_id"].iter().find_map(|key| {
+        userinfo.get(*key).and_then(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .or_else(|| v.as_u64().filter(|_| *key == "id").map(|n| n.to_string()))
+        })
+    })
 }
 
 /// `find_or_create_user` over the `oauth_identities` table: an existing
