@@ -8,6 +8,8 @@
 pub mod auth;
 pub mod files;
 pub mod settings;
+/// The upload chain shared by the multipart lane and the MCP tool.
+pub(crate) mod upload_core;
 
 use axum::routing::{get, post};
 use axum::Router;

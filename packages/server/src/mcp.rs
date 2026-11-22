@@ -10,7 +10,10 @@
 //!
 //! The tool surface (five tools) rides the STORE's existing per-user
 //! permission face: no admin elevation, the key's owner is the acting
-//! user for every call.
+//! user for every call. `upload_file` runs the SAME chain as the REST
+//! multipart lane ([`crate::api::upload_core::run_upload`]) — quota,
+//! folder ownership, the upload semaphore, the configured pipeline
+//! parameters and the configured storage tag included.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,6 +29,7 @@ use uuid::Uuid;
 
 use i0721_proto::{FileDto, NewShare};
 
+use crate::api::upload_core::{run_upload, UploadInput};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -346,65 +350,35 @@ async fn call_tool(
             let data = base64::engine::general_purpose::STANDARD
                 .decode(content_b64)
                 .map_err(|e| format!("bad base64: {e}"))?;
-            let _user = state
+            let user = state
                 .store
                 .get_user(user_id)
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or("user not found")?;
-            // The pipeline is sync: process bytes → detect kind → convert.
-            let rules = crate::pipeline::UploadRules {
-                size_limit: 8 * 1024 * 1024,
-                webp_auto_convert: true,
-            };
-            let processed = crate::pipeline::process_upload(&data, Some(name), &rules)
-                .map_err(|e| format!("pipeline: {e}"))?;
-            // Dedupe per owner.
-            if let Some(existing) = state
-                .store
-                .get_file_by_owner_and_sha256(user_id, &processed.sha256)
-                .await
-                .map_err(|e| e.to_string())?
-            {
-                return Ok(serde_json::to_value(FileDto::from(existing)).unwrap_or_default());
-            }
-            // Blob write.
-            let storage_key = processed.sha256.clone();
-            state
-                .blobs
-                .put(crate::blob::BlobSlot::Media, &storage_key, &processed.data)
-                .await
-                .map_err(|e| format!("blob put: {e}"))?;
-            if let Some(thumb) = &processed.thumbnail {
-                let thumb_key = format!("{storage_key}.webp");
-                state
-                    .blobs
-                    .put(crate::blob::BlobSlot::Cache, &thumb_key, thumb)
-                    .await
-                    .map_err(|e| format!("thumbnail put: {e}"))?;
-            }
-            // Metadata row.
-            let record = state
-                .store
-                .create_file(i0721_proto::NewFile {
-                    owner_id: user_id,
-                    parent_id: folder_id,
-                    name: storage_key.clone(),
-                    kind: processed.kind,
-                    mime: processed.mime,
-                    size: processed.data.len() as i64,
-                    sha256: processed.sha256.clone(),
-                    storage_backend: "local".to_owned(),
-                    storage_key,
-                    thumbnail_key: processed
-                        .thumbnail
-                        .as_ref()
-                        .map(|_| format!("{}.webp", processed.sha256)),
-                    original_name: name.to_owned(),
-                })
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_value(FileDto::from(record)).unwrap_or_default())
+            // The SAME chain the REST multipart lane runs: quota, folder
+            // ownership, the upload semaphore, the configured size/WebP
+            // pipeline parameters and the configured storage-backend tag
+            // all apply here (this tool used to skip every one of them and
+            // hardcode "local").
+            // `name` is the SOURCE name (the pipeline's MIME hint and the
+            // row's `original_name`); the display name resolves through
+            // the site config exactly as the REST lane's does — with
+            // `upload.use_source_file_name` off (the default) the row is
+            // named by the content hash, the behavior this tool had.
+            let uploaded = run_upload(
+                state,
+                &user,
+                UploadInput {
+                    name: None,
+                    source_name: Some(name.to_owned()),
+                    folder_id,
+                    data: data.into(),
+                },
+            )
+            .await
+            .map_err(|err| err.error)?;
+            Ok(serde_json::to_value(FileDto::from(uploaded.record)).unwrap_or_default())
         }
         "get_share_link" => {
             let file_id = args

@@ -4812,3 +4812,325 @@ async fn mcp_keys_admin_gate() {
         "member cannot revoke another's key"
     );
 }
+
+// ── W7 S1: the MCP upload chain + the session lifecycle ────────────────
+
+/// Serve the real router on an ephemeral port (the raw-TCP SSE lane needs
+/// a socket) and return the port.
+async fn mcp_serve(state: &AppState) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = routes::app(state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    addr.port()
+}
+
+/// Read from a raw TCP socket until the accumulated bytes contain
+/// `needle` (5 s budget). Panics with the partial transcript instead of
+/// hanging when the frame never arrives.
+async fn sse_read_until(stream: &mut tokio::net::TcpStream, needle: &str) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut acc: Vec<u8> = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let text = String::from_utf8_lossy(&acc).to_string();
+        if text.contains(needle) {
+            return text;
+        }
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        assert!(
+            !left.is_zero(),
+            "the SSE frame carrying {needle:?} never arrived: {text}"
+        );
+        let mut buf = [0u8; 8192];
+        let n = tokio::time::timeout(left, stream.read(&mut buf))
+            .await
+            .unwrap_or_else(|_| panic!("SSE read timed out waiting for {needle:?}: {text}"))
+            .unwrap_or_else(|err| panic!("SSE read failed: {err}"));
+        assert!(n > 0, "the SSE stream closed before {needle:?}: {text}");
+        acc.extend_from_slice(&buf[..n]);
+    }
+}
+
+/// The `sessionId` carried by the handshake's first (endpoint) frame.
+fn session_id_of(frame: &str) -> String {
+    frame
+        .split("sessionId=")
+        .nth(1)
+        .expect("the endpoint frame carries the sessionId")
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect()
+}
+
+/// Mint an API key through the RPC lane and return the plaintext.
+async fn mcp_api_key(state: &AppState, token: &str, name: &str) -> String {
+    let (status, envelope) = rpc(
+        state,
+        token,
+        "keys.create",
+        serde_json::json!({"name": name}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    envelope["result"]["key"].as_str().unwrap().to_owned()
+}
+
+/// Open the SSE lane over real TCP: the socket plus its session id.
+async fn mcp_handshake(state: &AppState, api_key: &str) -> (tokio::net::TcpStream, String) {
+    use tokio::io::AsyncWriteExt;
+    let port = mcp_serve(state).await;
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+        .await
+        .unwrap();
+    stream
+        .write_all(
+            format!(
+                "GET /api/mcp/sse HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 Authorization: Bearer {api_key}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let frame = sse_read_until(&mut stream, "sessionId=").await;
+    assert!(
+        frame.contains("event: endpoint"),
+        "the first frame is the endpoint event: {frame}"
+    );
+    let session_id = session_id_of(&frame);
+    assert!(
+        !session_id.is_empty(),
+        "the frame carries a sessionId: {frame}"
+    );
+    (stream, session_id)
+}
+
+/// POST one JSON-RPC frame on the message lane (the real router) and
+/// return its HTTP answer.
+async fn mcp_post_message(
+    state: &AppState,
+    session_id: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    })
+    .to_string();
+    let response = app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/mcp/message?sessionId={session_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or_default())
+}
+
+/// `tools/call` through the message lane; returns the HTTP answer (the
+/// tool RESULT itself comes back on the SSE stream).
+async fn mcp_call_tool(
+    state: &AppState,
+    session_id: &str,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> StatusCode {
+    let (status, _) = mcp_post_message(
+        state,
+        session_id,
+        "tools/call",
+        serde_json::json!({"name": tool, "arguments": arguments}),
+    )
+    .await;
+    status
+}
+
+/// The JSON-RPC envelope of the first `data:` line that carries one (the
+/// stream also carries the endpoint frame and keepalive comments).
+fn sse_envelope(frame: &str) -> serde_json::Value {
+    frame
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .find_map(|data| {
+            serde_json::from_str::<serde_json::Value>(data.trim())
+                .ok()
+                .filter(|value| value.get("jsonrpc").is_some())
+        })
+        .unwrap_or_else(|| panic!("no JSON-RPC frame in: {frame}"))
+}
+
+/// `(isError, text)` of a `tools/call` result.
+fn mcp_tool_result(envelope: &serde_json::Value) -> (bool, String) {
+    let result = &envelope["result"];
+    let is_error = result["isError"].as_bool().unwrap_or(false);
+    let text = result["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    (is_error, text)
+}
+
+/// Base64 of the bytes, as the MCP `content_base64` argument carries them.
+fn base64_of(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// The MCP upload tool runs the REST chain: the QUOTA gate rejects an
+/// over-quota upload as a tool error (the tool used to skip quota).
+#[tokio::test]
+async fn mcp_upload_file_enforces_quota() {
+    let (state, admin) = test_state().await;
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    // A quota far below one upload.
+    state
+        .store
+        .set_user_quota(admin.id, Some(16))
+        .await
+        .unwrap();
+    let api_key = mcp_api_key(&state, &token, "quota-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let status = mcp_call_tool(
+        &state,
+        &session_id,
+        "upload_file",
+        serde_json::json!({
+            "content_base64": base64_of(&tiny_png()),
+            "name": "too-much.png",
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "the message lane accepted the frame"
+    );
+
+    let frames = sse_read_until(&mut sse, "\"isError\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(
+        is_error,
+        "an over-quota upload must be a tool error: {frames}"
+    );
+    assert!(
+        text.to_lowercase().contains("quota"),
+        "the tool text names the quota gate: {text}"
+    );
+}
+
+/// The MCP upload tool refuses a destination folder the caller does not
+/// own (the tool used to pass any folder id straight into the row).
+#[tokio::test]
+async fn mcp_upload_file_refuses_foreign_folder() {
+    let (state, admin) = test_state().await;
+    let admin_token = state.signer.sign(admin.id, Timestamp::now());
+    let admin_folder = mk_folder(&state, &admin_token, "admin-only", None).await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "mcp-member".to_owned(),
+            display_name: "MCP Member".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    let api_key = mcp_api_key(&state, &member_token, "member-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let status = mcp_call_tool(
+        &state,
+        &session_id,
+        "upload_file",
+        serde_json::json!({
+            "content_base64": base64_of(&tiny_png()),
+            "name": "intruder.png",
+            "folder_id": admin_folder,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    let frames = sse_read_until(&mut sse, "\"isError\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(is_error, "a foreign folder must be a tool error: {frames}");
+    assert!(
+        text.contains("not your folder"),
+        "the tool text names the ownership rule: {text}"
+    );
+
+    // Nothing landed anywhere in the admin's folder.
+    let folder_id = uuid::Uuid::parse_str(&admin_folder).unwrap();
+    let rows = state
+        .store
+        .list_folder(admin.id, Some(folder_id), None, 0, 100)
+        .await
+        .unwrap();
+    assert!(rows.is_empty(), "the refused upload wrote no row: {rows:?}");
+}
+
+/// The MCP upload tool records the CONFIGURED storage backend (it used to
+/// hardcode "local" while the bytes went to the configured backend).
+#[tokio::test]
+async fn mcp_upload_records_configured_backend() {
+    let (state, stub) = ipfs_stub_state().await;
+    let admin = state
+        .store
+        .get_user_by_username("admin")
+        .await
+        .unwrap()
+        .unwrap();
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    let api_key = mcp_api_key(&state, &token, "ipfs-key").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+
+    let status = mcp_call_tool(
+        &state,
+        &session_id,
+        "upload_file",
+        serde_json::json!({
+            "content_base64": base64_of(&tiny_png()),
+            "name": "mcp-tag.png",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    let frames = sse_read_until(&mut sse, "\"result\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(
+        !is_error,
+        "the upload must succeed on the ipfs lane: {frames}"
+    );
+    let dto: serde_json::Value = serde_json::from_str(&text).expect("the tool answers a FileDto");
+    let file_id = uuid::Uuid::parse_str(dto["id"].as_str().unwrap()).unwrap();
+    let record = state.store.get_file(file_id).await.unwrap().unwrap();
+    assert_eq!(
+        record.storage_backend, "ipfs",
+        "the configured tag, not the tool's old literal"
+    );
+    assert!(
+        stub.mfs
+            .lock()
+            .unwrap()
+            .contains_key(&format!("/i0721/media/{}", record.storage_key)),
+        "the bytes flowed through the IPFS backend: {:?}",
+        stub.mfs.lock().unwrap().keys()
+    );
+}
