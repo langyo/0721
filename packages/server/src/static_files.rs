@@ -175,14 +175,21 @@ async fn serve_shell(state: &AppState) -> Response {
 /// Router fallback for every path no other route matched: SPA deep
 /// links and the dist-root static files (`favicon.ico`, `logo.webp`, …).
 ///
-/// The order of decisions is the contract: a traversal-free relative
-/// path is served as a file when it exists; a path WITH a file
-/// extension that does not exist 404s (serving `index.html` for a
-/// missing `.js` request would hand back `text/html` and break script
-/// loading); everything else — extension-less client routes — renders
-/// the SPA shell.
+/// The order of decisions is the contract. Unknown `/api` and `/api/*`
+/// paths are **API territory**: they answer a 404 JSON body (the REST
+/// surface's uniform error shape), never the SPA shell — a client
+/// probing the API must not receive `text/html` (the master-era
+/// semantics). A traversal-free relative path is served as a file when
+/// it exists; a path WITH a file extension that does not exist 404s
+/// (serving `index.html` for a missing `.js` request would hand back
+/// `text/html` and break script loading); everything else —
+/// extension-less client routes — renders the SPA shell.
 pub async fn fallback(State(state): State<AppState>, req: axum::extract::Request) -> Response {
-    let path = req.uri().path().trim_start_matches('/').replace('\\', "/");
+    let raw_path = req.uri().path();
+    if raw_path == "/api" || raw_path.starts_with("/api/") {
+        return unknown_api_route();
+    }
+    let path = raw_path.trim_start_matches('/').replace('\\', "/");
     if !path.is_empty() && !path.contains("..") && !path.contains('~') && !path.starts_with('/') {
         if let Some(bytes) = asset_bytes(&state, &path).await {
             return (
@@ -229,4 +236,15 @@ mod tests {
             "no-cache, no-store, must-revalidate"
         );
     }
+}
+
+/// The uniform 404 for an unknown API route: the REST surface's JSON
+/// error body, so API clients never see the SPA shell's HTML.
+fn unknown_api_route() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        [(header::CONTENT_TYPE, "application/json")],
+        r#"{"error":"route not found"}"#,
+    )
+        .into_response()
 }

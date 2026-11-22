@@ -9,6 +9,8 @@ overrides:
 
 importers:
 
+  .: {}
+
   packages/webui:
     dependencies:
       '@celestia-island/hikari':

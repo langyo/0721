@@ -96,9 +96,18 @@ licenses:
 i18n-check:
     python3 scripts/check_i18n.py --quiet
 
+# Verify the pnpm lockfile chain in one shot: the declarations
+# (typescript `^*` etc.) ↔ the workspace override (`~6.0` — without the
+# override the bare `^*` specifier cannot resolve) ↔ the committed
+# lockfile. Frozen + lockfile-only: no writes, no network fetches of
+# tarballs, fails the moment any link of the chain drifts.
+webui-lockfile-check:
+    pnpm install --frozen-lockfile --lockfile-only
+
 # One-shot gate, both sides: rust (fmt -> clippy -> test+bindings
 # staleness -> deny) with the embedded dist built first, then the webui
-# lane (vitest), the barrel bijection pin and the i18n gate.
+# lane (vitest), the barrel bijection pin, the lockfile chain and the
+# i18n gate.
 gate:
     just webui
     just fmt
@@ -107,4 +116,5 @@ gate:
     just licenses
     just webui-test
     just webui-types-check
+    just webui-lockfile-check
     just i18n-check

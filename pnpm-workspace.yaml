@@ -17,9 +17,11 @@ minimumReleaseAgeExclude:
   # hikari's resolved version pulls these first-party runtime deps; both
   # were first published same-day, so the exact-version pin is what
   # exempts the lockfile verification pass (the bare hikari entry above
-  # does NOT cover its dependencies). Prune after the 24h window closes.
-  - '@celestia-island/tairitsu-host-client@0.1.0'
-  - '@celestia-island/tairitsu-transport@0.2.0'
+  # does NOT cover its dependencies). The 24h windows closed
+  # 2026-11-22 ~15:49Z; the prune date carries a buffer so registry
+  # clock drift cannot break an install.
+  - '@celestia-island/tairitsu-host-client@0.1.0' # prune after 2026-11-24
+  - '@celestia-island/tairitsu-transport@0.2.0' # prune after 2026-11-24
 # Pin typescript to the 6.0 series across the whole workspace — TS 7 ships
 # a native Go compiler without the JS compiler API, which breaks vue-tsc.
 # The spec in package.json stays `~6.0`; this override is the single

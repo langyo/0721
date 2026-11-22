@@ -85,7 +85,7 @@ mime_guess = "^2"
 url = "^2"
 
 # web UI embedding (server feature `embedded-frontend`)
-include_dir = "0.7"
+include_dir = "^0.7"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

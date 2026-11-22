@@ -72,14 +72,16 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # The BARREL bijection: no regeneration here, so a hand-edited or
+      # stale index.ts fails with the precise missing line.
+      - name: TS barrel matches the binding files
+        run: python3 scripts/gen_types_barrel.py --check
+
       # Binding staleness: the export tests inside `cargo test` just
       # regenerated every binding — any committed file that no longer
-      # matches the Rust definitions shows as a diff now. The BARREL
-      # bijection is checked separately (no regeneration there, so a
-      # hand-edited index.ts fails with the precise missing line).
+      # matches the Rust definitions shows as a diff now.
       - name: TS bindings are not stale
         run: |
-          python3 scripts/gen_types_barrel.py --check && \
           git diff --exit-code -- packages/webui/src/types || {
             echo "packages/webui/src/types drifted from the Rust definitions — regenerate with 'just webui-types' and commit"; exit 1; }
 

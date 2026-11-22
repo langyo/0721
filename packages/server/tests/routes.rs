@@ -1324,3 +1324,27 @@ async fn spa_fallback_serves_deep_links_and_404s_missing_files() {
         .unwrap();
     assert_eq!(traversal.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn unknown_api_routes_answer_404_json_not_the_spa_shell() {
+    let (state, _) = test_state().await;
+    let router = routes::router(state);
+
+    let response = router
+        .oneshot(
+            Request::get("/api/v1/definitely-not-a-route")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/json"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("route not found"));
+}
