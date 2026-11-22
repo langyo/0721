@@ -121,40 +121,40 @@ describe("LoginView", () => {
   });
 });
 
-describe("LoginView dual-mode (W4)", () => {
-  it("renders provider buttons that navigate to the OAuth entry", async () => {
+describe("LoginView dual-mode (family login panel)", () => {
+  it("renders one full-width row per provider and navigates to its OAuth entry", async () => {
     loginMethodsMock.mockResolvedValue({
       password: true,
       providers: [
-        { id: "erp", display_name: "ERP", type: "builtin:erp" },
-        { id: "gh", display_name: "GitHub", type: "builtin:github" },
+        { id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null },
+        { id: "gh", display_name: "GitHub", type: "builtin:github", icon: null },
       ],
     });
     const { wrapper } = await mountView();
-    const buttons = wrapper.findAll(".provider-button");
-    expect(buttons.length).toBe(2);
-    expect(buttons[0]!.text()).toContain("ERP");
+    // The password card is the opening channel; the providers ride the
+    // card's methods list as family rows (name in plain sight).
+    const rows = wrapper.findAll(".hk-auth-channel-row");
+    expect(rows.length).toBe(2);
+    expect(rows[0]!.text()).toContain("Celestia ID");
+    expect(rows[1]!.text()).toContain("GitHub");
 
-    // Navigation is a FULL page load (the flow sets an httpOnly cookie +
-    // 302s) — pin the href, not a router push.
+    // Navigation is a FULL page load (the flow plants an httpOnly state
+    // cookie and 302s) — pin the href, not a router push.
     const original = window.location.href;
     const hrefSetter = vi.fn();
     Object.defineProperty(window, "location", {
       value: { ...window.location, href: original },
       writable: false,
     });
-    // jsdom-style href write throws on read-only; assert via click side
-    // effect instead: patch then click.
     try {
       Object.defineProperty(window.location, "href", {
         set: (v: string) => hrefSetter(v),
         get: () => original,
         configurable: true,
       });
-      await buttons[0]!.trigger("click");
+      await rows[0]!.trigger("click");
       expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
     } finally {
-      // restore a plain href
       Object.defineProperty(window.location, "href", {
         value: original,
         writable: true,
@@ -163,16 +163,62 @@ describe("LoginView dual-mode (W4)", () => {
     }
   });
 
-  it("hides the password form when the kill-switch is off", async () => {
+  it("hides the password form and shows the provider row alone when the kill-switch is off", async () => {
     loginMethodsMock.mockResolvedValue({
       password: false,
-      providers: [{ id: "erp", display_name: "ERP", type: "builtin:erp" }],
+      providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
     });
     const { wrapper } = await mountView();
     await flushPromises();
-    // No credential inputs — the providers-only page.
-    expect(wrapper.find(".s-auth-card").exists()).toBe(false);
-    expect(wrapper.findAll(".provider-button").length).toBe(1);
+    // No credential inputs and no password card…
+    expect(wrapper.find(".s-auth-credentials").exists()).toBe(false);
+    expect(wrapper.findAll("input").length).toBe(0);
+    // …one full-width provider row instead.
+    expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
+  });
+
+  it("renders no channel segment group for a single channel (the Celestia-ID-only shape)", async () => {
+    // The standing user complaint: a deployment configured for one
+    // sign-in method must not show a segmented switch at all — a lone
+    // segment reads as a broken control.
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+    expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
+  });
+
+  it("keeps ONE channel when the password lane carries the providers as rows", async () => {
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+    // Providers are alternative ROWS under the form, not channel tabs
+    // (the family copy rule: a provider name in the segment reads as
+    // "log in to ERP" rather than "log in with your organization"), so
+    // the panel stays a single channel with no segment group.
+    expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
+    expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
+  });
+
+  it("grows the segment group only for a multi-provider password-off deployment", async () => {
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [
+        { id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null },
+        { id: "gh", display_name: "GitHub", type: "builtin:github", icon: null },
+      ],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+    // Two redirect-only identities need a chooser; the provider names are
+    // then the honest labels for that choice.
+    expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(2);
+    expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
   });
 });
 

@@ -40,7 +40,9 @@
     "failed": "用戶名或密碼錯誤",
     "orContinue": "或使用以下方式繼續",
     "passwordDisabled": "密碼登入已停用——請使用下方提供者登入。",
-    "noMethods": "沒有任何可用的登入方式——需要管理員啟用一個登入提供者或開啟密碼登入。"
+    "noMethods": "沒有任何可用的登入方式——需要管理員啟用一個登入提供者或開啟密碼登入。",
+    "passwordChannel": "密碼",
+    "submit": "登入"
   },
   "portal": {
     "title": "圖片",

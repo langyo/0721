@@ -40,7 +40,9 @@
     "failed": "Ungültiger Benutzername oder falsches Passwort",
     "orContinue": "oder fortfahren mit",
     "passwordDisabled": "Passwort-Login ist deaktiviert — nutzen Sie unten einen Anbieter.",
-    "noMethods": "Keine Anmeldemethode verfügbar — ein Administrator muss einen Anbieter oder das Passwort-Login aktivieren."
+    "noMethods": "Keine Anmeldemethode verfügbar — ein Administrator muss einen Anbieter oder das Passwort-Login aktivieren.",
+    "passwordChannel": "Passwort",
+    "submit": "Anmelden"
   },
   "portal": {
     "title": "Bilder",

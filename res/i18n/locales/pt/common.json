@@ -40,7 +40,9 @@
     "failed": "Nome de usuário ou senha inválidos",
     "orContinue": "ou continue com",
     "passwordDisabled": "Login por senha desativado — use um provedor abaixo.",
-    "noMethods": "Nenhum método de login disponível — um administrador precisa ativar um provedor ou o login por senha."
+    "noMethods": "Nenhum método de login disponível — um administrador precisa ativar um provedor ou o login por senha.",
+    "passwordChannel": "Senha",
+    "submit": "Entrar"
   },
   "portal": {
     "title": "Imagens",

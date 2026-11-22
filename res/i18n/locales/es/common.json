@@ -40,7 +40,9 @@
     "failed": "Nombre de usuario o contraseña incorrectos",
     "orContinue": "o continúa con",
     "passwordDisabled": "El acceso con contraseña está desactivado: usa un proveedor.",
-    "noMethods": "No hay ningún método de acceso disponible: un administrador debe activar un proveedor o el acceso con contraseña."
+    "noMethods": "No hay ningún método de acceso disponible: un administrador debe activar un proveedor o el acceso con contraseña.",
+    "passwordChannel": "Contraseña",
+    "submit": "Iniciar sesión"
   },
   "portal": {
     "title": "Imágenes",
