@@ -1,21 +1,46 @@
 # 0721 resource service — multi-stage build.
 #
-# Stage 1 compiles the workspace (the placeholder static site ships from
-# the repo; the hikari webui wave adds its own build stage and switches
-# the server to embedded-frontend).
-FROM rust:1 AS stage-build
+# Stage 1 builds the web UI (node), stage 2 compiles the workspace with
+# the dist embedded (cargo --features embedded-frontend, on by default),
+# stage 3 keeps the runtime lean. The frontend → cargo order is the
+# contract: the embedded build literally include_dir!s the dist the node
+# stage produced (the chest four-guardrail Dockerfile shape: the
+# bare-specifier gate and the vue-tsc/check_i18n runs all happen inside
+# the webui build command before any byte reaches the binary).
+FROM node:24-slim AS stage-webui
+
+# python3 runs the i18n gate inside the webui build command; corepack
+# ships with node and pins the pnpm version the lockfile expects.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable && corepack prepare pnpm@12.5.1 --activate
+
+WORKDIR /build
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/webui/package.json packages/webui/package.json
+RUN pnpm install --frozen-lockfile
+
+# The locale JSONs feed the webui's import.meta.glob; the committed
+# ts-rs bindings (packages/webui/src/types) ship in the tree.
+COPY res res
+COPY packages/webui packages/webui
+RUN pnpm --filter @celestia-island/i0721-webui build
+
+FROM rust:1-slim AS stage-build
 
 # libwebp (the `webp` crate builds its C sources via cc) and the image
 # codecs need a C toolchain; the rust image carries gcc already.
-RUN apt update && apt install -y --no-install-recommends clang && rm -rf /var/lib/apt/lists/*
+RUN apt update && apt install -y --no-install-recommends clang \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY packages ./packages
-COPY res ./res
+# The embedded-frontend feature (default) compiles the dist in.
+COPY --from=stage-webui /build/dist ./dist
 RUN cargo build --release --locked --package i0721-server
 
-# Stage 2 keeps only the binary, the placeholder site and the languages.
+# Stage 3 keeps only the binary — the frontend is inside it.
 FROM debian:bookworm-slim AS stage-runtime
 
 # curl stays in the runtime image: the compose healthcheck probes
@@ -25,15 +50,12 @@ RUN apt update && apt install -y --no-install-recommends ca-certificates curl \
     && useradd --system --create-home --uid 1000 i0721
 
 COPY --from=stage-build /build/target/release/i0721-server /app/i0721-server
-COPY res/website /app/res/website
-COPY res/languages /app/res/languages
 
 # Writable blob root (mount a volume here; compose uses a named volume).
 RUN mkdir -p /app/data/media /app/data/media-cache && chown -R i0721:i0721 /app
 
 USER i0721
 WORKDIR /app
-ENV I0721_MEDIA_ROOT=/app/data \
-    I0721_STATIC_DIR=/app/res/website
+ENV I0721_MEDIA_ROOT=/app/data
 EXPOSE 8080
 ENTRYPOINT ["./i0721-server"]

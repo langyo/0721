@@ -2,7 +2,7 @@ import vueSfc from "@vitejs/plugin-vue";
 import vueJsx from "@vitejs/plugin-vue-jsx";
 import { readdirSync, rmSync, readFileSync } from "fs";
 import { resolve } from "path";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin } from "vitest/config";
 
 const pkgDir = import.meta.dirname;
 
@@ -87,6 +87,9 @@ function bareSpecifierGatePlugin(outDir: string): Plugin {
 }
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify("0.4.0"),
+  },
   plugins: [
     cleanOutDirContents(resolve(pkgDir, "../../dist/webui")),
     bareSpecifierGatePlugin(resolve(pkgDir, "../../dist/webui")),

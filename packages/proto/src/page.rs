@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 /// Query parameters of a list endpoint.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export, export_to = "../../webui/src/types/")]
-
 pub struct PageArgs {
     /// Zero-based offset.
     #[serde(default)]
@@ -29,7 +28,6 @@ impl PageArgs {
 /// One page of a list response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export, export_to = "../../webui/src/types/")]
-
 pub struct PageResult<T> {
     /// Total matching rows (before paging).
     #[ts(type = "number")]

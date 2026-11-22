@@ -14,9 +14,9 @@
     "forceConsistentCasingInFileNames": true,
     "useDefineForClassFields": true,
     "jsx": "preserve",
-    "baseUrl": ".",
+    "jsxImportSource": "vue",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     },
     "types": ["vite/client", "node"]
   },

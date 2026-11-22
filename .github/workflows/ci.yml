@@ -3,16 +3,59 @@ name: CI
 # Compile/test lane is dispatch-only per the 2026-11-06 trigger policy: CI
 # does not run on pull requests; the trunk push only carries the sub-minute
 # basic checks (verify-versions et al. in their own workflow files).
+#
+# The rust job builds the webui dist FIRST: the server's default
+# `embedded-frontend` feature compiles it in (include_dir!), so clippy
+# and test would not even build without it.
 on:
   workflow_dispatch:
 
 jobs:
-  rust:
-    name: Rust (fmt / clippy / test)
+  webui:
+    name: Web UI (vue-tsc / check_i18n / vite / vitest)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (typecheck + i18n gate + bundler gates)
+        run: pnpm --filter @celestia-island/i0721-webui build
+
+      - name: Test
+        run: pnpm --filter @celestia-island/i0721-webui test
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v5
+        with:
+          name: webui-dist
+          path: dist/webui
+          retention-days: 3
+
+  rust:
+    name: Rust (fmt / clippy / test / deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: webui
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the webui dist
+        uses: actions/download-artifact@v6
+        with:
+          name: webui-dist
+          path: dist/webui
 
       - name: Setup toolchain
         uses: dtolnay/rust-toolchain@master
@@ -28,6 +71,11 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      - name: TS bindings are not stale
+        run: |
+          git diff --exit-code -- packages/webui/src/types || {
+            echo "packages/webui/src/types drifted from the Rust definitions — regenerate with 'just webui-types' and commit"; exit 1; }
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --version ^0.20 --locked

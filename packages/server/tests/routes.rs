@@ -48,7 +48,7 @@ fn base_config() -> Config {
         listen: "127.0.0.1:8080".parse().unwrap(),
         jwt_secret: "route-test-secret".to_owned(),
         media_root: PathBuf::from("unused"),
-        static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../res/website"),
+        static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../dist/webui"),
         upload_concurrency: 4,
         log_filter: "off".to_owned(),
         seed_admin_password: "admin-password".to_owned(),
@@ -1265,4 +1265,72 @@ async fn final_delete_reclaims_the_last_blob_and_thumbnail() {
             .is_none(),
         "the last live row's thumbnail is reclaimed"
     );
+}
+
+// ── static / SPA serving ───────────────────────────────────────────────
+// These ride the DEFAULT embedded-frontend feature: the compiled-in dist
+// comes from `just webui` (the gate builds the frontend first). The dev
+// (on-disk) lane shares every handler body through asset_bytes, so the
+// serving CONTRACT is the same; only the storage differs.
+
+#[tokio::test]
+async fn root_serves_the_spa_shell() {
+    let (state, _) = test_state().await;
+    let response = routes::router(state)
+        .oneshot(Request::get("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+}
+
+#[tokio::test]
+async fn spa_fallback_serves_deep_links_and_404s_missing_files() {
+    let (state, _) = test_state().await;
+    let router = routes::router(state);
+
+    // An extension-less client route renders the shell, not a 404.
+    let deep = router
+        .clone()
+        .oneshot(Request::get("/users").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(deep.status(), StatusCode::OK);
+    assert!(deep
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+
+    // A path WITH an extension that does not exist must 404 — serving
+    // the shell for a missing script would hand back text/html.
+    let missing = router
+        .clone()
+        .oneshot(
+            Request::get("/assets/does-not-exist-1234.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    // Traversal into the host FS is refused outright.
+    let traversal = router
+        .oneshot(
+            Request::get("/assets/../../Cargo.toml")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(traversal.status(), StatusCode::FORBIDDEN);
 }

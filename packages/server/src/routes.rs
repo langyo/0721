@@ -2,16 +2,15 @@
 //! oneshot tests (the ayane split).
 
 use axum::routing::get;
-use axum::routing::get_service;
 use axum::Router;
 use tower_http::compression::predicate::SizeAbove;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
-use tower_http::services::ServeFile;
 
 use crate::api;
 use crate::media;
 use crate::state::AppState;
+use crate::static_files;
 
 /// The complete app: the router plus the body limit and the dynamic
 /// gzip layer. The predicate deliberately drops tower-http's default
@@ -25,21 +24,17 @@ pub fn app(state: AppState) -> Router {
         .layer(CompressionLayer::new().compress_when(SizeAbove::new(1024)))
 }
 
-/// The route tree alone.
+/// The route tree alone. `/api` and `/media` own their paths; every
+/// other path falls through to the static/SPA handlers (see
+/// `static_files`), with client-side routes surviving a hard refresh
+/// through the index.html fallback.
 pub fn router(state: AppState) -> Router {
-    let static_dir = state.config.static_dir.clone();
-    let index = ServeFile::new(static_dir.join("index.html"));
-    let favicon = ServeFile::new(static_dir.join("favicon.ico"));
-    let bg = ServeFile::new(static_dir.join("bg.webp"));
-    let logo = ServeFile::new(static_dir.join("logo.webp"));
-
     Router::new()
         .route("/api/health", get(api::settings::health))
         .nest("/api/v1", api::router())
         .route("/media/{key}", get(media::download))
-        .route_service("/", get_service(index))
-        .route_service("/favicon.ico", get_service(favicon))
-        .route_service("/bg.webp", get_service(bg))
-        .route_service("/logo.webp", get_service(logo))
+        .route("/", get(static_files::serve_root))
+        .route("/assets/{*path}", get(static_files::serve_asset))
+        .fallback(static_files::fallback)
         .with_state(state)
 }
