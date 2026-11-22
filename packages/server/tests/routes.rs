@@ -4043,6 +4043,10 @@ struct KuboStub {
     unpinned: std::sync::Mutex<Vec<String>>,
     /// True when the stub should answer 500 for the NEXT add call.
     fail_next_add: std::sync::atomic::AtomicBool,
+    /// The last /add query string (asserted to carry pin=true).
+    last_add_query: std::sync::Mutex<Option<String>>,
+    /// Hard-fail every /files/read once set (genuine kubo fault shape).
+    fail_all_reads: std::sync::atomic::AtomicBool,
 }
 
 impl KuboStub {
@@ -4057,33 +4061,41 @@ impl KuboStub {
         Router::new()
             .route(
                 "/api/v0/add",
-                axum::routing::post(move |body: String| {
-                    let stub = add.clone();
-                    async move {
-                        use axum::response::IntoResponse;
-                        if stub
-                            .fail_next_add
-                            .swap(false, std::sync::atomic::Ordering::Relaxed)
-                        {
-                            return (StatusCode::INTERNAL_SERVER_ERROR, "kubo exploded")
-                                .into_response();
+                axum::routing::post(
+                    move |axum::extract::RawQuery(raw): axum::extract::RawQuery, body: String| {
+                        let stub = add.clone();
+                        async move {
+                            use axum::response::IntoResponse;
+                            // kubo contract: the store asks pin=true so the
+                            // content survives node GC; record it for asserts.
+                            stub.last_add_query
+                                .lock()
+                                .unwrap()
+                                .replace(raw.clone().unwrap_or_default());
+                            if stub
+                                .fail_next_add
+                                .swap(false, std::sync::atomic::Ordering::Relaxed)
+                            {
+                                return (StatusCode::INTERNAL_SERVER_ERROR, "kubo exploded")
+                                    .into_response();
+                            }
+                            // Extract the file payload from the multipart envelope
+                            // (between the first blank line and the trailing boundary).
+                            let payload = body
+                                .split_once("\r\n\r\n")
+                                .map(|(_, rest)| rest)
+                                .and_then(|rest| rest.rfind("\r\n--").map(|end| &rest[..end]))
+                                .unwrap_or(&body);
+                            let cid = format!("Qm{:x}", payload.len());
+                            stub.content.lock().unwrap().insert(
+                                cid.clone(),
+                                bytes::Bytes::copy_from_slice(payload.as_bytes()),
+                            );
+                            axum::Json(serde_json::json!({"Name": "file", "Hash": cid, "Size": 0}))
+                                .into_response()
                         }
-                        // Extract the file payload from the multipart envelope
-                        // (between the first blank line and the trailing boundary).
-                        let payload = body
-                            .split_once("\r\n\r\n")
-                            .map(|(_, rest)| rest)
-                            .and_then(|rest| rest.rfind("\r\n--").map(|end| &rest[..end]))
-                            .unwrap_or(&body);
-                        let cid = format!("Qm{:x}", payload.len());
-                        stub.content.lock().unwrap().insert(
-                            cid.clone(),
-                            bytes::Bytes::copy_from_slice(payload.as_bytes()),
-                        );
-                        axum::Json(serde_json::json!({"Name": "file", "Hash": cid, "Size": 0}))
-                            .into_response()
-                    }
-                }),
+                    },
+                ),
             )
             .route(
                 "/api/v0/files/cp",
@@ -4102,10 +4114,15 @@ impl KuboStub {
                             }
                             let source = args[0].trim_start_matches("/ipfs/");
                             let target = args[1];
-                            stub.mfs
-                                .lock()
-                                .unwrap()
-                                .insert(target.to_owned(), source.to_owned());
+                            // kubo contract: without force an existing
+                            // destination of any kind is an error.
+                            let force = q.iter().any(|(k, v)| k == "force" && v == "true");
+                            let mut mfs = stub.mfs.lock().unwrap();
+                            if mfs.contains_key(target) && !force {
+                                return (StatusCode::INTERNAL_SERVER_ERROR, "file already exists")
+                                    .into_response();
+                            }
+                            mfs.insert(target.to_owned(), source.to_owned());
                             (StatusCode::OK, "").into_response()
                         }
                     },
@@ -4121,6 +4138,13 @@ impl KuboStub {
                             let Some((_, path)) = q.iter().find(|(k, _)| k == "arg") else {
                                 return (StatusCode::BAD_REQUEST, "missing arg").into_response();
                             };
+                            if stub
+                                .fail_all_reads
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                return (StatusCode::INTERNAL_SERVER_ERROR, "internal kubo fault")
+                                    .into_response();
+                            }
                             let mfs = stub.mfs.lock().unwrap();
                             match mfs.get(path.as_str()) {
                                 Some(cid) => {
@@ -4150,6 +4174,13 @@ impl KuboStub {
                             let Some((_, path)) = q.iter().find(|(k, _)| k == "arg") else {
                                 return (StatusCode::BAD_REQUEST, "missing arg").into_response();
                             };
+                            if stub
+                                .fail_all_reads
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                return (StatusCode::INTERNAL_SERVER_ERROR, "internal kubo fault")
+                                    .into_response();
+                            }
                             let mfs = stub.mfs.lock().unwrap();
                             match mfs.get(path.as_str()) {
                                 Some(cid) => {
@@ -4212,6 +4243,8 @@ async fn ipfs_stub_state() -> (AppState, std::sync::Arc<KuboStub>) {
         mfs: std::sync::Mutex::new(std::collections::HashMap::new()),
         unpinned: std::sync::Mutex::new(Vec::new()),
         fail_next_add: std::sync::atomic::AtomicBool::new(false),
+        last_add_query: std::sync::Mutex::new(None),
+        fail_all_reads: std::sync::atomic::AtomicBool::new(false),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -4320,7 +4353,7 @@ async fn test_state_with_token() -> (AppState, String) {
 }
 
 // ── the opt-in S3 real-endpoint lane ────────────────────────────────────
-// Run with: I0721_TEST_S3=1 I0721_S3_* env → `cargo test -- --ignored s3`
+// Run with: I0721_TEST_S3=1 I0721_S3_* env → `just s3-test`
 // (or `just s3-test`). Fail-closed: set I0721_TEST_S3 with unreachable
 // credentials → panic, not skip.
 
@@ -4351,4 +4384,79 @@ async fn s3_real_endpoint_round_trip() {
         .await
         .expect("get after delete");
     assert!(gone.is_none());
+}
+
+#[tokio::test]
+async fn ipfs_put_same_key_twice_overwrites() {
+    let (state, _stub) = ipfs_stub_state().await;
+    let blobs = state.blobs.clone();
+    let first = blobs
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            "twice",
+            b"one".as_slice(),
+        )
+        .await;
+    assert!(first.is_ok(), "first put: {first:?}");
+    let second = blobs
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            "twice",
+            b"two".as_slice(),
+        )
+        .await;
+    assert!(
+        second.is_ok(),
+        "re-put must overwrite (force=true): {second:?}"
+    );
+    let got = blobs
+        .get(i0721_server::blob::BlobSlot::Media, "twice")
+        .await
+        .unwrap()
+        .expect("present");
+    assert_eq!(&got[..], b"two", "the second write wins");
+}
+
+#[tokio::test]
+async fn ipfs_read_genuine_500_is_an_error_not_a_miss() {
+    let (state, stub) = ipfs_stub_state().await;
+    let blobs = state.blobs.clone();
+    // Prime the MFS entry, then flip the stub's read endpoint into
+    // hard-failure mode: a genuine kubo fault must surface as IoError,
+    // never as Ok(None) (which the media lane would render as 404).
+    blobs
+        .put(i0721_server::blob::BlobSlot::Media, "boom", b"x".as_slice())
+        .await
+        .unwrap();
+    stub.fail_all_reads
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let got = blobs.get(i0721_server::blob::BlobSlot::Media, "boom").await;
+    assert!(
+        got.is_err(),
+        "a genuine kubo 500 must surface as an IoError: {got:?}"
+    );
+}
+
+#[tokio::test]
+async fn ipfs_add_carries_pin_true() {
+    let (state, stub) = ipfs_stub_state().await;
+    state
+        .blobs
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            "pinned",
+            b"pinme".as_slice(),
+        )
+        .await
+        .unwrap();
+    let query = stub
+        .last_add_query
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_default();
+    assert!(
+        query.contains("pin=true"),
+        "POST /api/v0/add must carry pin=true (GC survival): {query}"
+    );
 }

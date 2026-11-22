@@ -71,11 +71,12 @@ Semantic differences:
   metadata database instead.
 
 **Backend switching**: changing `I0721_STORAGE_BACKEND` affects NEW
-uploads only — existing blobs stay on their original backend (the
-`files.storage_backend` column records each row's home). After a
-switch, requests for rows on the old backend will 404 if the old
-backend is unreachable. A blob-migration tool arrives with a later
-wave.
+uploads only, and reads always go through the single configured
+backend — the `files.storage_backend` column is per-row bookkeeping,
+never consulted on read. After a switch, blobs written to the old
+backend become unreachable (their media links answer 404) until you
+switch back or migrate them; a blob-migration tool arrives with a
+later wave.
 
 **Security note**: `I0721_S3_ENDPOINT` with `http://` sends credentials
 in cleartext — this is safe ONLY for internal-network MinIO (the

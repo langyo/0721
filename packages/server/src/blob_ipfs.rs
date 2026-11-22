@@ -98,10 +98,16 @@ impl IpfsBlobStore {
             .send()
             .await
             .map_err(io("files/mkdir"))?;
-        // EEXIST is fine; anything else surfaces.
-        if !resp.status().is_success() && resp.status().as_u16() != 500 {
+        // EEXIST arrives as a 500 whose body says so; every other
+        // failure (permissions, disk, node fault) must surface.
+        if !resp.status().is_success() {
+            let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(std::io::Error::other(format!("files/mkdir {dir}: {body}")));
+            let already_there = status.as_u16() == 500
+                && (body.contains("already exists") || body.contains("file exists"));
+            if !already_there {
+                return Err(std::io::Error::other(format!("files/mkdir {dir}: {body}")));
+            }
         }
         Ok(())
     }

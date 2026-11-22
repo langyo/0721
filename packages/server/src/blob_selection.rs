@@ -15,6 +15,10 @@ use crate::blob_s3::{S3BlobStore, S3Config, S3ConfigError};
 ///
 /// A human-readable error string when the selection is invalid or the
 /// selected backend's environment is incomplete.
+/// The backends `select_blob_backend` accepts — the error message reads
+/// this list, so the two can never drift apart.
+pub const VALID_BACKENDS: [&str; 3] = ["local", "s3", "ipfs"];
+
 pub fn select_blob_backend(
     config: &crate::config::Config,
     env: impl Fn(&str) -> Option<String>,
@@ -38,7 +42,8 @@ pub fn select_blob_backend(
             Ok(Arc::new(IpfsBlobStore::open(&ipfs_config)))
         }
         other => Err(format!(
-            "I0721_STORAGE_BACKEND={other:?} is not a valid backend (local | s3 | ipfs)"
+            "I0721_STORAGE_BACKEND={other:?} is not a valid backend ({})",
+            VALID_BACKENDS.join(" | ")
         )),
     }
 }
