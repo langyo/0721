@@ -124,6 +124,65 @@ fn bearer(request: Request<Body>, token: &str) -> Request<Body> {
     Request::from_parts(parts, body)
 }
 
+/// POST one JSON-RPC frame through the HTTP fallback with a bearer
+/// token; returns the HTTP status and the parsed envelope.
+async fn rpc(
+    state: &AppState,
+    token: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    rpc_request(state, bearer(rpc_frame_request(method, params), token)).await
+}
+
+/// The same frame without any credential (auth-hook denial checks).
+async fn rpc_anon(
+    state: &AppState,
+    method: &str,
+    params: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    rpc_request(state, rpc_frame_request(method, params)).await
+}
+
+fn rpc_frame_request(method: &str, params: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/rpc")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": method,
+                "params": params,
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
+async fn rpc_request(state: &AppState, request: Request<Body>) -> (StatusCode, serde_json::Value) {
+    let response = ServiceExt::oneshot(app(state), request).await.unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+    (status, json)
+}
+
+/// The `result` member of an envelope (fails loudly when absent).
+fn rpc_result(envelope: &serde_json::Value) -> &serde_json::Value {
+    envelope
+        .get("result")
+        .unwrap_or_else(|| panic!("no result in {envelope}"))
+}
+
+/// The `error.code` member of an envelope.
+fn rpc_error_code(envelope: &serde_json::Value) -> i64 {
+    envelope["error"]["code"].as_i64().expect("an error object")
+}
+
 async fn upload(
     state: &AppState,
     token: &str,
@@ -224,69 +283,31 @@ async fn login_rate_limit_kicks_in() {
 }
 
 #[tokio::test]
-async fn auth_flow_login_verify_refresh() {
+async fn rpc_auth_flow_verify_refresh() {
     let (state, _) = test_state().await;
     let token = login(&state, "admin", "admin-password").await;
 
-    let verify = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .uri("/api/v1/auth/verify")
-                .body(Body::empty())
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(verify.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(verify.into_body(), 4096)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["username"], "admin");
-    assert_eq!(json["role"], "admin");
-    assert!(json.get("password_hash").is_none());
+    let (status, envelope) = rpc(&state, &token, "auth.verify", serde_json::Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
 
-    let refresh = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/auth/refresh")
-                .body(Body::empty())
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(refresh.status(), StatusCode::OK);
+    let user = rpc_result(&envelope);
+    assert_eq!(user["username"], "admin");
+    assert_eq!(user["role"], "admin");
+    assert!(user.get("password_hash").is_none());
 
-    // Tampered token: refused.
+    let (status, envelope) = rpc(&state, &token, "auth.refresh", serde_json::Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(rpc_result(&envelope)["token"].is_string());
+
+    // Tampered token: the auth hook refuses the request outright.
     let tampered = format!("{token}x");
-    let response = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .uri("/api/v1/auth/verify")
-                .body(Body::empty())
-                .unwrap(),
-            &tampered,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let (status, _) = rpc(&state, &tampered, "auth.verify", serde_json::Value::Null).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    // No token: refused.
-    let response = app(&state)
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/auth/verify")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // No token at all: same refusal.
+    let (status, _) = rpc_anon(&state, "auth.verify", serde_json::Value::Null).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
-
 #[tokio::test]
 async fn login_supersedes_older_sessions() {
     let (state, _) = test_state().await;
@@ -313,23 +334,13 @@ async fn login_supersedes_older_sessions() {
         )
         .await
         .unwrap();
-    let verify = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .uri("/api/v1/auth/verify")
-                .body(Body::empty())
-                .unwrap(),
-            &first,
-        ))
-        .await
-        .unwrap();
+    let (status, _) = rpc(&state, &first, "auth.verify", serde_json::Value::Null).await;
     assert_eq!(
-        verify.status(),
+        status,
         StatusCode::UNAUTHORIZED,
         "a watermark past the token's iat invalidates it"
     );
 }
-
 #[tokio::test]
 async fn upload_serves_dedupes_and_deletes() {
     let (state, _) = test_state().await;
@@ -344,22 +355,18 @@ async fn upload_serves_dedupes_and_deletes() {
     assert_eq!(dto["name"], dto["sha256"], "hash-keyed by default");
     let url = dto["url"].as_str().unwrap().to_owned();
 
-    // List shows it.
-    let list = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .uri("/api/v1/files?offset=0&limit=10")
-                .body(Body::empty())
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(list.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(list.into_body(), 65536).await.unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["total"], 1);
-    assert_eq!(json["items"].as_array().unwrap().len(), 1);
+    // The timeline list rides the RPC lane now.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"offset": 0, "limit": 10}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list = rpc_result(&envelope);
+    assert_eq!(list["total"], 1);
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
 
     // Public media path serves it, anonymous, correct content type.
     let media = app(&state)
@@ -403,47 +410,45 @@ async fn upload_serves_dedupes_and_deletes() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(again["id"], dto["id"]);
 
-    // Rename.
+    // Rename rides RPC (files.update).
     let id = dto["id"].as_str().unwrap().to_owned();
-    let renamed = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PATCH")
-                .uri(format!("/api/v1/files/{id}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"name": "renamed cat"}"#))
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(renamed.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(renamed.into_body(), 4096)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["name"], "renamed cat");
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.update",
+        serde_json::json!({"id": id, "name": "renamed cat"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(rpc_result(&envelope)["name"], "renamed cat");
 
-    // Soft delete → list shrinks, media 404s.
-    let deleted = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/files/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    // Soft delete rides RPC (files.delete) → media 404s.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(rpc_result(&envelope).is_null());
     let gone = app(&state)
         .oneshot(Request::builder().uri(&url).body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
-}
 
+    // Deleting the same file again: the NOT_FOUND error code.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rpc_error_code(&envelope), -32006);
+}
 #[tokio::test]
 async fn upload_requires_auth_and_respects_the_size_limit() {
     let (state, _) = test_state().await;
@@ -465,27 +470,18 @@ async fn upload_requires_auth_and_respects_the_size_limit() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
-    // Oversize: shrink the limit via settings, then upload past it.
+    // Oversize: shrink the limit via the RPC settings lane, then upload
+    // past it through the (whitelisted) multipart route.
     let token = login(&state, "admin", "admin-password").await;
-    let put = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v1/settings")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(full_settings_json(|json| {
-                    json["upload"]["image-size-limit"] = "1KiB".into();
-                })))
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+    let strict = full_settings_json(|json| {
+        json["upload"]["image-size-limit"] = "1KiB".into();
+    });
+    let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+    let (status, envelope) = rpc(&state, &token, "settings.put", strict).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
     let (status, body) = upload(&state, &token, vec![0_u8; 2048], "big.bin").await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
 }
-
 #[tokio::test]
 async fn non_image_uploads_pass_through() {
     let (state, _) = test_state().await;
@@ -515,159 +511,132 @@ async fn users_management_is_admin_gated() {
     // Member token signed directly (password login needs a hash).
     let member_token = state.signer.sign(member.id, Timestamp::now());
 
-    for uri in ["/api/v1/users", "/api/v1/settings"] {
-        let response = app(&state)
-            .oneshot(bearer(
-                Request::builder().uri(uri).body(Body::empty()).unwrap(),
-                &member_token,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN, "member on {uri}");
+    // Per-method WELL-FORMED params: the gate must fire before any
+    // params validation, so each frame carries a parseable body.
+    let strict: serde_json::Value = serde_json::from_str(&full_settings_json(|_| {})).unwrap();
+    for (method, params) in [
+        ("users.list", serde_json::json!({"offset": 0, "limit": 10})),
+        (
+            "users.create",
+            serde_json::json!({"username": "x", "password": "y"}),
+        ),
+        (
+            "users.delete",
+            serde_json::json!({"id": uuid::Uuid::new_v4().to_string()}),
+        ),
+        ("settings.get", serde_json::Value::Null),
+        ("settings.put", strict),
+    ] {
+        let (status, envelope) = rpc(&state, &member_token, method, params).await;
+        assert_eq!(status, StatusCode::OK, "member on {method}: {envelope}");
+        assert_eq!(
+            rpc_error_code(&envelope),
+            -32005,
+            "member on {method} gets the auth error code"
+        );
     }
 
-    // Admin creates a user.
+    // Admin creates a user over RPC.
     let admin_token = state.signer.sign(admin.id, Timestamp::now());
-    let created = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/users")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "username": "newbie",
-                        "password": "a-password",
-                        "role": "member"
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-            &admin_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(created.status(), StatusCode::CREATED);
-    let body = axum::body::to_bytes(created.into_body(), 4096)
-        .await
-        .unwrap();
-    let newbie: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "users.create",
+        serde_json::json!({
+            "username": "newbie",
+            "password": "a-password",
+            "role": "member"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let newbie = rpc_result(&envelope);
     assert_eq!(newbie["username"], "newbie");
     let newbie_id = newbie["id"].as_str().unwrap().to_owned();
 
-    // Duplicate name: 409.
-    let dup = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/users")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    serde_json::json!({"username": "newbie", "password": "x"}).to_string(),
-                ))
-                .unwrap(),
-            &admin_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(dup.status(), StatusCode::CONFLICT);
+    // Duplicate name: the CONFLICT error code.
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "users.create",
+        serde_json::json!({"username": "newbie", "password": "x"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rpc_error_code(&envelope), -32007);
 
     // Cannot delete self.
-    let self_delete = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/users/{}", admin.id))
-                .body(Body::empty())
-                .unwrap(),
-            &admin_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(self_delete.status(), StatusCode::FORBIDDEN);
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "users.delete",
+        serde_json::json!({"id": admin.id.to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rpc_error_code(&envelope), -32005);
 
-    // Delete the other: fine.
-    let remove = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/users/{newbie_id}"))
-                .body(Body::empty())
-                .unwrap(),
-            &admin_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(remove.status(), StatusCode::NO_CONTENT);
+    // Delete the other: fine (null result).
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "users.delete",
+        serde_json::json!({"id": newbie_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(rpc_result(&envelope).is_null());
+
+    // Deleting an unknown user: NOT_FOUND.
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "users.delete",
+        serde_json::json!({"id": uuid::Uuid::new_v4().to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rpc_error_code(&envelope), -32006);
 
     // Admin list works.
-    let list = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .uri("/api/v1/users")
-                .body(Body::empty())
-                .unwrap(),
-            &admin_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(list.status(), StatusCode::OK);
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "users.list",
+        serde_json::json!({"offset": 0, "limit": 10}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(rpc_result(&envelope)["total"].as_u64().unwrap() >= 1);
 }
-
 #[tokio::test]
 async fn settings_get_put_and_referer_gate() {
     let (state, admin) = test_state().await;
     let token = state.signer.sign(admin.id, Timestamp::now());
 
-    // Defaults visible to the admin.
-    let get = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .uri("/api/v1/settings")
-                .body(Body::empty())
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(get.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(get.into_body(), 4096).await.unwrap();
-    let config: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(config["router"]["media-entry-path"], "/media");
+    // Defaults visible to the admin (RPC settings.get).
+    let (status, envelope) = rpc(&state, &token, "settings.get", serde_json::Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        rpc_result(&envelope)["router"]["media-entry-path"],
+        "/media"
+    );
 
-    // Moving the media path is rejected (legacy links).
-    let bad = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v1/settings")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    serde_json::json!({"router": {"media-entry-path": "/img"}}).to_string(),
-                ))
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+    // Moving the media path is rejected (legacy links) — invalid params.
+    let mut bad = full_settings_json(|_| {});
+    bad = bad.replace("\"/media\"", "\"/img\"");
+    let bad: serde_json::Value = serde_json::from_str(&bad).unwrap();
+    let (status, envelope) = rpc(&state, &token, "settings.put", bad).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(rpc_error_code(&envelope), -32602);
 
     // A referer allow-list applies to the media path.
-    let put = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v1/settings")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(full_settings_json(|json| {
-                    json["router"]["limit-referrer-host"] = serde_json::json!(["good.example"]);
-                })))
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+    let strict = full_settings_json(|json| {
+        json["router"]["limit-referrer-host"] = serde_json::json!(["good.example"]);
+    });
+    let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+    let (status, envelope) = rpc(&state, &token, "settings.put", strict).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
 
     let (_, dto) = upload(&state, &token, tiny_png(), "cat.png").await;
     let url = dto["url"].as_str().unwrap().to_owned();
@@ -705,84 +674,39 @@ async fn settings_get_put_and_referer_gate() {
         .unwrap();
     assert_eq!(anon.status(), StatusCode::OK);
 }
-
 #[tokio::test]
 async fn settings_put_requires_the_complete_document() {
     let (state, admin) = test_state().await;
     let token = state.signer.sign(admin.id, Timestamp::now());
 
-    // Missing a whole section: 400, and the stored config is untouched.
-    let partial = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v1/settings")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    serde_json::json!({"router": {"media-entry-path": "/media", "limit-referrer-host": []}})
-                        .to_string(),
-                ))
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(partial.status(), StatusCode::BAD_REQUEST);
+    // Missing a whole section: -32602, and the stored config is untouched.
+    let mut partial: serde_json::Value = serde_json::from_str(&full_settings_json(|_| {})).unwrap();
+    partial.as_object_mut().unwrap().remove("upload");
+    let (status, envelope) = rpc(&state, &token, "settings.put", partial).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rpc_error_code(&envelope), -32602);
 
-    // Unknown leaf inside a section: 400.
-    let unknown_leaf = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v1/settings")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(full_settings_json(|json| {
-                    json["upload"]["max-pixels"] = serde_json::json!(1);
-                })))
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(unknown_leaf.status(), StatusCode::BAD_REQUEST);
-
-    // Unknown top-level section: 400.
-    let unknown_section = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/v1/settings")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(full_settings_json(|json| {
-                    json["experimental"] = serde_json::json!({});
-                })))
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(unknown_section.status(), StatusCode::BAD_REQUEST);
-
-    // The stored config still round-trips the seed defaults.
-    let get = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .uri("/api/v1/settings")
-                .body(Body::empty())
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(get.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(get.into_body(), 4096).await.unwrap();
-    let config: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let (_, envelope) = rpc(&state, &token, "settings.get", serde_json::Value::Null).await;
     assert_eq!(
-        config,
-        serde_json::to_value(i0721_proto::default_site_config()).unwrap()
+        rpc_result(&envelope)["upload"]["image-size-limit"],
+        "8MiB",
+        "a rejected PUT must not reset the stored config"
     );
-}
 
+    // Unknown leaf inside a section: -32602.
+    let mut unknown_leaf: serde_json::Value =
+        serde_json::from_str(&full_settings_json(|_| {})).unwrap();
+    unknown_leaf["upload"]["max-pixels"] = serde_json::json!(1);
+    let (status, envelope) = rpc(&state, &token, "settings.put", unknown_leaf).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rpc_error_code(&envelope), -32602);
+
+    // The complete document: accepted, null result.
+    let strict: serde_json::Value = serde_json::from_str(&full_settings_json(|_| {})).unwrap();
+    let (status, envelope) = rpc(&state, &token, "settings.put", strict).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(rpc_result(&envelope).is_null());
+}
 #[tokio::test]
 async fn dedupe_is_per_owner_and_shares_the_blob() {
     let (state, _) = test_state().await;
@@ -820,22 +744,18 @@ async fn dedupe_is_per_owner_and_shares_the_blob() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(again["id"], admin_file["id"]);
 
-    // Deleting one owner's row must NOT remove the shared blob while
-    // the other row still lives.
+    // Deleting one owner's row (RPC) must NOT remove the shared blob
+    // while the other row still lives.
     let url = admin_file["url"].as_str().unwrap().to_owned();
     let id = admin_file["id"].as_str().unwrap().to_owned();
-    let removed = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/files/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-            &admin_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "files.delete",
+        serde_json::json!({"id": id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
     let still = app(&state)
         .oneshot(Request::builder().uri(&url).body(Body::empty()).unwrap())
         .await
@@ -848,25 +768,20 @@ async fn dedupe_is_per_owner_and_shares_the_blob() {
 
     // Deleting the last live row reclaims the blob.
     let member_id = member_file["id"].as_str().unwrap().to_owned();
-    let removed_last = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/files/{member_id}"))
-                .body(Body::empty())
-                .unwrap(),
-            &member_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(removed_last.status(), StatusCode::NO_CONTENT);
+    let (status, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.delete",
+        serde_json::json!({"id": member_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
     let gone = app(&state)
         .oneshot(Request::builder().uri(&url).body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
 }
-
 #[tokio::test]
 async fn file_mutations_require_owner_or_admin() {
     let (state, admin) = test_state().await;
@@ -887,67 +802,63 @@ async fn file_mutations_require_owner_or_admin() {
     // The admin's file: the member may neither rename nor delete it.
     let (_, admin_file) = upload(&state, &admin_token, tiny_png(), "admin.png").await;
     let admin_id = admin_file["id"].as_str().unwrap().to_owned();
-    for (method, uri) in [
-        ("PATCH", format!("/api/v1/files/{admin_id}")),
-        ("DELETE", format!("/api/v1/files/{admin_id}")),
+    for (method, params) in [
+        (
+            "files.update",
+            serde_json::json!({"id": admin_id, "name": "hijacked"}),
+        ),
+        ("files.delete", serde_json::json!({"id": admin_id})),
     ] {
-        let body = if method == "PATCH" {
-            Body::from(r#"{"name": "hijacked"}"#)
-        } else {
-            Body::empty()
-        };
-        let response = app(&state)
-            .oneshot(bearer(
-                Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(body)
-                    .unwrap(),
-                &member_token,
-            ))
-            .await
-            .unwrap();
+        let (status, envelope) = rpc(&state, &member_token, method, params).await;
+        assert_eq!(status, StatusCode::OK, "{method} by member: {envelope}");
         assert_eq!(
-            response.status(),
-            StatusCode::FORBIDDEN,
-            "{method} by member"
+            rpc_error_code(&envelope),
+            -32005,
+            "{method} by member gets the auth error code"
         );
     }
 
-    // The member's own file: theirs to rename and delete.
+    // The member's own file: theirs to rename.
     let (_, member_file) = upload(&state, &member_token, tiny_png(), "member.png").await;
     let member_id = member_file["id"].as_str().unwrap().to_owned();
-    let renamed = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PATCH")
-                .uri(format!("/api/v1/files/{member_id}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"name": "my file"}"#))
-                .unwrap(),
-            &member_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(renamed.status(), StatusCode::OK);
+    let (status, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.update",
+        serde_json::json!({"id": member_id, "name": "my file"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(rpc_result(&envelope)["name"], "my file");
 
     // The admin may rename the member's file (owner-or-admin).
-    let admin_renamed = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("PATCH")
-                .uri(format!("/api/v1/files/{member_id}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"name": "admin says"}"#))
-                .unwrap(),
-            &admin_token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(admin_renamed.status(), StatusCode::OK);
-}
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "files.update",
+        serde_json::json!({"id": member_id, "name": "admin says"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
 
+    // A bad name is invalid params; an unknown file id is NOT_FOUND.
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "files.update",
+        serde_json::json!({"id": member_id, "name": "a/b"}),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32602);
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "files.update",
+        serde_json::json!({"id": uuid::Uuid::new_v4().to_string(), "name": "x"}),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32006);
+}
 #[tokio::test]
 async fn xff_shapes_login_throttling_only_through_trust() {
     // Untrusted (default): forged X-Forwarded-For cannot rotate buckets. The
@@ -1117,18 +1028,14 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     ));
 
     let _admin = admin;
-    let response = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/files/{file_id}"))
-                .body(Body::empty())
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": file_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
 
     // The racing live row must still be servable: the blob was restored,
     // not orphaned. Its thumbnail serves too (restored alongside, or
@@ -1212,18 +1119,14 @@ async fn final_delete_reclaims_the_last_blob_and_thumbnail() {
     // The racing-row window is closed first: no other live row exists, so
     // the reclaim must actually free both blobs (this pins the `> 0`
     // restore guard against an unconditional-restore regression).
-    let response = app(&state)
-        .oneshot(bearer(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/files/{file_id}"))
-                .body(Body::empty())
-                .unwrap(),
-            &token,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.delete",
+        serde_json::json!({"id": file_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
 
     let media = app(&state)
         .oneshot(
@@ -1347,4 +1250,136 @@ async fn unknown_api_routes_answer_404_json_not_the_spa_shell() {
         .await
         .unwrap();
     assert!(String::from_utf8_lossy(&body).contains("route not found"));
+}
+
+// ── the WebSocket upgrade lane ─────────────────────────────────────────
+// Integration smoke against a LIVE listener (raw TCP, no WS client
+// library): the handshake's auth hook is the only gate between a socket
+// and the method surface, so its refusal (HTTP 401) and its four
+// credential channels are pinned here end-to-end.
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+async fn spawn_listener(state: AppState) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = routes::app(state);
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    format!("127.0.0.1:{}", addr.port())
+}
+
+async fn ws_handshake(addr: &str, extra_headers: &str) -> String {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let request = format!(
+        "GET /api/rpc HTTP/1.1\r\nHost: {addr}\r\nConnection: Upgrade\r\n\
+         Upgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n{extra_headers}\r\n"
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    // Read the response HEAD only: a 101 upgrade holds the socket open
+    // for frames (reading to EOF would block forever), so the loop stops
+    // at the blank line that terminates the headers.
+    let mut buf = [0_u8; 1];
+    let mut head = Vec::new();
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buf)).await {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(n)) => {
+                head.extend_from_slice(&buf[..n]);
+                if head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            Ok(Err(_)) => break,
+        }
+    }
+    String::from_utf8_lossy(&head).to_string()
+}
+
+#[tokio::test]
+async fn ws_handshake_refuses_without_a_token() {
+    let (state, _) = test_state().await;
+    let addr = spawn_listener(state).await;
+    let head = ws_handshake(&addr, "").await;
+    let status_line = head.lines().next().unwrap_or_default();
+    assert!(
+        status_line.contains("401"),
+        "anonymous handshake must be refused, got: {status_line}"
+    );
+}
+
+#[tokio::test]
+async fn ws_handshake_accepts_the_subprotocol_and_query_channels() {
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+
+    // Channel 3: Sec-WebSocket-Protocol: jwt.<token>.
+    let addr = spawn_listener(state.clone()).await;
+    // Channel 3: Sec-WebSocket-Protocol: jwt.<token>.
+    let head = ws_handshake(&addr, &format!("Sec-WebSocket-Protocol: jwt.{token}\r\n")).await;
+    assert!(
+        head.starts_with("HTTP/1.1 101"),
+        "the subprotocol channel must upgrade, got: {}",
+        head.lines().next().unwrap_or_default()
+    );
+
+    // Channel 4 (last resort): ?token= — a fresh connection; the head
+    // reader stops at the blank line so the upgraded socket never hangs.
+    let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    let request = format!(
+        "GET /api/rpc?token={token} HTTP/1.1\r\nHost: {addr}\r\nConnection: Upgrade\r\n\
+         Upgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut head = Vec::new();
+    let mut buf = [0_u8; 1];
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buf)).await {
+            Ok(Ok(0)) | Err(_) | Ok(Err(_)) => break,
+            Ok(Ok(n)) => {
+                head.extend_from_slice(&buf[..n]);
+                if head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+        }
+    }
+    let text = String::from_utf8_lossy(&head).to_string();
+    assert!(
+        text.starts_with("HTTP/1.1 101"),
+        "the query channel must upgrade, got: {}",
+        text.lines().next().unwrap_or_default()
+    );
+}
+
+#[tokio::test]
+async fn post_fallback_accepts_the_cookie_channel() {
+    // Channel 1: the session cookie (channels 2/4 are pinned above and
+    // by every bearer-carrying POST test).
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/rpc")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, format!("i0721-token={token}"))
+        .body(Body::from(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 7, "method": "auth.verify",
+                "params": null,
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let (status, envelope) = rpc_request(&state, request).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(rpc_result(&envelope)["username"], "admin");
 }

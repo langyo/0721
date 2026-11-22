@@ -2,7 +2,8 @@
 import type { Role } from "./Role";
 
 /**
- * The create-user request body.
+ * The create-user wire form (the former REST body; the ts-rs binding
+ * keeps feeding the webui).
  */
 export type CreateUserRequest = { 
 /**

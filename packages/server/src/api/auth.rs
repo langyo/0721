@@ -73,18 +73,6 @@ pub(crate) async fn require_auth(
     Ok((claims, user))
 }
 
-/// Require an admin caller (403 for members).
-pub(crate) async fn require_admin(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<i0721_proto::UserRecord, ApiError> {
-    let (_, user) = require_auth(state, headers).await?;
-    if user.role != i0721_proto::Role::Admin {
-        return Err(ApiError::forbidden("admin role required"));
-    }
-    Ok(user)
-}
-
 /// `POST /api/v1/auth/login`
 pub async fn login(
     ConnectInfo(source): ConnectInfo<SocketAddr>,
@@ -120,36 +108,6 @@ pub async fn login(
         )
         .await?;
 
-    Ok(Json(AuthSession {
-        token,
-        expires_at: expiry_rfc3339(now),
-        user: user.into(),
-    }))
-}
-
-/// `GET /api/v1/auth/verify`
-pub async fn verify(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<UserDto>, ApiError> {
-    let (_, user) = require_auth(&state, &headers).await?;
-    Ok(Json(user.into()))
-}
-
-/// `POST /api/v1/auth/refresh`
-///
-/// Issues a fresh token for a valid one. Unlike login this does not
-/// bump the watermark: refreshing keeps the current session alive
-/// (the legacy `refresh` recorded the expiry into the watermark slot,
-/// which invalidated the very token it had just read — unused and
-/// unintentional; see the wave report).
-pub async fn refresh(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<AuthSession>, ApiError> {
-    let (_, user) = require_auth(&state, &headers).await?;
-    let now = Timestamp::now();
-    let token = state.signer.sign(user.id, now);
     Ok(Json(AuthSession {
         token,
         expires_at: expiry_rfc3339(now),

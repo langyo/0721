@@ -213,6 +213,17 @@ pub async fn fallback(State(state): State<AppState>, req: axum::extract::Request
     serve_shell(&state).await
 }
 
+/// The uniform 404 for an unknown API route: the REST surface's JSON
+/// error body, so API clients never see the SPA shell's HTML.
+fn unknown_api_route() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        [(header::CONTENT_TYPE, "application/json")],
+        r#"{"error":"route not found"}"#,
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,15 +247,4 @@ mod tests {
             "no-cache, no-store, must-revalidate"
         );
     }
-}
-
-/// The uniform 404 for an unknown API route: the REST surface's JSON
-/// error body, so API clients never see the SPA shell's HTML.
-fn unknown_api_route() -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        [(header::CONTENT_TYPE, "application/json")],
-        r#"{"error":"route not found"}"#,
-    )
-        .into_response()
 }

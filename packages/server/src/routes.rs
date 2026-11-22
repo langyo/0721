@@ -1,5 +1,15 @@
 //! The router assembly — `app(state)` for serving, `router(state)` for
 //! oneshot tests (the ayane split).
+//!
+//! Two API lanes share the tree: the WebSocket JSON-RPC surface at
+//! `/api/rpc` (the webui's primary API) and a deliberately TINY REST
+//! whitelist — `/api/health` (probes + container healthcheck), the
+//! password login (the bootstrap: it mints the JWT every later call,
+//! WS included, rides), the multipart upload (binary bodies do not
+//! belong on a JSON control lane), and `/media/{key}` (large binary
+//! serving). Every other former `/api/v1` route lives on as an RPC
+//! method (`rpc.rs`); unknown `/api` paths answer 404 JSON (the
+//! fallback's API-territory rule).
 
 use axum::routing::get;
 use axum::Router;
@@ -9,6 +19,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::api;
 use crate::media;
+use crate::rpc;
 use crate::state::AppState;
 use crate::static_files;
 
@@ -24,11 +35,9 @@ pub fn app(state: AppState) -> Router {
         .layer(CompressionLayer::new().compress_when(SizeAbove::new(1024)))
 }
 
-/// The route tree alone. `/api` and `/media` own their paths; every
-/// other path falls through to the static/SPA handlers (see
-/// `static_files`), with client-side routes surviving a hard refresh
-/// through the index.html fallback.
+/// The route tree alone.
 pub fn router(state: AppState) -> Router {
+    let rpc_state = state.clone();
     Router::new()
         .route("/api/health", get(api::settings::health))
         .nest("/api/v1", api::router())
@@ -37,4 +46,7 @@ pub fn router(state: AppState) -> Router {
         .route("/assets/{*path}", get(static_files::serve_asset))
         .fallback(static_files::fallback)
         .with_state(state)
+        // The RPC lane owns its state (the builder captured it); merge
+        // the stateless router it produces after the stateful tree.
+        .merge(rpc::router(rpc_state))
 }

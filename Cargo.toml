@@ -87,5 +87,11 @@ url = "^2"
 # web UI embedding (server feature `embedded-frontend`)
 include_dir = "^0.7"
 
+# WebSocket JSON-RPC lane (the family's strict server framework; the
+# /api/v1 REST surface retires down to the bootstrap/binary whitelist).
+# `plana` itself carries the JSON-RPC wire types the handlers speak.
+plana-rpc-server = "^0.2"
+plana = "^0.3"
+
 [workspace.lints.rust]
 unsafe_code = "deny"

@@ -71,6 +71,13 @@ impl ApiError {
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
+
+    /// The HTTP status this error carries (the RPC lane maps it onto the
+    /// JSON-RPC error-code family).
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
 }
 
 impl std::fmt::Display for ApiError {

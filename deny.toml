@@ -44,6 +44,21 @@ name = "lacrymira-pg"
 expression = "LicenseRef-SySL-1.0"
 license-files = [{ path = "LICENSE", hash = 0x4313eae3 }]
 
+# The family's JSON-RPC framework (crates.io): plana + its rpc-server
+# carry the same SySL 1.0 text via license-file (hash-pinned below, the
+# chest precedent). Allowed as a first-party family license — same
+# publisher as the workspace's own crates, not a third-party copyleft
+# risk (the AGPL/GPL/LGPL exclusion targets external runtime deps).
+[[licenses.clarify]]
+name = "plana"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "LICENSE", hash = 0xda2b7c13 }]
+
+[[licenses.clarify]]
+name = "plana-rpc-server"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "LICENSE", hash = 0xda2b7c13 }]
+
 [[licenses.clarify]]
 name = "ring"
 expression = "MIT AND ISC AND OpenSSL"
