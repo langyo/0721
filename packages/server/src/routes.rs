@@ -1,17 +1,27 @@
 //! The router assembly — `app(state)` for serving, `router(state)` for
 //! oneshot tests (the ayane split).
+//!
+//! Two API lanes share the tree: the WebSocket JSON-RPC surface at
+//! `/api/rpc` (the webui's primary API) and a deliberately TINY REST
+//! whitelist — `/api/health` (probes + container healthcheck), the
+//! password login (the bootstrap: it mints the JWT every later call,
+//! WS included, rides), the multipart upload (binary bodies do not
+//! belong on a JSON control lane), and `/media/{key}` (large binary
+//! serving). Every other former `/api/v1` route lives on as an RPC
+//! method (`rpc.rs`); unknown `/api` paths answer 404 JSON (the
+//! fallback's API-territory rule).
 
 use axum::routing::get;
-use axum::routing::get_service;
 use axum::Router;
 use tower_http::compression::predicate::SizeAbove;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
-use tower_http::services::ServeFile;
 
 use crate::api;
 use crate::media;
+use crate::rpc;
 use crate::state::AppState;
+use crate::static_files;
 
 /// The complete app: the router plus the body limit and the dynamic
 /// gzip layer. The predicate deliberately drops tower-http's default
@@ -27,19 +37,16 @@ pub fn app(state: AppState) -> Router {
 
 /// The route tree alone.
 pub fn router(state: AppState) -> Router {
-    let static_dir = state.config.static_dir.clone();
-    let index = ServeFile::new(static_dir.join("index.html"));
-    let favicon = ServeFile::new(static_dir.join("favicon.ico"));
-    let bg = ServeFile::new(static_dir.join("bg.webp"));
-    let logo = ServeFile::new(static_dir.join("logo.webp"));
-
+    let rpc_state = state.clone();
     Router::new()
         .route("/api/health", get(api::settings::health))
         .nest("/api/v1", api::router())
         .route("/media/{key}", get(media::download))
-        .route_service("/", get_service(index))
-        .route_service("/favicon.ico", get_service(favicon))
-        .route_service("/bg.webp", get_service(bg))
-        .route_service("/logo.webp", get_service(logo))
+        .route("/", get(static_files::serve_root))
+        .route("/assets/{*path}", get(static_files::serve_asset))
+        .fallback(static_files::fallback)
         .with_state(state)
+        // The RPC lane owns its state (the builder captured it); merge
+        // the stateless router it produces after the stateful tree.
+        .merge(rpc::router(rpc_state))
 }

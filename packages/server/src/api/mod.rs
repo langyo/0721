@@ -1,28 +1,26 @@
-//! The `/api/v1` surface.
+//! The slim `/api/v1` whitelist: everything else moved to the RPC lane
+//! (`crate::rpc`). What stays is what cannot or should not ride a
+//! JSON control lane: the session lifecycle (login plants the httpOnly
+//! cookie, refresh rotates it, logout expires it — Set-Cookie needs
+//! HTTP headers a WS method cannot carry) and the multipart binary
+//! upload.
 
 pub mod auth;
 pub mod files;
 pub mod settings;
-pub mod users;
 
-use axum::routing::{get, patch, post};
+use axum::routing::post;
 use axum::Router;
 
 use crate::state::AppState;
 
-/// Mount the v1 API (stateless: the caller applies the state).
+/// Mount the v1 whitelist (stateless: the caller applies the state).
 pub fn router() -> Router<AppState> {
-    let files_api = Router::new()
-        .route("/", get(files::list).post(files::upload))
-        .route("/{id}", patch(files::rename).delete(files::remove));
-    let users_api = Router::new()
-        .route("/", get(users::list).post(users::create))
-        .route("/{id}", axum::routing::delete(users::remove));
+    let files_api = Router::new().route("/", post(files::upload));
     Router::new()
         .route("/auth/login", post(auth::login))
-        .route("/auth/verify", get(auth::verify))
         .route("/auth/refresh", post(auth::refresh))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/ws-ticket", post(auth::ws_ticket))
         .nest("/files", files_api)
-        .nest("/users", users_api)
-        .route("/settings", get(settings::get).put(settings::set))
 }

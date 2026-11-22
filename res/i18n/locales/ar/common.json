@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "0721 موارد"
+  },
+  "nav": {
+    "portal": "البوابة",
+    "users": "المستخدمون",
+    "settings": "الإعدادات"
+  },
+  "actions": {
+    "upload": "رفع",
+    "refresh": "تحديث",
+    "delete": "حذف",
+    "copyLink": "نسخ الرابط",
+    "copied": "تم نسخ الرابط",
+    "cancel": "إلغاء",
+    "save": "حفظ",
+    "saved": "تم الحفظ",
+    "create": "إنشاء",
+    "confirm": "تأكيد",
+    "retry": "إعادة المحاولة",
+    "close": "إغلاق",
+    "loadMore": "تحميل المزيد",
+    "logout": "تسجيل الخروج",
+    "add": "إضافة",
+    "remove": "إزالة"
+  },
+  "status": {
+    "loading": "جارٍ التحميل",
+    "error": "حدث خطأ ما",
+    "empty": "لا يوجد شيء هنا بعد",
+    "admin": "مدير",
+    "member": "مستخدم",
+    "total": "{count} في المجموع",
+    "version": "الإصدار {version}"
+  },
+  "auth": {
+    "title": "تسجيل الدخول",
+    "subtitle": "المتابعة إلى 0721",
+    "failed": "اسم المستخدم أو كلمة المرور غير صحيحة"
+  },
+  "portal": {
+    "title": "الصور",
+    "empty": "لا توجد ملفات بعد — ارفع أول ملف بزر +",
+    "uploading": "جارٍ رفع {name}",
+    "uploadFailed": "فشل الرفع",
+    "deleteConfirm": "حذف هذا الملف؟ سيتوقف الرابط العام عن العمل.",
+    "openOriginal": "فتح الأصل"
+  },
+  "users": {
+    "title": "المستخدمون",
+    "empty": "لا يوجد مستخدمون",
+    "createTitle": "إنشاء مستخدم",
+    "username": "اسم المستخدم",
+    "password": "كلمة المرور",
+    "displayName": "الاسم المعروض",
+    "role": "الدور",
+    "created": "تاريخ الإنشاء",
+    "deleteConfirm": "حذف المستخدم {name}؟",
+    "conflict": "اسم المستخدم هذا محجوز بالفعل."
+  },
+  "settings": {
+    "title": "إعدادات الموقع",
+    "saved": "تم حفظ الإعدادات",
+    "saveFailed": "فشل الحفظ",
+    "strictHint": "الحفظ يستبدل مستند الإعدادات بالكامل.",
+    "sectionPortal": "البوابة",
+    "sectionRouter": "الموجّه",
+    "sectionUpload": "الرفع",
+    "titleSuffix": "لاحقة عنوان الموقع",
+    "footerBanner": "نص التذييل",
+    "language": "اللغة المفضلة",
+    "timezone": "إزاحة المنطقة الزمنية (ساعات)",
+    "mediaEntryPath": "مسار دخول الوسائط",
+    "limitReferrerHost": "قائمة المضيفين المسموح لهم بالإحالة",
+    "imageSizeLimit": "حد حجم الرفع",
+    "webpAutoConvert": "تحويل الصور إلى WebP تلقائيًا",
+    "useSourceFileName": "الاحتفاظ باسم الملف الأصلي",
+    "bannerText": "النص",
+    "bannerUrl": "الرابط (اختياري)",
+    "addBanner": "إضافة إدخال بانر"
+  },
+  "chrome": {
+    "settings": "الإعدادات",
+    "theme": "المظهر",
+    "language": "اللغة",
+    "about": "حول",
+    "signOut": "تسجيل الخروج"
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "0721 Resource"
+  },
+  "nav": {
+    "portal": "Portal",
+    "users": "Users",
+    "settings": "Settings"
+  },
+  "actions": {
+    "upload": "Upload",
+    "refresh": "Refresh",
+    "delete": "Delete",
+    "copyLink": "Copy link",
+    "copied": "Link copied",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saved": "Saved",
+    "create": "Create",
+    "confirm": "Confirm",
+    "retry": "Retry",
+    "close": "Close",
+    "loadMore": "Load more",
+    "logout": "Sign out",
+    "add": "Add",
+    "remove": "Remove"
+  },
+  "status": {
+    "loading": "Loading",
+    "error": "Something went wrong",
+    "empty": "Nothing here yet",
+    "admin": "Admin",
+    "member": "Member",
+    "total": "{count} in total",
+    "version": "Version {version}"
+  },
+  "auth": {
+    "title": "Sign in",
+    "subtitle": "Continue to 0721",
+    "failed": "Invalid username or password"
+  },
+  "portal": {
+    "title": "Portal",
+    "empty": "No files yet — add the first one with the + button",
+    "uploading": "Uploading {name}",
+    "uploadFailed": "Upload failed",
+    "deleteConfirm": "Delete this file? Its public link stops working.",
+    "openOriginal": "Open original"
+  },
+  "users": {
+    "title": "Users",
+    "empty": "No users",
+    "createTitle": "Create user",
+    "username": "Username",
+    "password": "Password",
+    "displayName": "Display name",
+    "role": "Role",
+    "created": "Created",
+    "deleteConfirm": "Delete user {name}?",
+    "conflict": "That username is already taken."
+  },
+  "settings": {
+    "title": "Site settings",
+    "saved": "Settings saved",
+    "saveFailed": "Saving failed",
+    "strictHint": "Saving replaces the whole configuration document.",
+    "sectionPortal": "Portal",
+    "sectionRouter": "Router",
+    "sectionUpload": "Upload",
+    "titleSuffix": "Site title suffix",
+    "footerBanner": "Footer banner",
+    "language": "Preferred language",
+    "timezone": "Timezone offset (hours)",
+    "mediaEntryPath": "Media entry path",
+    "limitReferrerHost": "Referrer host allow-list",
+    "imageSizeLimit": "Upload size limit",
+    "webpAutoConvert": "Auto-convert images to WebP",
+    "useSourceFileName": "Keep the source file name",
+    "bannerText": "Text",
+    "bannerUrl": "Link (optional)",
+    "addBanner": "Add banner entry"
+  },
+  "chrome": {
+    "settings": "Settings",
+    "theme": "Theme",
+    "language": "Language",
+    "about": "About",
+    "signOut": "Sign out"
+  }
+}

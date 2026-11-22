@@ -1,55 +1,23 @@
-//! `/api/v1/files` — timeline list, multipart upload (the legacy
-//! pipeline), rename, soft delete.
+//! The multipart upload lane (`POST /api/v1/files`) — the binary
+//! REST-whitelist twin of the RPC file methods (`crate::rpc`).
 
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{Multipart, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
 use serde::Deserialize;
-use uuid::Uuid;
 
 use crate::api::auth::require_auth;
 use crate::blob::BlobSlot;
 use crate::error::ApiError;
 use crate::pipeline::{process_upload, UploadRules};
 use crate::state::AppState;
-use i0721_proto::{validate_file_name, FileDto, NewFile, PageArgs, PageResult, Role};
+use i0721_proto::{validate_file_name, FileDto, NewFile};
 
 /// Optional query of the upload endpoint (the legacy `?name=`).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UploadQuery {
     /// Force the display name of the uploaded file.
     pub name: Option<String>,
-}
-
-/// The rename request body.
-#[derive(Debug, Clone, Deserialize)]
-pub struct RenameRequest {
-    /// The new display name.
-    pub name: String,
-}
-
-/// `GET /api/v1/files?offset&limit`
-pub async fn list(
-    State(state): State<AppState>,
-    Query(args): Query<PageArgs>,
-    headers: HeaderMap,
-) -> Result<Json<PageResult<FileDto>>, ApiError> {
-    require_auth(&state, &headers).await?;
-    let (offset, limit) = args.sanitize();
-    let total = state.store.count_files().await?;
-    let items = state
-        .store
-        .list_files(offset, limit)
-        .await?
-        .into_iter()
-        .map(FileDto::from)
-        .collect();
-    Ok(Json(PageResult {
-        total,
-        offset,
-        limit,
-        items,
-    }))
 }
 
 /// `POST /api/v1/files` (multipart, field `file`)
@@ -61,9 +29,10 @@ pub async fn upload(
     State(state): State<AppState>,
     Query(args): Query<UploadQuery>,
     headers: HeaderMap,
+    uri: axum::http::Uri,
     mut multipart: Multipart,
 ) -> Result<axum::response::Response, ApiError> {
-    let (_, user) = require_auth(&state, &headers).await?;
+    let (_, user) = require_auth(&state, &headers, &uri).await?;
 
     let field = multipart
         .next_field()
@@ -172,109 +141,4 @@ pub async fn upload(
         Err(err) => return Err(err.into()),
     };
     Ok((StatusCode::CREATED, Json(FileDto::from(record))).into_response())
-}
-
-/// The owner-or-admin gate: members may only mutate their own files,
-/// admins any file. (The legacy engine gated deletion admin-only; the
-/// netdisk reading of this wave is that your own uploads are yours —
-/// recorded as a deliberate behavior change.)
-async fn require_file_owner_or_admin(
-    state: &AppState,
-    headers: &HeaderMap,
-    id: Uuid,
-) -> Result<(i0721_proto::UserRecord, i0721_proto::FileRecord), ApiError> {
-    let (_, user) = require_auth(state, headers).await?;
-    let record = state
-        .store
-        .get_file(id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("file not found"))?;
-    if user.role != Role::Admin && record.owner_id != user.id {
-        return Err(ApiError::forbidden("not your file"));
-    }
-    Ok((user, record))
-}
-
-/// `PATCH /api/v1/files/{id}`
-pub async fn rename(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    headers: HeaderMap,
-    Json(request): Json<RenameRequest>,
-) -> Result<Json<FileDto>, ApiError> {
-    require_file_owner_or_admin(&state, &headers, id).await?;
-    validate_file_name(&request.name).map_err(|err| ApiError::bad_request(err.to_string()))?;
-    let record = state
-        .store
-        .rename_file(id, &request.name)
-        .await?
-        .ok_or_else(|| ApiError::not_found("file not found"))?;
-    Ok(Json(FileDto::from(record)))
-}
-
-/// `DELETE /api/v1/files/{id}` — soft delete (guarded UPDATE). The blob
-/// and thumbnail are reclaimed only when no other live row still
-/// references the content-addressed key; full blob GC belongs to the
-/// netdisk waves.
-pub async fn remove(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    headers: HeaderMap,
-) -> Result<StatusCode, ApiError> {
-    // The gate's fetch doubles as the pre-delete snapshot: the guarded
-    // UPDATE below may be the second of a racing pair (then 404), and
-    // after it the row is no longer readable through `get_file`.
-    let (_, record) = require_file_owner_or_admin(&state, &headers, id).await?;
-    let removed = state.store.soft_delete_file(id).await?;
-    if !removed {
-        return Err(ApiError::not_found("file not found"));
-    }
-    if state
-        .store
-        .count_live_files_by_storage_key(&record.storage_key)
-        .await?
-        == 0
-    {
-        // Compare-and-restore: an upload of the same content can land a new
-        // live row between the count above and the unlink below (uploads
-        // write the blob before `create_file`). Snapshot the media bytes
-        // and the thumbnail, unlink both, recount, and put whichever a
-        // surviving live row still needs back — a live row is never left
-        // without its bytes. (Thumbnail regeneration reads the media blob,
-        // so the thumbnail restore rides on the media restore; keeping the
-        // cached bytes avoids the regeneration blip entirely.)
-        let snapshot = state
-            .blobs
-            .get(BlobSlot::Media, &record.storage_key)
-            .await?;
-        let thumb_key = record.thumbnail_key.clone();
-        let thumb_snapshot = match thumb_key.as_deref() {
-            Some(key) => state.blobs.get(BlobSlot::Cache, key).await?,
-            None => None,
-        };
-        state
-            .blobs
-            .delete(BlobSlot::Media, &record.storage_key)
-            .await?;
-        if let Some(key) = thumb_key.as_deref() {
-            state.blobs.delete(BlobSlot::Cache, key).await?;
-        }
-        if state
-            .store
-            .count_live_files_by_storage_key(&record.storage_key)
-            .await?
-            > 0
-        {
-            if let Some(bytes) = snapshot {
-                state
-                    .blobs
-                    .put(BlobSlot::Media, &record.storage_key, &bytes)
-                    .await?;
-            }
-            if let (Some(key), Some(bytes)) = (thumb_key.as_deref(), thumb_snapshot) {
-                state.blobs.put(BlobSlot::Cache, key, &bytes).await?;
-            }
-        }
-    }
-    Ok(StatusCode::NO_CONTENT)
 }

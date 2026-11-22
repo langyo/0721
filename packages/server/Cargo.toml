@@ -39,13 +39,28 @@ url = { workspace = true }
 uuid = { workspace = true }
 webp = { workspace = true }
 webp-animation = { workspace = true }
+ts-rs = { workspace = true }
+plana-rpc-server = { workspace = true }
+plana = { workspace = true }
+include_dir = { workspace = true, optional = true }
 
 [dev-dependencies]
 i0721-proto = { workspace = true }
 i0721-store = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures = { workspace = true }
 async-trait = { workspace = true }
 sha2 = { workspace = true }
 tower = { workspace = true }
 
 [lints]
 workspace = true
+
+[features]
+# Compile the web UI dist into the binary (include_dir!). ON by default:
+# the shipped image is a single self-contained artifact. The cost is a
+# compile-time dependency on `dist/webui` — `just webui` (or any
+# packages/webui build) produces it; build with
+# `--no-default-features` for a pure-API dev loop without a frontend.
+default = ["embedded-frontend"]
+embedded-frontend = ["include_dir"]

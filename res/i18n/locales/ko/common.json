@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "0721 리소스"
+  },
+  "nav": {
+    "portal": "포털",
+    "users": "사용자",
+    "settings": "설정"
+  },
+  "actions": {
+    "upload": "업로드",
+    "refresh": "새로 고침",
+    "delete": "삭제",
+    "copyLink": "링크 복사",
+    "copied": "링크를 복사했습니다",
+    "cancel": "취소",
+    "save": "저장",
+    "saved": "저장되었습니다",
+    "create": "만들기",
+    "confirm": "확인",
+    "retry": "다시 시도",
+    "close": "닫기",
+    "loadMore": "더 보기",
+    "logout": "로그아웃",
+    "add": "추가",
+    "remove": "제거"
+  },
+  "status": {
+    "loading": "로딩 중",
+    "error": "문제가 발생했습니다",
+    "empty": "아직 아무것도 없습니다",
+    "admin": "관리자",
+    "member": "사용자",
+    "total": "총 {count}개",
+    "version": "버전 {version}"
+  },
+  "auth": {
+    "title": "로그인",
+    "subtitle": "0721으로 이동",
+    "failed": "사용자 이름 또는 비밀번호가 틀렸습니다"
+  },
+  "portal": {
+    "title": "이미지",
+    "empty": "파일이 없습니다. 오른쪽 위의 + 로 첫 파일을 업로드하세요",
+    "uploading": "{name} 업로드 중",
+    "uploadFailed": "업로드 실패",
+    "deleteConfirm": "이 파일을 삭제할까요? 공개 링크도 함께무효화합니다.",
+    "openOriginal": "원본 열기"
+  },
+  "users": {
+    "title": "사용자",
+    "empty": "사용자가 없습니다",
+    "createTitle": "사용자 만들기",
+    "username": "사용자 이름",
+    "password": "비밀번호",
+    "displayName": "표시 이름",
+    "role": "역할",
+    "created": "생성일",
+    "deleteConfirm": "사용자 {name}을(를) 삭제할까요?",
+    "conflict": "이미 사용 중인 사용자 이름입니다."
+  },
+  "settings": {
+    "title": "사이트 설정",
+    "saved": "설정이 저장되었습니다",
+    "saveFailed": "저장 실패",
+    "strictHint": "저장하면 설정 문서 전체가 교체됩니다.",
+    "sectionPortal": "포털",
+    "sectionRouter": "라우터",
+    "sectionUpload": "업로드",
+    "titleSuffix": "사이트 제목",
+    "footerBanner": "푸터 배너",
+    "language": "기본 언어",
+    "timezone": "시간대 오프셋(시간)",
+    "mediaEntryPath": "미디어 라우터 경로",
+    "limitReferrerHost": "리퍼러 호스트 제한",
+    "imageSizeLimit": "업로드 크기 제한",
+    "webpAutoConvert": "WebP 자동 변환",
+    "useSourceFileName": "원본 파일 이름 사용",
+    "bannerText": "텍스트",
+    "bannerUrl": "링크(선택)",
+    "addBanner": "배너 항목 추가"
+  },
+  "chrome": {
+    "settings": "설정",
+    "theme": "테마",
+    "language": "언어",
+    "about": "정보",
+    "signOut": "로그아웃"
+  }
+}

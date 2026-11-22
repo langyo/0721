@@ -8,6 +8,7 @@ use tokio::sync::Semaphore;
 use crate::auth::{JwtSigner, LoginLimiter};
 use crate::blob::BlobStore;
 use crate::config::Config;
+use crate::ws_tickets::WsTicketStore;
 
 /// Everything a handler needs.
 #[derive(Clone)]
@@ -24,6 +25,9 @@ pub struct AppState {
     pub login_limiter: Arc<LoginLimiter>,
     /// Upload-pipeline concurrency slots (the legacy limit was 4).
     pub upload_slots: Arc<Semaphore>,
+    /// One-time WebSocket admission tickets (in-memory: single-instance
+    /// deployments — see `ws_tickets`).
+    pub ws_tickets: Arc<WsTicketStore>,
 }
 
 impl AppState {
@@ -39,6 +43,7 @@ impl AppState {
             signer,
             login_limiter: Arc::new(LoginLimiter::default()),
             upload_slots,
+            ws_tickets: Arc::new(WsTicketStore::new()),
         }
     }
 }

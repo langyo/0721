@@ -1,5 +1,7 @@
 [workspace]
 members = ["packages/*"]
+# packages/webui is the pnpm (node) package — not a crate.
+exclude = ["packages/webui"]
 resolver = "2"
 
 [profile.release]
@@ -56,6 +58,11 @@ uuid = { version = "^1", features = ["v4", "fast-rng", "serde"] }
 jiff = { version = "^1", features = ["serde"] }
 base64 = "^0.22"
 
+# Rust→TS contract (proto DTOs + server wire types feed the webui; the
+# generated bindings under packages/webui/src/types are committed and
+# drift-checked — never hand-write them).
+ts-rs = { version = "^12", features = ["uuid-impl"] }
+
 # auth (transition password + HS256 token)
 argon2 = "^0.5"
 password-hash = { version = "^0.5", features = ["getrandom"] }
@@ -76,6 +83,27 @@ mime_guess = "^2"
 
 # request-side parsing
 url = "^2"
+
+# web UI embedding (server feature `embedded-frontend`)
+include_dir = "^0.7"
+
+futures = "^0.3"
+
+# Dev-only: the WS-frame integration tests (the family's own dev lane).
+tokio-tungstenite = "^0.30"
+
+# WebSocket JSON-RPC lane (the family's strict server framework; the
+# /api/v1 REST surface retires down to the bootstrap/binary whitelist).
+# `plana` itself carries the JSON-RPC wire types the handlers speak.
+#
+# REGISTRY FALLBACK (the lacrymira pattern): the published
+# plana-rpc-server 0.2.0 depends on plana ^0.3 — a stale line against
+# the family's current plana 0.8 (family-versions correctly refuses the
+# mismatch), and no 0.8-paired rpc-server release exists yet. Until it
+# ships, pin the family git master (Cargo.lock pins the rev) and flip
+# back to crates.io declarations when the pair publishes.
+plana-rpc-server = { git = "https://github.com/celestia-island/plana", branch = "master", version = "0.2" }
+plana = { git = "https://github.com/celestia-island/plana", branch = "master", version = "0.8" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

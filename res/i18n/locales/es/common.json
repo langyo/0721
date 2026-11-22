@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "0721 Recursos"
+  },
+  "nav": {
+    "portal": "Portal",
+    "users": "Usuarios",
+    "settings": "Configuración"
+  },
+  "actions": {
+    "upload": "Subir",
+    "refresh": "Actualizar",
+    "delete": "Eliminar",
+    "copyLink": "Copiar enlace",
+    "copied": "Enlace copiado",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "saved": "Guardado",
+    "create": "Crear",
+    "confirm": "Confirmar",
+    "retry": "Reintentar",
+    "close": "Cerrar",
+    "loadMore": "Cargar más",
+    "logout": "Cerrar sesión",
+    "add": "Añadir",
+    "remove": "Quitar"
+  },
+  "status": {
+    "loading": "Cargando",
+    "error": "Algo salió mal",
+    "empty": "Aún no hay nada",
+    "admin": "Administrador",
+    "member": "Usuario",
+    "total": "{count} en total",
+    "version": "Versión {version}"
+  },
+  "auth": {
+    "title": "Iniciar sesión",
+    "subtitle": "Continuar a 0721",
+    "failed": "Nombre de usuario o contraseña incorrectos"
+  },
+  "portal": {
+    "title": "Imágenes",
+    "empty": "Aún no hay archivos: sube el primero con el botón +",
+    "uploading": "Subiendo {name}",
+    "uploadFailed": "Error al subir",
+    "deleteConfirm": "¿Eliminar este archivo? Su enlace público dejará de funcionar.",
+    "openOriginal": "Abrir original"
+  },
+  "users": {
+    "title": "Usuarios",
+    "empty": "Sin usuarios",
+    "createTitle": "Crear usuario",
+    "username": "Nombre de usuario",
+    "password": "Contraseña",
+    "displayName": "Nombre visible",
+    "role": "Rol",
+    "created": "Creado",
+    "deleteConfirm": "¿Eliminar al usuario {name}?",
+    "conflict": "Ese nombre de usuario ya está en uso."
+  },
+  "settings": {
+    "title": "Configuración del sitio",
+    "saved": "Configuración guardada",
+    "saveFailed": "Error al guardar",
+    "strictHint": "Guardar reemplaza todo el documento de configuración.",
+    "sectionPortal": "Portal",
+    "sectionRouter": "Enrutador",
+    "sectionUpload": "Subida",
+    "titleSuffix": "Título del sitio",
+    "footerBanner": "Texto del pie de página",
+    "language": "Idioma preferido",
+    "timezone": "Desfase horario (horas)",
+    "mediaEntryPath": "Ruta de entrada de medios",
+    "limitReferrerHost": "Lista de dominios de referencia permitidos",
+    "imageSizeLimit": "Límite de tamaño de subida",
+    "webpAutoConvert": "Convertir imágenes a WebP automáticamente",
+    "useSourceFileName": "Usar el nombre del archivo original",
+    "bannerText": "Texto",
+    "bannerUrl": "Enlace (opcional)",
+    "addBanner": "Añadir entrada de banner"
+  },
+  "chrome": {
+    "settings": "Ajustes",
+    "theme": "Tema",
+    "language": "Idioma",
+    "about": "Acerca de",
+    "signOut": "Cerrar sesión"
+  }
+}

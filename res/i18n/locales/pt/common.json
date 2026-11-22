@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "0721 Recursos"
+  },
+  "nav": {
+    "portal": "Portal",
+    "users": "Usuários",
+    "settings": "Configurações"
+  },
+  "actions": {
+    "upload": "Enviar",
+    "refresh": "Atualizar",
+    "delete": "Excluir",
+    "copyLink": "Copiar link",
+    "copied": "Link copiado",
+    "cancel": "Cancelar",
+    "save": "Salvar",
+    "saved": "Salvo",
+    "create": "Criar",
+    "confirm": "Confirmar",
+    "retry": "Tentar novamente",
+    "close": "Fechar",
+    "loadMore": "Carregar mais",
+    "logout": "Sair",
+    "add": "Adicionar",
+    "remove": "Remover"
+  },
+  "status": {
+    "loading": "Carregando",
+    "error": "Algo deu errado",
+    "empty": "Nada por aqui ainda",
+    "admin": "Administrador",
+    "member": "Usuário",
+    "total": "{count} no total",
+    "version": "Versão {version}"
+  },
+  "auth": {
+    "title": "Entrar",
+    "subtitle": "Continuar para o 0721",
+    "failed": "Nome de usuário ou senha inválidos"
+  },
+  "portal": {
+    "title": "Imagens",
+    "empty": "Nenhum arquivo ainda — envie o primeiro com o botão +",
+    "uploading": "Enviando {name}",
+    "uploadFailed": "Falha no envio",
+    "deleteConfirm": "Excluir este arquivo? O link público deixará de funcionar.",
+    "openOriginal": "Abrir original"
+  },
+  "users": {
+    "title": "Usuários",
+    "empty": "Nenhum usuário",
+    "createTitle": "Criar usuário",
+    "username": "Nome de usuário",
+    "password": "Senha",
+    "displayName": "Nome de exibição",
+    "role": "Função",
+    "created": "Criado em",
+    "deleteConfirm": "Excluir o usuário {name}?",
+    "conflict": "Esse nome de usuário já está em uso."
+  },
+  "settings": {
+    "title": "Configurações do site",
+    "saved": "Configurações salvas",
+    "saveFailed": "Falha ao salvar",
+    "strictHint": "Salvar substitui todo o documento de configuração.",
+    "sectionPortal": "Portal",
+    "sectionRouter": "Roteador",
+    "sectionUpload": "Envio",
+    "titleSuffix": "Título do site",
+    "footerBanner": "Texto do rodapé",
+    "language": "Idioma preferido",
+    "timezone": "Fuso horário (horas)",
+    "mediaEntryPath": "Caminho de entrada de mídia",
+    "limitReferrerHost": "Lista de hosts de referência permitidos",
+    "imageSizeLimit": "Limite de tamanho de envio",
+    "webpAutoConvert": "Converter imagens para WebP automaticamente",
+    "useSourceFileName": "Manter o nome do arquivo original",
+    "bannerText": "Texto",
+    "bannerUrl": "Link (opcional)",
+    "addBanner": "Adicionar entrada de banner"
+  },
+  "chrome": {
+    "settings": "Ajustes",
+    "theme": "Tema",
+    "language": "Idioma",
+    "about": "Sobre",
+    "signOut": "Sair"
+  }
+}

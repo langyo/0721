@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "0721 リソース"
+  },
+  "nav": {
+    "portal": "ポータル",
+    "users": "ユーザー",
+    "settings": "設定"
+  },
+  "actions": {
+    "upload": "アップロード",
+    "refresh": "更新",
+    "delete": "削除",
+    "copyLink": "リンクをコピー",
+    "copied": "リンクをコピーしました",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "saved": "保存しました",
+    "create": "作成",
+    "confirm": "確認",
+    "retry": "再試行",
+    "close": "閉じる",
+    "loadMore": "さらに読み込む",
+    "logout": "ログアウト",
+    "add": "追加",
+    "remove": "削除"
+  },
+  "status": {
+    "loading": "読み込み中",
+    "error": "問題が発生しました",
+    "empty": "まだ何もありません",
+    "admin": "管理者",
+    "member": "ユーザー",
+    "total": "全 {count} 件",
+    "version": "バージョン {version}"
+  },
+  "auth": {
+    "title": "ログイン",
+    "subtitle": "0721 へ続行",
+    "failed": "ユーザー名またはパスワードが違います"
+  },
+  "portal": {
+    "title": "画像",
+    "empty": "ファイルがありません。右上の + から最初の 1 件をアップロード",
+    "uploading": "{name} をアップロード中",
+    "uploadFailed": "アップロードに失敗しました",
+    "deleteConfirm": "このファイルを削除しますか？公開リンクは失効します。",
+    "openOriginal": "オリジナルを開く"
+  },
+  "users": {
+    "title": "ユーザー",
+    "empty": "ユーザーがいません",
+    "createTitle": "ユーザー作成",
+    "username": "ユーザー名",
+    "password": "パスワード",
+    "displayName": "表示名",
+    "role": "役割",
+    "created": "作成日時",
+    "deleteConfirm": "ユーザー {name} を削除しますか？",
+    "conflict": "そのユーザー名は既に使われています。"
+  },
+  "settings": {
+    "title": "サイト設定",
+    "saved": "設定を保存しました",
+    "saveFailed": "保存に失敗しました",
+    "strictHint": "保存すると設定ドキュメント全体を置き換えます。",
+    "sectionPortal": "ポータル",
+    "sectionRouter": "ルーター",
+    "sectionUpload": "アップロード",
+    "titleSuffix": "サイトタイトル",
+    "footerBanner": "フッターバナー",
+    "language": "既定の言語",
+    "timezone": "タイムゾーンオフセット（時間）",
+    "mediaEntryPath": "メディアルーターエントリ",
+    "limitReferrerHost": "リファラーホストのホワイトリスト",
+    "imageSizeLimit": "アップロードサイズ制限",
+    "webpAutoConvert": "WebP 形式へ自動変換する",
+    "useSourceFileName": "元のファイル名を使用する",
+    "bannerText": "テキスト",
+    "bannerUrl": "リンク（任意）",
+    "addBanner": "バナー項目を追加"
+  },
+  "chrome": {
+    "settings": "設定",
+    "theme": "テーマ",
+    "language": "言語",
+    "about": "このアプリについて",
+    "signOut": "ログアウト"
+  }
+}

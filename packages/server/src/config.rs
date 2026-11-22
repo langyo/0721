@@ -20,8 +20,10 @@ pub const DEFAULT_LISTEN: SocketAddr =
 /// matching the legacy `MEDIA_DIR` / `MEDIA_CACHE_DIR` semantics.
 pub const DEFAULT_MEDIA_ROOT: &str = "data";
 
-/// Default directory of the placeholder static site.
-pub const DEFAULT_STATIC_DIR: &str = "res/website";
+/// Default directory of the web UI dist (the DEV lane: without the
+/// `embedded-frontend` feature the server reads the tree from disk at
+/// request time; with it the dist is compiled in and this is unused).
+pub const DEFAULT_STATIC_DIR: &str = "dist/webui";
 
 /// Default concurrent upload-pipeline slots (the legacy limit was 4).
 pub const DEFAULT_UPLOAD_CONCURRENCY: usize = 4;
@@ -119,7 +121,7 @@ pub struct Config {
     pub jwt_secret: String,
     /// Root of the blob directories (`media/`, `media-cache/`).
     pub media_root: PathBuf,
-    /// Directory of the placeholder static site.
+    /// Directory of the web UI dist (dev mode; see [`DEFAULT_STATIC_DIR`]).
     pub static_dir: PathBuf,
     /// Concurrent upload-pipeline slots.
     pub upload_concurrency: usize,

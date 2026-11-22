@@ -26,9 +26,12 @@ A simple engine for image hosting written in Rust.
 - Netdisk-ready metadata schema (kinds, directories, soft delete, shares)
 - Basic account system (admin-gated user management)
 - Site configuration stored in the database — no restart to apply
-- Internationalization
+- hikari web UI (Vue 3 + TypeScript): portal timeline with upload
+  progress, user roster, strict site settings, theme (light/dark/auto +
+  palettes) — embedded into the release binary
+- Internationalization (JSON catalogs, 12 locales, en + zh-Hans baselines)
 - Deploy via Docker Compose
-- Written in pure Rust
+- Written in Rust with a TypeScript frontend
 
 ## Deploy
 
@@ -92,14 +95,14 @@ required variable or an unparseable value refuses to start):
 | `JWT_SECRET` (container-side; compose sets it from `I0721_JWT_SECRET`) | required | HS256 secret for the transition-era tokens |
 | `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
 | `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it) |
-| `I0721_STATIC_DIR` | `res/website` | placeholder static site directory |
+| `I0721_STATIC_DIR` | `dist/webui` | web UI dist directory (dev mode; the default build embeds the dist) |
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |
 | `I0721_LOG` | `i0721_server=info,tower_http=warn` | tracing filter |
 | `I0721_SEED_ADMIN_PASSWORD` | `admin` | first-boot admin password (empty user table only) |
 | `I0721_TRUSTED_PROXIES` | *(empty)* | CIDR list whose `X-Forwarded-For` is honored for login throttling; empty = never trust the header |
 
 The site configuration (the old `Config.toml`) lives in the `settings`
-table and is edited through the admin API (`GET/PUT /api/v1/settings`) —
+table and is edited through the admin RPC lane (`settings.get` / `settings.put`) —
 changes apply on the next request, no container restart:
 
 ```json
@@ -139,21 +142,66 @@ Two caveats worth knowing:
 
 ## API sketch
 
-- `GET /api/health`
-- `POST /api/v1/auth/login` · `GET /api/v1/auth/verify` · `POST /api/v1/auth/refresh` — password + JWT (15-day tokens, 5 logins/min/IP)
-- `GET /api/v1/files` · `POST /api/v1/files` (multipart `file`, optional `?name=`) · `PATCH /api/v1/files/{id}` · `DELETE /api/v1/files/{id}` (soft delete)
-- `GET /api/v1/users` · `POST /api/v1/users` · `DELETE /api/v1/users/{id}` — admin role required
-- `GET /api/v1/settings` · `PUT /api/v1/settings` — admin role required
+Two lanes share the surface. The primary lane is the strict WebSocket
+JSON-RPC 2.0 endpoint **`/api/rpc`** (GET = WS upgrade; POST on the same
+path and method table = HTTP fallback) — the webui's transport. The
+REST lane is a deliberate whitelist for what a JSON control lane cannot
+carry (session cookies, binary bodies, probes).
+
+**JSON-RPC methods (`/api/rpc`)** — auth = the httpOnly session cookie
+(browsers); `Authorization: Bearer`, `Sec-WebSocket-Protocol: jwt.<t>`
+and `?token=` stay open for non-browser clients, tried in that order:
+
+- `auth.verify` — the session's user projection
+- `files.list {offset, limit}` · `files.update {id, name}` · `files.delete {id}` (owner-or-admin)
+- `users.list {offset, limit}` · `users.create {username, password, display_name?, role?}` · `users.delete {id}` — admin role required
+- `settings.get` · `settings.put` — admin role required; `put` takes the COMPLETE strict document (missing sections/leaves → error, never a silent default reset)
+
+**Transport**: the webui prefers the WebSocket (heartbeat + latency);
+the HTTP POST fallback on the same method map rides the session cookie.
+The WS upgrade carries a ONE-TIME admission ticket in its `?token=`
+slot: minted by `POST /api/v1/auth/ws-ticket` (≤30 s, user-bound),
+consumed by the opening itself, worth exactly one socket — a leaked
+ticket has bounded value, and the session JWT never rides a URL.
+(Declared deviation: the credential extractor exists twice —
+`api/auth.rs` for REST and `rpc.rs` for the WS/POST lanes — an
+intentional dual-write pending a shared auth module; both keep the
+same four-channel order.)
+
+Error codes: the JSON-RPC family plus `-32005` auth/permission,
+`-32006` not found, `-32007` conflict, `-32008` too large, `-32009`
+deferred-ops disabled (this instance serves no `ops.*`).
+
+**REST whitelist**:
+
+- `GET /api/health` — probe / container healthcheck
+- `POST /api/v1/auth/login` — password login; plants the `i0721-token` httpOnly cookie (the body carries NO token)
+- `POST /api/v1/auth/refresh` — cookie rotation (Set-Cookie needs HTTP, so refresh lives here, not on the RPC table)
+- `POST /api/v1/auth/logout` — expires the cookie and supersedes all outstanding tokens
+- `POST /api/v1/auth/ws-ticket` — mints the one-time WebSocket admission ticket
+- `POST /api/v1/files` — multipart `file` upload (binary + progress events; optional `?name=`)
 - `GET /media/{key}[?thumbnail=true]` — the public path legacy image links depend on (referrer allow-list honored)
 
 ## Debug
 
-`just fetch` once to stage the shared recipes, then `just gate`
-(fmt → clippy → test → `cargo deny`). This is the same lane the CI
-dispatch workflow runs; it needs no external services.
+`just fetch` once to stage the shared recipes, then `just gate` — the
+full dual-side lane: webui build → rust (fmt → clippy → test →
+`cargo deny`) → vitest → TS-contract staleness → i18n completeness. It
+needs no external services (the PostgreSQL lane stays opt-in).
+
+The web UI lives in `packages/webui` (pnpm workspace): `just webui`
+builds `dist/webui`, `just webui-test` runs vitest, `just webui-serve`
+previews the built dist. The server embeds that dist at compile time
+(feature `embedded-frontend`, on by default — build with
+`--no-default-features` for a pure-API dev loop; the on-disk dev lane
+then reads `I0721_STATIC_DIR`, default `dist/webui`).
+
+The Rust→TS bindings under `packages/webui/src/types` are generated by
+ts-rs (`just webui-types`); `just webui-types-check` fails the gate
+when they drift. Locale catalogs live under `res/i18n/locales` and are
+enforced by `just i18n-check`.
 
 The opt-in PostgreSQL lane (`just pg-test`) runs the `pg_*` store tests
 against a scratch database — fail-closed when
 `I0721_TEST_PG=1 I0721_DATABASE_URL=…` is set (connection or migration
-failures panic instead of skipping). The hikari webui wave will bring
-the new frontend dev lane.
+failures panic instead of skipping).

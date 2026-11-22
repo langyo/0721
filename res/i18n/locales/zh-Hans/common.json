@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "0721 资源站"
+  },
+  "nav": {
+    "portal": "门户",
+    "users": "用户",
+    "settings": "配置"
+  },
+  "actions": {
+    "upload": "上传",
+    "refresh": "刷新",
+    "delete": "删除",
+    "copyLink": "复制链接",
+    "copied": "链接已复制",
+    "cancel": "取消",
+    "save": "保存",
+    "saved": "已保存",
+    "create": "创建",
+    "confirm": "确认",
+    "retry": "重试",
+    "close": "关闭",
+    "loadMore": "加载更多",
+    "logout": "退出登录",
+    "add": "添加",
+    "remove": "移除"
+  },
+  "status": {
+    "loading": "加载中",
+    "error": "出了点问题",
+    "empty": "这里还什么都没有",
+    "admin": "管理员",
+    "member": "用户",
+    "total": "共 {count} 项",
+    "version": "版本 {version}"
+  },
+  "auth": {
+    "title": "登录",
+    "subtitle": "继续前往 0721",
+    "failed": "用户名或密码错误"
+  },
+  "portal": {
+    "title": "图片",
+    "empty": "还没有文件——点右上角加号上传第一个",
+    "uploading": "正在上传 {name}",
+    "uploadFailed": "上传失败",
+    "deleteConfirm": "删除这个文件？公开链接将随之失效。",
+    "openOriginal": "查看原图"
+  },
+  "users": {
+    "title": "用户",
+    "empty": "暂无用户",
+    "createTitle": "新建用户",
+    "username": "用户名",
+    "password": "密码",
+    "displayName": "显示名称",
+    "role": "角色",
+    "created": "创建时间",
+    "deleteConfirm": "删除用户 {name}？",
+    "conflict": "该用户名已被占用。"
+  },
+  "settings": {
+    "title": "站点配置",
+    "saved": "配置已保存",
+    "saveFailed": "保存失败",
+    "strictHint": "保存会整体替换配置文档。",
+    "sectionPortal": "门户",
+    "sectionRouter": "路由",
+    "sectionUpload": "上传",
+    "titleSuffix": "站点标题",
+    "footerBanner": "页脚文本",
+    "language": "首选语言",
+    "timezone": "时区偏移（小时）",
+    "mediaEntryPath": "媒体路由入口",
+    "limitReferrerHost": "来源域名白名单",
+    "imageSizeLimit": "上传大小限制",
+    "webpAutoConvert": "自动转换为 WebP 格式",
+    "useSourceFileName": "使用源文件名",
+    "bannerText": "文本",
+    "bannerUrl": "链接（可选）",
+    "addBanner": "添加页脚条目"
+  },
+  "chrome": {
+    "settings": "设置",
+    "theme": "主题",
+    "language": "语言",
+    "about": "关于",
+    "signOut": "退出登录"
+  }
+}
