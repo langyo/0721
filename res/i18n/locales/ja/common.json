@@ -5,7 +5,10 @@
   "nav": {
     "portal": "ポータル",
     "users": "ユーザー",
-    "settings": "設定"
+    "settings": "設定",
+    "groupContent": "コンテンツ",
+    "groupAccess": "接続",
+    "groupSystem": "システム"
   },
   "actions": {
     "upload": "アップロード",
@@ -155,5 +158,21 @@
     "revoke": "取り消し",
     "revokeConfirm": "キー {name} を取り消しますか？",
     "revoked": "取り消しました"
+  },
+  "menu": {
+    "account": "アカウント"
+  },
+  "account": {
+    "displayName": "表示名",
+    "username": "ユーザー名",
+    "role": "ロール"
+  },
+  "about": {
+    "tagline": "ネットドライブと画像ホスティング",
+    "creditsFrom": "",
+    "creditsJoiner": "より、",
+    "creditsRole": "が制作",
+    "author": "伊欧",
+    "copyright": "Celestia Island"
   }
 }

@@ -5,7 +5,10 @@
   "nav": {
     "portal": "Портал",
     "users": "Пользователи",
-    "settings": "Конфигурация"
+    "settings": "Конфигурация",
+    "groupContent": "Содержимое",
+    "groupAccess": "Доступ",
+    "groupSystem": "Система"
   },
   "actions": {
     "upload": "Загрузить",
@@ -155,5 +158,21 @@
     "revoke": "Отозвать",
     "revokeConfirm": "Отозвать ключ {name}?",
     "revoked": "Отозван"
+  },
+  "menu": {
+    "account": "Аккаунт"
+  },
+  "account": {
+    "displayName": "Отображаемое имя",
+    "username": "Имя пользователя",
+    "role": "Роль"
+  },
+  "about": {
+    "tagline": "Сетевой диск и хостинг изображений",
+    "creditsFrom": "От ",
+    "creditsJoiner": ", автор ",
+    "creditsRole": "",
+    "author": "伊欧",
+    "copyright": "Celestia Island"
   }
 }

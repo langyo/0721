@@ -1,9 +1,15 @@
 <script setup lang="ts">
-// The root shell is one router-view: the login route renders bare (its
-// own centered card), every authed route renders inside AppShell, which
-// owns the HkAdminHeader action row and the settings dialog.
+import { HkToast } from "@celestia-island/hikari";
 </script>
+
+<!--
+  The root is one router-view plus the family toast outlet: the login
+  route renders bare (its own centered card), every authed route renders
+  inside AppShell (the family admin shell). Mounting HkToast here means
+  any surface — shell or view — can useToast() without per-page outlets.
+-->
 
 <template>
   <RouterView />
+  <HkToast />
 </template>

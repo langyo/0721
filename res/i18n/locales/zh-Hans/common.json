@@ -5,7 +5,10 @@
   "nav": {
     "portal": "门户",
     "users": "用户",
-    "settings": "配置"
+    "settings": "配置",
+    "groupContent": "内容",
+    "groupAccess": "接入",
+    "groupSystem": "管理"
   },
   "actions": {
     "upload": "上传",
@@ -155,5 +158,21 @@
     "revoke": "吊销",
     "revokeConfirm": "吊销密钥 {name}？",
     "revoked": "已吊销"
+  },
+  "menu": {
+    "account": "账户"
+  },
+  "account": {
+    "displayName": "显示名称",
+    "username": "用户名",
+    "role": "角色"
+  },
+  "about": {
+    "tagline": "网盘与图床资源服务",
+    "creditsFrom": "来自 ",
+    "creditsJoiner": "，由 ",
+    "creditsRole": " 主创",
+    "author": "伊欧",
+    "copyright": "Celestia Island"
   }
 }

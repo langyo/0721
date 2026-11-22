@@ -1,37 +1,58 @@
 <script setup lang="ts">
 import {
-  HkAdaptiveTabs,
   HkAdminHeader,
+  HkAdminShell,
+  HkAvatar,
+  HkButton,
   HkIconButton,
+  HkMenu,
+  HkModal,
+  HkStatusBar,
+  HSidebar,
   useChromeActionSize,
+  type HkMenuItem,
 } from "@celestia-island/hikari";
-import { Settings, Users as UsersIcon, Images, SlidersHorizontal, Unplug, FolderOpen, Clock, Link2, KeyRound } from "lucide-vue-next";
-import { computed, ref, type Component } from "vue";
+import {
+  Clock,
+  FolderOpen,
+  Images,
+  KeyRound,
+  Link2,
+  LogOut,
+  Settings,
+  SlidersHorizontal,
+  Unplug,
+  Users as UsersIcon,
+} from "lucide-vue-next";
+import { computed, ref, type Component, type VNode } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import SettingsDialog from "@/components/SettingsDialog.vue";
-import ConnectionStatusTag from "@/components/ConnectionStatusTag.vue";
-import { provideActionBar } from "@/composables/useActionBar";
 import { LOCALE_OPTIONS, setLocale } from "@/i18n";
 import { useAuthStore } from "@/stores/auth";
+import { useConnectionProbe } from "@/composables/useConnectionProbe";
+import { useEngineHealth } from "@/composables/useEngineHealth";
 
 /**
- * The authed shell — the chest page-chrome anatomy on a 3-page app:
+ * The authed shell — the family admin console anatomy (the ayane/chest
+ * blueprint):
  *
- *  - HkAdminHeader owns the action row. Pages register their buttons
- *    through the action-bar composables (`useActionBar` /
- *    `usePageCreateAction` / `usePageRefresh`); the plus (create), the
- *    refresh and any custom affordance render in the canonical slot
- *    order [create][filter][search][refresh][window] — the slot law's
- *    single source is hikari's page-chrome design note plus
- *    useActionBar's SLOT_RANK table.
- *  - The header's END position (its theme-toggle slot, where chest mounts
- *    the unified settings entry) carries the settings gear — the same
- *    ghost chrome as every other header action.
- *  - Primary navigation rides HkAdaptiveTabs under the header: ≥768 the
- *    pill strip, <768 the same value contract collapses into a
- *    sheet-anchored picker (the family's mobile threshold).
+ *  - `HkAdminShell` owns the frame AND the page action bar: it hands
+ *    the header slot the ranked `actions` (slot order
+ *    [create][filter][search][refresh][window] — the law lives in
+ *    hikari's PageActionSlot) plus the page-owned `center` renderer.
+ *    Views register through `useActionBar()` (upstream); nothing in
+ *    this layout touches the bar anymore.
+ *  - The sidebar is the family grouped nav (`HSidebar` + `HkMenu`):
+ *    themed collapsible sections — content / access / system — with
+ *    the system group mounted only for admins.
+ *  - The header carries the identity face: avatar menu → the account
+ *    window (HkModal), the language cascade, logout, and the gear that
+ *    opens the family settings dialog (theme / language / about).
+ *  - The footer is the family `HkStatusBar`: the panel version + the
+ *    LIVE engine identity (from /api/health) + the transport probe
+ *    (WS tier, heartbeat latency, retry round) with tap-to-retry.
  */
 
 const { t, locale } = useI18n();
@@ -39,75 +60,146 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-// The unified page action bar: one provider per shell; every view
-// registers its own header buttons for exactly as long as it is mounted.
-const pageBar = provideActionBar();
+const settingsOpen = ref(false);
+const accountOpen = ref(false);
+const chromeSize = useChromeActionSize();
+
+const { result: probe, retryNow } = useConnectionProbe();
+const { health } = useEngineHealth();
 
 const headerTitle = computed(() =>
   typeof route.meta.titleKey === "string" ? t(route.meta.titleKey) : "",
 );
 
-interface NavTab {
+// ── Sidebar: grouped nav (the console's table of contents) ───────────
+
+interface NavItem {
   key: string;
-  label: string;
+  path: string;
+  labelKey: string;
   icon: Component;
-  adminOnly: boolean;
 }
 
-const navTabs = computed<NavTab[]>(() => [
-  { key: "/", label: t("common.nav.portal"), icon: Images, adminOnly: false },
-  { key: "/files", label: t("common.files.title"), icon: FolderOpen, adminOnly: false },
-  { key: "/timeline", label: t("common.files.timeline"), icon: Clock, adminOnly: false },
-  { key: "/shares", label: t("common.files.myShares"), icon: Link2, adminOnly: false },
-  { key: "/keys", label: t("common.keys.title"), icon: KeyRound, adminOnly: false },
-  { key: "/users", label: t("common.nav.users"), icon: UsersIcon, adminOnly: true },
-  { key: "/settings", label: t("common.nav.settings"), icon: SlidersHorizontal, adminOnly: true },
-  { key: "/providers", label: t("common.providers.title"), icon: Unplug, adminOnly: true },
-]);
+const CONTENT_ITEMS: NavItem[] = [
+  { key: "portal", path: "/", labelKey: "common.nav.portal", icon: Images },
+  { key: "files", path: "/files", labelKey: "common.files.title", icon: FolderOpen },
+  { key: "timeline", path: "/timeline", labelKey: "common.files.timeline", icon: Clock },
+  { key: "shares", path: "/shares", labelKey: "common.files.myShares", icon: Link2 },
+];
 
-const visibleTabs = computed(() =>
-  navTabs.value
-    .filter((tab) => !tab.adminOnly || auth.isAdmin)
-    .map((tab) => ({ key: tab.key, label: tab.label, icon: tab.icon })),
+const ACCESS_ITEMS: NavItem[] = [
+  { key: "keys", path: "/keys", labelKey: "common.keys.title", icon: KeyRound },
+];
+
+const SYSTEM_ITEMS: NavItem[] = [
+  { key: "users", path: "/users", labelKey: "common.users.title", icon: UsersIcon },
+  { key: "providers", path: "/providers", labelKey: "common.providers.title", icon: Unplug },
+  { key: "site-settings", path: "/settings", labelKey: "common.nav.settings", icon: SlidersHorizontal },
+];
+
+function toMenuItem(item: NavItem): HkMenuItem {
+  return { key: item.key, label: t(item.labelKey), icon: item.icon };
+}
+
+const menuItems = computed<HkMenuItem[]>(() => {
+  const groups: { id: string; labelKey: string; items: NavItem[] }[] = [
+    { id: "content", labelKey: "common.nav.groupContent", items: CONTENT_ITEMS },
+    { id: "access", labelKey: "common.nav.groupAccess", items: ACCESS_ITEMS },
+  ];
+  if (auth.isAdmin) {
+    groups.push({ id: "system", labelKey: "common.nav.groupSystem", items: SYSTEM_ITEMS });
+  }
+  return groups.map((group) => ({
+    key: `group:${group.id}`,
+    label: t(group.labelKey),
+    children: group.items.map(toMenuItem),
+  }));
+});
+
+const activeKey = computed(() => {
+  const path = route.path;
+  if (path === "/") return "portal";
+  const hit = [...CONTENT_ITEMS, ...ACCESS_ITEMS, ...SYSTEM_ITEMS].find(
+    (item) => item.path !== "/" && path.startsWith(item.path),
+  );
+  return hit?.key ?? "portal";
+});
+
+function navigate(key: string, close?: () => void): void {
+  const all = [...CONTENT_ITEMS, ...ACCESS_ITEMS, ...(auth.isAdmin ? SYSTEM_ITEMS : [])];
+  const target = all.find((item) => item.key === key);
+  if (target) void router.push(target.path);
+  close?.();
+}
+
+// ── Header: identity face + settings gear ────────────────────────────
+
+const displayName = computed(() => auth.user?.display_name || auth.user?.username || "");
+const accountName = computed(() => auth.user?.username ?? "");
+const roleLabel = computed(() =>
+  auth.isAdmin ? t("common.status.admin") : t("common.status.member"),
 );
-
-const activeTab = computed(() => (route.path === "/" ? "/" : route.path));
-
-function onTabSelect(key: string) {
-  void router.push(key);
-}
-
-const settingsOpen = ref(false);
-const chromeSize = useChromeActionSize();
 const settingsLabel = computed(() => t("common.chrome.settings"));
 
-async function handleLogout() {
+const localeOptions = LOCALE_OPTIONS.value.map((o) => ({ code: o.code, label: o.label }));
+
+async function handleLogout(): Promise<void> {
   settingsOpen.value = false;
-  auth.logout();
+  accountOpen.value = false;
+  await auth.logout();
   await router.push({ name: "login" });
 }
 
-const localeOptions = LOCALE_OPTIONS.value.map((o) => ({ code: o.code, label: o.label }));
+/** The shell hands the header a page-owned centre RENDERER (or none);
+ * render it through a one-off functional node so template slots stay
+ * declarative. */
+function centerNode(center?: () => VNode[]): Component | null {
+  return center ? (() => center()) as Component : null;
+}
+
+// ── Footer: the family status bar over the transport probe ───────────
+
+const appVersion: string = __APP_VERSION__;
+
+const statusBarState = computed<"connected" | "reconnecting" | "disconnected" | "connecting">(
+  () => {
+    switch (probe.value.state) {
+      case "connected":
+        return "connected";
+      case "connecting":
+        return "connecting";
+      case "reconnecting":
+        return "reconnecting";
+      default:
+        // disconnected | failed collapse: the bar has no failed lamp.
+        return "disconnected";
+    }
+  },
+);
 </script>
 
 <template>
-  <div class="app-shell">
-    <header class="app-shell-header">
+  <HkAdminShell :sidebar-collapsed="false" :content-key="route.path">
+    <template #header="{ actions, center }">
       <HkAdminHeader
         :title="headerTitle"
-        :username="auth.user?.display_name ?? auth.user?.username ?? ''"
-        :actions="pageBar.actions.value.flatMap((renderer) => renderer())"
+        :username="displayName"
+        :user-email="accountName"
+        avatar-action="menu"
+        :avatar-menu-label="t('common.menu.account')"
+        :logout-label="t('common.actions.logout')"
         :locale-options="localeOptions"
         :current-locale="locale"
-        :logout-label="t('common.actions.logout')"
+        :actions="actions"
+        :aria-label="t('common.chrome.settings')"
         :avatar-trigger-label="t('common.chrome.settings')"
         :locale-menu-label="t('common.chrome.language')"
         @locale-select="(code: string) => setLocale(code)"
         @logout="handleLogout"
       >
         <template #theme-toggle>
-          <!-- The unified settings entry (chest's end-cluster position):
-               theme + language + about + sign-out live behind this gear. -->
+          <!-- The unified settings entry (the end-cluster position):
+               theme + language + about live behind this gear. -->
           <HkIconButton
             :size="chromeSize"
             variant="ghost"
@@ -118,56 +210,119 @@ const localeOptions = LOCALE_OPTIONS.value.map((o) => ({ code: o.code, label: o.
             <template #icon><Settings :size="16" /></template>
           </HkIconButton>
         </template>
+        <template v-if="center" #center>
+          <component :is="centerNode(center)" />
+        </template>
+        <template #avatar-modal="{ open, onUpdateOpen }">
+          <HkModal
+            :model-value="open"
+            :title="t('common.menu.account')"
+            width="26rem"
+            @update:model-value="(v: boolean) => onUpdateOpen(v)"
+          >
+            <div class="account-window">
+              <HkAvatar :name="displayName" size="lg" />
+              <div class="account-rows">
+                <div class="account-row">
+                  <span class="account-label">{{ t("common.account.displayName") }}</span>
+                  <span>{{ displayName || "—" }}</span>
+                </div>
+                <div class="account-row">
+                  <span class="account-label">{{ t("common.account.username") }}</span>
+                  <span class="account-mono">{{ accountName || "—" }}</span>
+                </div>
+                <div class="account-row">
+                  <span class="account-label">{{ t("common.account.role") }}</span>
+                  <span class="account-badge">{{ roleLabel }}</span>
+                </div>
+              </div>
+              <div class="account-actions">
+                <HkButton variant="danger" :aria-label="t('common.actions.logout')" @click="handleLogout">
+                  <template #icon><LogOut :size="16" /></template>
+                  {{ t("common.actions.logout") }}
+                </HkButton>
+              </div>
+            </div>
+          </HkModal>
+        </template>
       </HkAdminHeader>
-      <nav class="app-shell-nav" :aria-label="t('common.nav.portal')">
-        <HkAdaptiveTabs :model-value="activeTab" :tabs="visibleTabs" @update:model-value="onTabSelect" />
-      </nav>
-    </header>
-    <main class="app-shell-content">
-      <RouterView v-slot="{ Component: view }">
-        <component :is="view" />
-      </RouterView>
-    </main>
-    <footer class="app-shell-footer">
-      <!-- The bottom-left connection light: the transport probe (live WS
-           state + heartbeat latency); tap-to-retry rides the probe. -->
-      <ConnectionStatusTag source="transport" />
-    </footer>
-    <SettingsDialog v-model="settingsOpen" @logout="handleLogout" />
-  </div>
+    </template>
+
+    <template #sidebar="{ onNavigate, inDrawer, collapsed }">
+      <HSidebar :width="inDrawer ? '100%' : '224px'" :collapsed="collapsed ?? false">
+        <HkMenu
+          variant="sidebar"
+          open
+          default-expand-groups
+          title="0721"
+          :items="menuItems"
+          :active-key="activeKey"
+          @select="(key: string) => navigate(key, onNavigate)"
+        />
+      </HSidebar>
+    </template>
+
+    <template #content>
+      <RouterView />
+    </template>
+
+    <template #footer>
+      <HkStatusBar
+        :version="appVersion"
+        :engine-version="health?.engineVersion ?? null"
+        :engine-build-hash="health?.engineBuildHash ?? undefined"
+        :connection-status="statusBarState"
+        :latency-ms="probe.latencyMs ?? undefined"
+        :transport-tier="probe.transportTier"
+        :attempt-number="probe.attemptNumber"
+        :countdown="probe.countdown"
+        @retry="retryNow"
+      />
+    </template>
+  </HkAdminShell>
+
+  <SettingsDialog v-model="settingsOpen" />
 </template>
 
 <style scoped lang="scss">
-.app-shell {
-  min-height: 100vh;
+.account-window {
   display: flex;
   flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+  padding-block: 0.5rem;
 }
 
-.app-shell-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.app-shell-nav {
+.account-rows {
   display: flex;
-  justify-content: center;
-  padding: 0.25rem 1rem 0.5rem;
-}
-
-.app-shell-content {
-  flex: 1;
+  flex-direction: column;
+  gap: 0.5rem;
   width: 100%;
-  max-width: 72rem;
-  margin: 0 auto;
-  padding: 1rem 1rem 3rem;
 }
 
-.app-shell-footer {
-  position: fixed;
-  inset-inline-start: 0.75rem;
-  inset-block-end: 0.75rem;
-  z-index: 20;
+.account-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  font-size: 0.9rem;
+}
+
+.account-label {
+  opacity: 0.65;
+}
+
+.account-mono {
+  font-family: var(--hk-font-mono, ui-monospace, monospace);
+}
+
+.account-badge {
+  font-weight: 600;
+}
+
+.account-actions {
+  margin-top: 0.25rem;
 }
 </style>

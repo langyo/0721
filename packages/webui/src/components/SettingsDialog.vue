@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import {
-  HkButton,
+  HkAboutBody,
   HkSettingsDialog,
   HkSettingsGroup,
   HkThemePanelContent,
+  type HAboutCredit,
+  type HAboutLink,
 } from "@celestia-island/hikari";
-import { Check, Info, Languages, LogOut, Palette } from "lucide-vue-next";
-import { onMounted, ref } from "vue";
+import { Check, Info, Languages, Palette } from "lucide-vue-next";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { health } from "@/api";
@@ -16,23 +18,23 @@ import type { HealthReport } from "@/types";
 /**
  * The chrome-level settings panel (every signed-in user): theme mode +
  * palette (hikari's own theme panel — light/dark/auto and the preset
- * rows), language, about, and the sign-out row. Site administration
- * lives on its own /settings route, admin-gated; this dialog is the
- * user-facing chrome the header gear opens.
+ * rows), language, and the family about body (HkAboutBody — the same
+ * identity hero / credits sentence / license rows every Celestia front
+ * end renders). Sign-out lives in the header's account window, not
+ * here. Site administration stays on its own /settings route,
+ * admin-gated.
  */
 
 defineProps<{ modelValue: boolean }>();
-const emit = defineEmits<{
-  "update:modelValue": [value: boolean];
-  logout: [];
-}>();
+const emit = defineEmits<{ "update:modelValue": [value: boolean] }>();
 
 const { t, locale } = useI18n();
 const report = ref<HealthReport | null>(null);
 const section = ref("theme");
 
 onMounted(() => {
-  // Fire-and-forget: the about pane degrades to the app name without it.
+  // Fire-and-forget: the about pane degrades to the panel version
+  // without it.
   void health().then((r) => {
     report.value = r;
   }).catch(() => undefined);
@@ -47,6 +49,20 @@ const sections = [
 function chooseLocale(code: string) {
   setLocale(code);
 }
+
+/** The credits sentence: organization first, author second — the
+ * family anatomy (accent names, localized runs). */
+const credits = computed<HAboutCredit[]>(() => [
+  { text: t("common.about.creditsFrom") },
+  { name: "Celestia Island", href: "https://celestia.world", face: "accent" },
+  { text: t("common.about.creditsJoiner") },
+  { name: t("common.about.author"), href: "https://github.com/langyo", face: "accent" },
+  { text: t("common.about.creditsRole") },
+]);
+
+const licenses: HAboutLink[] = [{ label: "Apache-2.0", href: "https://www.apache.org/licenses/LICENSE-2.0" }];
+
+const engineVersion = computed(() => report.value?.version ?? __APP_VERSION__);
 </script>
 
 <template>
@@ -83,16 +99,17 @@ function chooseLocale(code: string) {
     </template>
 
     <template #about>
-      <HkSettingsGroup :title="t('common.chrome.about')">
-        <p class="about-line">{{ t("common.app.name") }}</p>
-        <p v-if="report" class="about-line dim">
-          {{ t("common.status.version", { version: report.version }) }}
-        </p>
-        <HkButton variant="danger" :aria-label="t('common.chrome.signOut')" @click="emit('logout')">
-          <template #icon><LogOut :size="16" /></template>
-          {{ t("common.chrome.signOut") }}
-        </HkButton>
-      </HkSettingsGroup>
+      <!-- THE family about body — the same identity surface every
+           Celestia front end mounts (no decorative backdrop). -->
+      <HkAboutBody
+        app-name="0721"
+        :version="engineVersion"
+        logo-src="/logo.webp"
+        :tagline="t('common.about.tagline')"
+        :credits="credits"
+        :licenses="licenses"
+        :copyright="t('common.about.copyright')"
+      />
     </template>
   </HkSettingsDialog>
 </template>
@@ -133,14 +150,5 @@ function chooseLocale(code: string) {
 
 .locale-check {
   opacity: 0.9;
-}
-
-.about-line {
-  margin: 0 0 0.5rem;
-}
-
-.dim {
-  opacity: 0.7;
-  margin-bottom: 1rem;
 }
 </style>
