@@ -76,6 +76,9 @@ export function useConnectionProbe(): {
   }
 
   function retryNow(): void {
+    // Deliberately a no-op without a client: before login there is no
+    // probe client (the login face uses the fetch probe instead), and a
+    // silent no-op keeps the light's tap harmless in that window.
     sharedClient?.forceReconnect();
   }
 

@@ -2,13 +2,12 @@
 import type { UserDto } from "./UserDto";
 
 /**
- * The authenticated-session response.
+ * The authenticated-session response. The credential itself rides the
+ * httpOnly cookie the login/refresh handlers set — the body carries
+ * only the expiry and the user (a token in the body would hand the
+ * JWT straight back to any script on the page, defeating HttpOnly).
  */
 export type AuthSession = { 
-/**
- * The bearer token.
- */
-token: string, 
 /**
  * Token expiry (RFC 3339).
  */

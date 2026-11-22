@@ -16,8 +16,6 @@ vi.mock("@/api/client", () => ({
       this.status = status;
     }
   },
-  loadSession: () => null,
-  saveSession: vi.fn(),
   onUnauthorized: vi.fn(),
 }));
 
@@ -26,7 +24,6 @@ import { ApiError } from "@/api/client";
 import { createAppI18n } from "@/i18n";
 
 const session = {
-  token: "jwt-token",
   expires_at: "2026-12-01T00:00:00Z",
   user: {
     id: "0b5a0a48-8cb0-4b8c-9a4f-5d4d3a2f1c00",
@@ -77,9 +74,13 @@ describe("LoginView", () => {
     (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
     await flushPromises();
     expect(loginMock).toHaveBeenCalledWith({ username: "admin", password: "secret" });
-    // The store's session took hold (its persistence layer is the
-    // client module, mocked here) and the router left /login.
+    // The router left /login…
     expect(router.currentRoute.value.path).toBe("/");
+    // …and NOTHING session-shaped was persisted: the credential is the
+    // httpOnly cookie (server-planted); the page holds no token.
+    expect(localStorage.getItem("i0721-session")).toBeNull();
+    expect(localStorage.getItem("i0721-token")).toBeNull();
+    // (the locale preference is legitimate storage; session keys are not)
   });
 
   it("surfaces the localized invalid-credentials error on 401", async () => {

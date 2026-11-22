@@ -1,21 +1,35 @@
 import { RpcClient } from "@celestia-island/plana-rpc-client";
 
-import { loadSession } from "@/api/client";
-
 /**
  * The JSON-RPC transport singleton (the chest web-transport shape,
  * minus the Tauri branch — this is a browser-only app).
  *
+ * ## Where the credential lives
+ *
+ * The session token rides the **httpOnly cookie** the REST login plants
+ * (`i0721-token`): same-origin WebSocket and HTTP requests carry it
+ * automatically, and no script on the page can read it. This client
+ * therefore hands the RPC client a getToken that answers `null` —
+ * ALWAYS — so the client never falls back to its `?token=` URL channel
+ * (a JWT in a URL leaks into logs, history and proxies). The server
+ * keeps `?token=` and `Sec-WebSocket-Protocol: jwt.<t>` open for
+ * NON-browser clients; the webui production path is the cookie and
+ * nothing else.
+ *
  * One `RpcClient` from the family's plana-rpc-client rides the whole
  * app: lazy WebSocket to `/api/rpc` with the heartbeat protocol the
  * plana server pair speaks, HTTP POST fallback on the same method map,
- * progressive reconnect, and token injection through `getToken` (the
- * credential is read per attempt, so a login/logout flips the lane
- * without rebuilding the client).
- *
- * The token rides the `Sec-WebSocket-Protocol: jwt.<t>` channel (the
- * client's built-in mechanism): no query parameter, no cookie.
+ * and progressive reconnect.
  */
+
+/**
+ * The token source handed to the RPC client — deliberately inert.
+ * Pinned by transport.test.ts: if this ever returns a stored token
+ * again, the client would start putting JWTs into URLs.
+ */
+export function rpcGetToken(): string | null {
+  return null;
+}
 
 let unauthorizedHandler: (() => void) | null = null;
 
@@ -29,6 +43,6 @@ export function onRpcAuthLost(handler: () => void): void {
 export const rpcClient = new RpcClient({
   baseUrl: "",
   rpcPath: "/api/rpc",
-  getToken: () => loadSession()?.token ?? null,
+  getToken: rpcGetToken,
   onAuthLost: () => unauthorizedHandler?.(),
 });

@@ -1,10 +1,12 @@
 /**
- * The HTTP client for the `/api` surface.
+ * The HTTP client for the REST whitelist (login / refresh / logout /
+ * multipart upload / health).
  *
- * Every request carries the bearer token from the auth store's persistent
- * session; a 401 anywhere clears the session and bounces to /login (the
- * server invalidates tokens at the watermark — the client never tries to
- * outlive one).
+ * The session credential lives in the httpOnly cookie the login plants;
+ * it rides every same-origin request automatically — this client never
+ * touches a token (no Authorization header, no query parameter, no
+ * storage). A 401 anywhere clears the in-memory session and bounces to
+ * /login.
  */
 
 export class ApiError extends Error {
@@ -14,33 +16,6 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
     this.status = status;
-  }
-}
-
-/** The persisted session (token + user), read back at boot. */
-export interface StoredSession {
-  token: string;
-}
-
-const SESSION_KEY = "i0721-session";
-
-export function loadSession(): StoredSession | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredSession;
-    return typeof parsed.token === "string" && parsed.token ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-export function saveSession(session: StoredSession | null): void {
-  try {
-    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    else localStorage.removeItem(SESSION_KEY);
-  } catch {
-    // Private mode: the session survives for this tab only.
   }
 }
 
@@ -63,23 +38,19 @@ async function readError(response: Response): Promise<string> {
 export interface RequestOptions {
   method?: string;
   body?: unknown;
-  /** Skip the bearer header (the login call itself). */
-  anonymous?: boolean;
 }
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {};
-  if (!options.anonymous) {
-    const session = loadSession();
-    if (session) headers.Authorization = `Bearer ${session.token}`;
-  }
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   const response = await fetch(path, {
     method: options.method ?? (options.body !== undefined ? "POST" : "GET"),
     headers,
+    // same-origin: the session cookie rides along.
+    credentials: "same-origin",
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
-  if (response.status === 401 && !options.anonymous) {
+  if (response.status === 401) {
     unauthorizedHandler?.();
     throw new ApiError(401, "unauthorized");
   }
@@ -93,8 +64,9 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 
 /**
  * Multipart upload with per-request progress. `fetch` exposes no upload
- * progress events, so the upload lane rides XMLHttpRequest; the API shape
- * (reject with ApiError) matches apiFetch.
+ * progress events, so the upload lane rides XMLHttpRequest; the session
+ * cookie rides the same-origin request automatically. The REST whitelist
+ * keeps the binary body off the JSON control lane.
  */
 export function apiUpload(
   path: string,
@@ -102,10 +74,10 @@ export function apiUpload(
   onProgress?: (fraction: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const session = loadSession();
     const xhr = new XMLHttpRequest();
     xhr.open("POST", path);
-    if (session) xhr.setRequestHeader("Authorization", `Bearer ${session.token}`);
+    // No Authorization header, no token anywhere: same-origin cookie.
+    xhr.withCredentials = false;
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable && onProgress) {
         onProgress(event.loaded / event.total);
@@ -115,6 +87,7 @@ export function apiUpload(
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {
+        if (xhr.status === 401) unauthorizedHandler?.();
         let message = `HTTP ${xhr.status}`;
         try {
           const body = JSON.parse(xhr.responseText) as { error?: string };

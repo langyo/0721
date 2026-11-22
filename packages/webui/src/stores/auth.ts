@@ -2,26 +2,28 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
 import * as api from "@/api";
-import { loadSession, onUnauthorized, saveSession } from "@/api/client";
+import { onUnauthorized } from "@/api/client";
 import { setProbeClient } from "@/composables/useConnectionProbe";
 import { onRpcAuthLost } from "@/transport";
 import { rpcClient } from "@/transport";
 import type { UserDto } from "@/types";
 
 /**
- * The session store. The token persists in localStorage (15-day server
- * tokens — the legacy semantics); `restore()` verifies it at boot so a
- * stale token lands on /login instead of a broken console. A verified
- * session also (re)connects the JSON-RPC transport — the WS handshake
- * presents the token through the client's getToken hook.
+ * The session store — cookie-backed, memory-only.
+ *
+ * The credential lives in the httpOnly cookie the REST login plants;
+ * this store keeps only the USER projection in memory (nothing session-
+ * shaped is persisted: no localStorage key, no token the page could
+ * leak). A reload restores the session by proving the cookie over the
+ * RPC lane (`auth.verify`); a 401 anywhere drops the in-memory state
+ * and the router guard lands on /login.
  */
 export const useAuthStore = defineStore("auth", () => {
-  const token = ref<string | null>(loadSession()?.token ?? null);
   const user = ref<UserDto | null>(null);
-  /** True while restore() is proving the persisted token. */
+  /** True while restore() is proving the session cookie. */
   const restoring = ref(false);
 
-  const isAuthenticated = computed(() => token.value !== null);
+  const isAuthenticated = computed(() => user.value !== null);
   const isAdmin = computed(() => user.value?.role === "admin");
 
   function connectTransport(): void {
@@ -30,45 +32,46 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   async function login(username: string, password: string): Promise<UserDto> {
+    // The login plants the httpOnly cookie (same-origin from here on).
     const session = await api.login({ username, password });
-    token.value = session.token;
     user.value = session.user;
-    saveSession({ token: session.token });
     connectTransport();
     return session.user;
   }
 
   async function restore(): Promise<UserDto | null> {
-    if (!token.value) return null;
+    if (user.value !== null) return user.value;
     restoring.value = true;
     try {
+      // Proves the cookie: no token anywhere in this flow.
       user.value = await api.verify();
       connectTransport();
       return user.value;
     } catch {
-      // Stale/expired token: drop the session; the router guard sends
-      // the visitor to /login.
-      token.value = null;
+      // No cookie / expired cookie: nothing to clear client-side (the
+      // cookie is httpOnly); the router guard sends the visitor to
+      // /login, where the stale cookie costs nothing (verify failed).
       user.value = null;
-      saveSession(null);
       return null;
     } finally {
       restoring.value = false;
     }
   }
 
-  function logout(): void {
-    token.value = null;
+  async function logout(): Promise<void> {
+    // The cookie is httpOnly — only the server can clear it. The REST
+    // logout expires it AND supersedes every outstanding token at the
+    // watermark; failures still drop the local state (worst case the
+    // cookie dies of old age).
+    try {
+      await api.logout();
+    } catch {
+      // Server unreachable: proceed with the local drop.
+    }
     user.value = null;
-    saveSession(null);
-    // The installed RpcClient exposes no teardown; with getToken now
-    // answering null the socket dies on its next handshake/auth beat
-    // and the reconnect loop parks (the login face shows no light for
-    // the WS tier anyway).
   }
 
   return {
-    token,
     user,
     restoring,
     isAuthenticated,
@@ -83,6 +86,10 @@ export const useAuthStore = defineStore("auth", () => {
  *  after pinia): both the REST lane's 401 and the WS lane's auth close
  *  land in the same logout. */
 export function wireUnauthorizedLogout(store: ReturnType<typeof useAuthStore>): void {
-  onUnauthorized(() => store.logout());
-  onRpcAuthLost(() => store.logout());
+  onUnauthorized(() => {
+    void store.logout();
+  });
+  onRpcAuthLost(() => {
+    void store.logout();
+  });
 }

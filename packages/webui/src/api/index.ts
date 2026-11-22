@@ -34,7 +34,6 @@ export function login(request: LoginRequest): Promise<AuthSession> {
   return apiFetch<AuthSession>("/api/v1/auth/login", {
     method: "POST",
     body: request,
-    anonymous: true,
   });
 }
 
@@ -42,8 +41,16 @@ export function verify(): Promise<UserDto> {
   return wsCall<UserDto>("auth.verify");
 }
 
+/** Cookie rotation: the REST whitelist owns refresh — a WS method
+ *  cannot Set-Cookie, so the RPC table refuses the name. */
 export function refresh(): Promise<AuthSession> {
-  return wsCall<AuthSession>("auth.refresh");
+  return apiFetch<AuthSession>("/api/v1/auth/refresh", { method: "POST" });
+}
+
+/** Sign out: the server expires the httpOnly cookie and supersedes
+ *  every outstanding token. */
+export function logout(): Promise<void> {
+  return apiFetch<void>("/api/v1/auth/logout", { method: "POST" });
 }
 
 // ── files ──────────────────────────────────────────────────────────────
@@ -65,6 +72,7 @@ export function deleteFile(id: string): Promise<void> {
 export function uploadFile(file: File, onProgress?: (fraction: number) => void): Promise<void> {
   return apiUpload("/api/v1/files", file, onProgress);
 }
+
 
 // ── users ──────────────────────────────────────────────────────────────
 
@@ -94,5 +102,5 @@ export function putSiteConfig(strict: SiteConfigStrict): Promise<void> {
 }
 
 export function health(): Promise<HealthReport> {
-  return apiFetch<HealthReport>("/api/health", { anonymous: true });
+  return apiFetch<HealthReport>("/api/health");
 }

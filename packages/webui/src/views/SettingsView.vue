@@ -17,7 +17,7 @@ import type { SiteConfig, SiteConfigStrict } from "@/types";
 /**
  * The site configuration editor — a STRICT full-document form.
  *
- * `PUT /api/v1/settings` replaces the whole configuration: the wire form
+ * The `settings.put` RPC replaces the whole configuration: the wire form
  * (`SiteConfigStrict`) requires every section and every leaf and rejects
  * unknown fields, so a partial submit would fail with 400 instead of
  * silently resetting the omitted sections. The form therefore renders
