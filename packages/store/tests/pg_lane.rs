@@ -784,30 +784,61 @@ async fn pg_find_share_by_file_is_owner_scoped() {
     cleanup_user(&store, other.id).await;
 }
 
-/// The api_keys scopes column is JSONB; the write path wraps a JSON
-/// string and the read path unwraps it. Pin the round trip so a future
-/// scopes reader cannot inherit a silent double-encode (the review
-/// flagged the asymmetry: `Value::String(..)` in, `.to_string()` out).
+/// The api_keys scopes column is JSONB. The write path parses the
+/// record's JSON text and the read path serializes the value back, so
+/// the pair must be a true inverse for EVERY shape — array, object and
+/// a JSON *string* payload (a String special case on the read side
+/// would strip its quotes), and an unparseable payload must be REJECTED
+/// at the write (a permissions column may not silently become the
+/// fail-open "empty = full" set).
 #[tokio::test]
-async fn pg_api_key_scopes_round_trip() {
+async fn pg_api_key_scopes_round_trip_and_reject_garbage() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
-    let record = i0721_proto::ApiKeyRecord {
+    for payload in [
+        "[]",
+        "[\"read\",\"write\"]",
+        "{\"share\":true}",
+        "\"openid profile\"",
+    ] {
+        let record = i0721_proto::ApiKeyRecord {
+            id: uuid::Uuid::new_v4(),
+            user_id: user.id,
+            name: format!("scopes-{payload}"),
+            key_prefix: "i0721-abcd".to_owned(),
+            key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
+            scopes: payload.to_owned(),
+            last_used_at: None,
+            revoked_at: None,
+            created_at: jiff::Timestamp::now(),
+        };
+        store.create_api_key(&record).await.expect("insert");
+        let rows = store.list_api_keys(user.id).await.expect("list");
+        let row = rows
+            .iter()
+            .find(|r| r.id == record.id)
+            .expect("the row is listed");
+        assert_eq!(
+            row.scopes, payload,
+            "the scopes payload round-trips byte-identically ({payload})"
+        );
+    }
+
+    // Garbage must be refused, not folded into the empty set.
+    let bad = i0721_proto::ApiKeyRecord {
         id: uuid::Uuid::new_v4(),
         user_id: user.id,
-        name: "scopes-key".to_owned(),
-        key_prefix: "i0721-abcd".to_owned(),
+        name: "scopes-garbage".to_owned(),
+        key_prefix: "i0721-beef".to_owned(),
         key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
-        scopes: "[]".to_owned(),
+        scopes: "not-json".to_owned(),
         last_used_at: None,
         revoked_at: None,
         created_at: jiff::Timestamp::now(),
     };
-    store.create_api_key(&record).await.expect("insert");
-    let rows = store.list_api_keys(user.id).await.expect("list");
-    assert_eq!(rows.len(), 1, "one key listed");
-    assert_eq!(rows[0].id, record.id);
-    let scopes: serde_json::Value =
-        serde_json::from_str(&rows[0].scopes).expect("scopes is valid JSON");
-    assert_eq!(scopes, serde_json::json!([]), "scopes round-trips as []");
+    let refused = store.create_api_key(&bad).await;
+    assert!(
+        refused.is_err(),
+        "an unparseable scopes payload is refused (fail-closed): {refused:?}"
+    );
 }

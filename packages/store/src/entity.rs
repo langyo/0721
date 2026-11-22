@@ -279,13 +279,12 @@ pub fn api_key_model_to_record(model: ApiKeyModel) -> i0721_proto::ApiKeyRecord 
         name: model.name,
         key_prefix: model.key_prefix,
         key_hash: model.key_hash,
-        // A JSON *string* value round-trips as its text; anything else
-        // (arrays, objects) is serialized. Using `.to_string()` on a
-        // string value would yield a quoted copy.
-        scopes: match model.scopes {
-            serde_json::Value::String(text) => text,
-            other => other.to_string(),
-        },
+        // `to_string()` on a serde_json::Value IS the inverse of the
+        // write path's `from_str`: every value (arrays, objects, and a
+        // JSON string alike) serializes back to the exact text that
+        // produced it. No special case — a String arm would strip the
+        // quotes and break the round trip for quoted payloads.
+        scopes: model.scopes.to_string(),
         last_used_at: model.last_used_at,
         revoked_at: model.revoked_at,
         created_at: model.created_at,

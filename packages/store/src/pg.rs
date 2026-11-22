@@ -487,8 +487,15 @@ impl Store for PgStore {
             // wrapping the string would store a JSON *string* and the
             // read path's `.to_string()` would then hand back a quoted
             // copy (the double-encode the round-trip test pins).
-            scopes: serde_json::from_str(&record.scopes)
-                .unwrap_or_else(|_| serde_json::Value::Array(Vec::new())),
+            // FAIL-CLOSED on a bad payload: a permissions column must not
+            // silently degrade to the "empty = full" set, so an
+            // unparseable scopes string is rejected at the write.
+            scopes: serde_json::from_str(&record.scopes).map_err(|err| {
+                StoreError::Db(format!(
+                    "api key scopes must be valid JSON ({err}): {scopes:?}",
+                    scopes = record.scopes
+                ))
+            })?,
             last_used_at: record.last_used_at.clone(),
             revoked_at: record.revoked_at.clone(),
             created_at: record.created_at,
