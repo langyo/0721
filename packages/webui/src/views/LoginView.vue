@@ -173,8 +173,9 @@ function onMethodSelect(_channel: string, providerId: string): void {
         @sso-click="onSsoClick"
         @method-select="onMethodSelect"
       />
-      <!-- No password and no provider: the honest dead state (the server
-           guards the kill-switch, so this is unreachable in practice). -->
+      <!-- No password and no provider: the honest dead state. It needs a
+           live descriptor replying with neither method — the catch lane
+           above renders the classic password card instead. -->
       <HkEmptyState
         v-else-if="methods"
         boxed

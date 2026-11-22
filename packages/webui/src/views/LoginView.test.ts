@@ -23,6 +23,8 @@ vi.mock("@/api/client", () => ({
   onUnauthorized: vi.fn(),
 }));
 
+import { HkLoginFlow } from "@celestia-island/hikari";
+
 import LoginView from "./LoginView.vue";
 import { ApiError } from "@/api/client";
 import { createAppI18n } from "@/i18n";
@@ -138,6 +140,9 @@ describe("LoginView dual-mode (family login panel)", () => {
     expect(rows.length).toBe(2);
     expect(rows[0]!.text()).toContain("Celestia ID");
     expect(rows[1]!.text()).toContain("GitHub");
+    // The rows sit under a labelled divider ("or continue with") — an
+    // unlabelled list of destinations reads as part of the form.
+    expect(wrapper.text()).toContain("or continue with");
 
     // Navigation is a FULL page load (the flow plants an httpOnly state
     // cookie and 302s) — pin the href, not a router push.
@@ -204,6 +209,27 @@ describe("LoginView dual-mode (family login panel)", () => {
     // the panel stays a single channel with no segment group.
     expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
     expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
+  });
+
+  it("declares the credentials channel as a two-field account+password form", async () => {
+    loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
+    const { wrapper } = await mountView();
+    await flushPromises();
+    // The channel OBJECT is the contract the panel renders from: flipping
+    // passwordField would silently turn the card into an account-first
+    // funnel, and dropping submitLabel would leave a nameless button.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      key: string;
+      mode: string;
+      passwordField?: boolean;
+      submitLabel?: string;
+      usernameType?: string;
+    }>;
+    expect(channels.length).toBe(1);
+    expect(channels[0]!.mode).toBe("credentials");
+    expect(channels[0]!.passwordField).toBe(true);
+    expect(channels[0]!.submitLabel).toBeTruthy();
+    expect(channels[0]!.usernameType).toBe("text");
   });
 
   it("grows the segment group only for a multi-provider password-off deployment", async () => {
@@ -282,8 +308,11 @@ describe("LoginView dead state (W4 R2)", () => {
     loginMethodsMock.mockResolvedValue({ password: false, providers: [] });
     const { wrapper } = await mountView();
     await flushPromises();
-    expect(wrapper.find(".provider-button").exists()).toBe(false);
-    expect(wrapper.find(".s-auth-card").exists()).toBe(false);
+    // Pin absence with selectors the CURRENT markup emits: the password
+    // lane would mount a form field and the sso lane a provider row, so
+    // either appearing here means the dead-state guard failed.
+    expect(wrapper.findAll("input").length).toBe(0);
+    expect(wrapper.find(".hk-auth-channel-row").exists()).toBe(false);
     expect(wrapper.text()).toContain("No login method is available");
   });
 });
