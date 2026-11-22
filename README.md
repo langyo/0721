@@ -1,23 +1,33 @@
-# 0721
-
 <div align="center">
   <img src="https://raw.githubusercontent.com/celestia-island/celestia-island.github.io/main/res/logos/0721.webp" alt="0721" width="180" />
 </div>
 
-![CI workflow](https://img.shields.io/github/actions/workflow/status/langyo/0721/ci.yml)
-![GitHub License](https://img.shields.io/github/license/langyo/0721)
-![GitHub Tag](https://img.shields.io/github/v/tag/langyo/0721)
+<h1 align="center">0721</h1>
 
-> Ciallo～(∠·ω< )⌒★
+<div align="center">
+  <strong>A simple engine for image hosting, netdisk and galleries, written in Rust.</strong>
+</div>
 
-A simple engine for image hosting written in Rust.
+<div align="center">
+  Ciallo～(∠・ω< )⌒★
+</div>
 
-> The service is being rebuilt on the Celestia island family stack
-> (axum + lacrymira + hikari webui): image hosting grows into a netdisk +
-> gallery with OAuth sign-in, S3/IPFS storage backends and an MCP surface
-> for AI agents. The current trunk carries the rewritten data layer and
-> service (PostgreSQL metadata, local-FS blobs, transition-era password +
-> JWT auth); feature waves land as squash-merged pull requests.
+<br />
+
+<div align="center">
+  <a href="https://github.com/langyo/0721/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/langyo/0721/ci.yml?label=CI" alt="CI" />
+  </a>
+  <a href="https://github.com/langyo/0721/blob/master/LICENSE">
+    <img src="https://img.shields.io/github/license/langyo/0721" alt="License: Apache-2.0" />
+  </a>
+  <a href="https://github.com/langyo/0721/tags">
+    <img src="https://img.shields.io/github/v/tag/langyo/0721" alt="Tag" />
+  </a>
+</div>
+
+Rebuilt on axum, lacrymira and hikari; OAuth sign-in, S3/IPFS storage
+backends and an MCP surface for AI agents.
 
 ## Features
 
@@ -174,7 +184,7 @@ provider's echo AND carries the provider id (a state minted for one
 provider cannot be replayed against another); provider endpoint URLs
 must be absolute https (http survives only for localhost/127.0.0.1 —
 the local dev/stub lane); set `I0721_PUBLIC_ORIGIN`
-(https://res.celestia.world in production) so the OAuth redirect URI
+(https://your-domain.example in production) so the OAuth redirect URI
 follows the deployment's real origin instead of the Host header; the
 password kill-switch refuses to turn the password OFF while no OAuth
 provider is enabled (the no-login-method state is unreachable); no
