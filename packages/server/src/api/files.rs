@@ -175,12 +175,16 @@ pub async fn upload(
     };
     let record = match state.store.create_file(new_file).await {
         Ok(record) => record,
-        // Lost the per-owner dedupe race: return the winner's record.
+        // A Conflict is either the per-owner content dedupe (return the
+        // winner's record) or, with folders live, the same-layer name
+        // unique index -- distinguish by looking the content up.
         Err(i0721_store::StoreError::Conflict(_)) => state
             .store
             .get_file_by_owner_and_sha256(user.id, &processed.sha256)
             .await?
-            .ok_or_else(|| ApiError::conflict("content already uploaded"))?,
+            .ok_or_else(|| {
+                ApiError::conflict("a row with this name already exists in this folder")
+            })?,
         Err(err) => return Err(err.into()),
     };
     Ok((StatusCode::CREATED, Json(FileDto::from(record))).into_response())

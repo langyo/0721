@@ -36,38 +36,49 @@ existing AS (
            COALESCE(f.parent_id, '00000000-0000-0000-0000-000000000000'::uuid) AS layer_key
     FROM files f WHERE f.deleted_at IS NULL
 ),
-suffix AS (
-    -- AVOIDANCE-BASED assignment: for each duplicate (rn > 1), pick
-    -- the SMALLEST n >= rn such that "name (n)" is NOT already a live
-    -- name in the same (owner, layer). This avoids collisions with
-    -- pre-existing suffixed names (e.g. a pre-existing "x (2)" from a
-    -- prior migration forces the second duplicate of "x" to take (3)).
-    -- ROW_NUMBER guarantees distinct rn per same-name group, so
-    -- duplicates of the SAME name never collide with each other.
-    SELECT r.id, r.name, r.rn,
-           COALESCE(
-               (SELECT candidate.n
-                FROM generate_series(
-                    GREATEST(r.rn, 2),
-                    GREATEST(r.rn, 2) + 998
-                ) AS candidate(n)
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM existing e
-                    WHERE e.owner_id = r.owner_id
-                      AND e.layer_key = r.layer_key
-                      AND e.name = r.name || ' (' || candidate.n || ')'
-                )
-                ORDER BY candidate.n
-                LIMIT 1),
-               GREATEST(r.rn, 2) + 999
-           ) AS n
+renamers AS (
+    -- One row per renaming file: the k-th duplicate of a name (by rn)
+    -- carries rename_rank = k. Computed here, BEFORE the candidate
+    -- cross join, so the window counts distinct files rather than
+    -- (file x candidate) pairs.
+    SELECT r.id, r.name, r.rn, r.owner_id, r.layer_key,
+           ROW_NUMBER() OVER (PARTITION BY r.owner_id, r.layer_key, r.name
+                              ORDER BY r.rn) AS rename_rank
     FROM ranked r
     WHERE r.rn > 1
+),
+free AS (
+    -- Collision-safe pairing: each renaming row ranks ITS OWN free
+    -- candidates (free_rank, partitioned per row), and the k-th
+    -- renaming row of a group (by rn) takes ITS k-th free candidate,
+    -- where "free" means no live row (pre-update snapshot in `existing`)
+    -- already carries "name (n)". Because free_rank and rename_rank are
+    -- both distinct within a group, the (k, k) pairing can never hand
+    -- the same candidate to two rows, and cross-group renames carry
+    -- different base names so they cannot collide either. A group whose
+    -- renaming rows outnumber the free candidates (a name holding
+    -- 10'000 suffixed variants) simply leaves the tail unrenamed, which
+    -- the CREATE UNIQUE INDEX below then rejects loudly -- fail-closed
+    -- with a precise error rather than a silent bad name.
+    SELECT r.id,
+           r.name || ' (' || gs.n || ')' AS new_name,
+           ROW_NUMBER() OVER (PARTITION BY r.owner_id, r.layer_key, r.name, r.id
+                              ORDER BY gs.n) AS free_rank,
+           r.rename_rank
+    FROM renamers r
+    CROSS JOIN LATERAL generate_series(2, 10000) AS gs(n)
+    WHERE NOT EXISTS (
+          SELECT 1 FROM existing e
+          WHERE e.owner_id = r.owner_id
+            AND e.layer_key = r.layer_key
+            AND e.name = r.name || ' (' || gs.n || ')'
+      )
 )
 UPDATE files f
-SET name = sfx.name || ' (' || sfx.n || ')'
-FROM suffix sfx
-WHERE sfx.id = f.id"#;
+SET name = fr.new_name
+FROM free fr
+WHERE fr.id = f.id
+  AND fr.free_rank = fr.rename_rank"#;
 
 /// The baseline schema plus the settings seed.
 /// The baseline schema plus the settings seed.

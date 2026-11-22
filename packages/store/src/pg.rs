@@ -170,6 +170,26 @@ fn live_file_by(column: FileColumn, value: impl Into<Value>) -> Command {
     }
 }
 
+/// The live-rows filter shared by the folder listing and its count.
+fn folder_filter(
+    owner_id: Uuid,
+    parent_id: Option<Uuid>,
+    kind: Option<String>,
+) -> lacrymira::Condition {
+    let mut filter = FileColumn::DeletedAt
+        .is_null()
+        .into_inner()
+        .and(FileColumn::OwnerId.eq(owner_id).into_inner());
+    filter = match parent_id {
+        Some(pid) => filter.and(FileColumn::ParentId.eq(pid).into_inner()),
+        None => filter.and(FileColumn::ParentId.is_null().into_inner()),
+    };
+    if let Some(kind) = kind {
+        filter = filter.and(FileColumn::Kind.eq(kind).into_inner());
+    }
+    filter
+}
+
 #[async_trait::async_trait]
 impl Store for PgStore {
     async fn list_users(&self, offset: u64, limit: u64) -> Result<Vec<UserRecord>, StoreError> {
@@ -489,6 +509,26 @@ impl Store for PgStore {
 
     // ── netdisk lane ─────────────────────────────────────────────────
 
+    async fn count_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+    ) -> Result<u64, StoreError> {
+        let filter = folder_filter(owner_id, parent_id, kind);
+        let cmd = Command::Count {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(filter),
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        match reply {
+            lacrymira::Reply::Value(Some(lacrymira::Value::I64(count))) => Ok(count as u64),
+            other => Err(StoreError::Db(format!(
+                "expected a count reply from the files table, got {other:?}"
+            ))),
+        }
+    }
+
     async fn list_folder(
         &self,
         owner_id: Uuid,
@@ -497,17 +537,7 @@ impl Store for PgStore {
         offset: u64,
         limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError> {
-        let mut filter = FileColumn::DeletedAt
-            .is_null()
-            .into_inner()
-            .and(FileColumn::OwnerId.eq(owner_id).into_inner());
-        filter = match parent_id {
-            Some(pid) => filter.and(FileColumn::ParentId.eq(pid).into_inner()),
-            None => filter.and(FileColumn::ParentId.is_null().into_inner()),
-        };
-        if let Some(kind) = kind {
-            filter = filter.and(FileColumn::Kind.eq(kind).into_inner());
-        }
+        let filter = folder_filter(owner_id, parent_id, kind);
         let cmd = Command::Select {
             table: FileModel::TABLE.to_owned(),
             filter: Some(filter),

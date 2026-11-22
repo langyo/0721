@@ -396,14 +396,13 @@ pub fn build_server(state: AppState) -> RpcServer {
                         limit: args.limit,
                     }
                     .sanitize();
-                    // Count (unpaginated read), then page (true pushdown:
-                    // offset+limit go to the store, not the full list).
+                    // The count rides COUNT(*) (no row decoding); the page
+                    // pushes offset+limit down to the store.
                     let total = state
                         .store
-                        .list_folder(user.id, args.folder_id, args.kind.clone(), 0, u64::MAX / 2)
+                        .count_folder(user.id, args.folder_id, args.kind.clone())
                         .await
-                        .map_err(store_err)?
-                        .len() as u64;
+                        .map_err(store_err)?;
                     let items = state
                         .store
                         .list_folder(user.id, args.folder_id, args.kind, offset, limit)

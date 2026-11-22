@@ -2959,6 +2959,18 @@ async fn upload_raw(
     name: &str,
     folder_id: Option<String>,
 ) -> (StatusCode, String) {
+    upload_raw_query(state, token, bytes, name, folder_id, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upload_raw_query(
+    state: &AppState,
+    token: &str,
+    bytes: Vec<u8>,
+    name: &str,
+    folder_id: Option<String>,
+    display_name: Option<&str>,
+) -> (StatusCode, String) {
     let boundary = "X-BOUNDARY-X";
     let b = boundary;
     let mut body = format!(
@@ -2967,9 +2979,14 @@ async fn upload_raw(
     .into_bytes();
     body.extend_from_slice(&bytes);
     body.extend_from_slice(format!("\r\n--{b}--\r\n").as_bytes());
-    let query = folder_id
+    let mut query = folder_id
         .map(|f| format!("?folder_id={f}"))
         .unwrap_or_default();
+    if let (Some(display), true) = (display_name, query.is_empty()) {
+        query = format!("?name={display}");
+    } else if let Some(display) = display_name {
+        query.push_str(&format!("&name={display}"));
+    }
     let response = app(state)
         .oneshot(bearer(
             Request::builder()
@@ -3878,4 +3895,83 @@ async fn c1_memory_rename_precheck_friendly_conflict() {
         "store-layer rename pre-check: {result:?}"
     );
     let _ = a;
+}
+
+#[tokio::test]
+async fn upload_lands_in_the_requested_folder() {
+    let (state, token) = matrix_setup().await;
+    let folder_id = mk_folder(&state, &token, "photos", None).await;
+
+    let (status, raw) = upload_raw(
+        &state,
+        &token,
+        tiny_png(),
+        "shot.png",
+        Some(folder_id.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "upload accepted: {raw}");
+    let up: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        up["parent_id"].as_str(),
+        Some(folder_id.as_str()),
+        "the uploaded file reports its folder: {up}"
+    );
+
+    let (_, inside) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "own", "folder_id": folder_id}),
+    )
+    .await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+    let items = inside["result"]["items"].as_array().unwrap();
+    assert!(
+        items
+            .iter()
+            .any(|f| f["id"].as_str() == Some(file_id.as_str())),
+        "the file is inside the folder: {inside}"
+    );
+    let (_, root) = rpc(
+        &state,
+        &token,
+        "files.list",
+        serde_json::json!({"scope": "own"}),
+    )
+    .await;
+    let root_items = root["result"]["items"].as_array().unwrap();
+    assert!(
+        !root_items
+            .iter()
+            .any(|f| f["id"].as_str() == Some(file_id.as_str())),
+        "the file is NOT in the root listing: {root}"
+    );
+}
+
+#[tokio::test]
+async fn upload_name_conflict_reports_the_name_message() {
+    let (state, token) = matrix_setup().await;
+    let big = {
+        let image = image::DynamicImage::new_rgb8(9, 9);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        buf.into_inner()
+    };
+    let (status, first) =
+        upload_raw_query(&state, &token, tiny_png(), "one.png", None, Some("dup.png")).await;
+    assert_eq!(status, StatusCode::CREATED, "first upload: {first}");
+    let (status, second) =
+        upload_raw_query(&state, &token, big, "two.png", None, Some("dup.png")).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "second upload conflicts: {second}"
+    );
+    let second: serde_json::Value = serde_json::from_str(&second).unwrap();
+    let body = second["error"].as_str().unwrap_or_default();
+    assert!(
+        body.contains("name") && !body.contains("content already uploaded"),
+        "the conflict names the real cause: {body}"
+    );
 }

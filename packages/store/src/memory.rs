@@ -207,10 +207,21 @@ impl Store for MemoryStore {
                 sha = file.sha256
             )));
         }
+        if inner.files.iter().any(|f| {
+            f.deleted_at.is_none()
+                && f.owner_id == file.owner_id
+                && f.parent_id == file.parent_id
+                && f.name == file.name
+        }) {
+            return Err(conflict(format!(
+                "a row with the name {name} already exists in this folder",
+                name = file.name
+            )));
+        }
         let record = FileRecord {
             id: Uuid::new_v4(),
             owner_id: file.owner_id,
-            parent_id: None,
+            parent_id: file.parent_id,
             name: file.name,
             kind: file.kind,
             mime: file.mime,
@@ -343,6 +354,26 @@ impl Store for MemoryStore {
     }
 
     // ── netdisk lane ─────────────────────────────────────────────────
+
+    async fn count_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+    ) -> Result<u64, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let n = inner
+            .files
+            .iter()
+            .filter(|f| {
+                f.deleted_at.is_none()
+                    && f.owner_id == owner_id
+                    && f.parent_id == parent_id
+                    && kind.as_deref().is_none_or(|k| f.kind.as_str() == k)
+            })
+            .count();
+        Ok(n as u64)
+    }
 
     async fn list_folder(
         &self,

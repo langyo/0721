@@ -553,3 +553,152 @@ async fn pg_sum_live_sizes_returns_bigint() {
         "a fresh user has zero bytes (not a numeric-decode 0)"
     );
 }
+
+/// The C2 collision shape: THREE same-name rows plus a pre-existing
+/// suffixed name. The static-CTE avoidance assigned every renamer the
+/// same free candidate; the rank-pairing rewrite must hand the k-th
+/// renamer the k-th free candidate.
+#[tokio::test]
+async fn pg_migration_0004_dedupe_survives_three_fold_duplicates() {
+    let Some(store) = db().await else { return };
+
+    let user = store
+        .create_user(CreateUser {
+            username: format!("threefold_{}", uuid::Uuid::new_v4().simple()),
+            display_name: "Threefold".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+
+    {
+        use lacrymira::{Command, Value};
+        let drop = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DROP INDEX IF EXISTS files_owner_folder_name_live_key".to_owned(),
+            params: vec![],
+        };
+        store.executor.execute(&drop).await.unwrap();
+
+        for (i, name) in ["x.bin", "x.bin", "x.bin", "x.bin (2)"]
+            .into_iter()
+            .enumerate()
+        {
+            let sha = format!("dd{:06x}", i);
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let insert = Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text:
+                    "INSERT INTO files (id, owner_id, parent_id, name, kind, mime, size, sha256, \
+                     storage_backend, storage_key, original_name) \
+                     VALUES (gen_random_uuid(), $1, NULL, $2, 'other', 'application/octet-stream', \
+                     10, $3, 'local', $3, $2)"
+                        .to_owned(),
+                params: vec![
+                    Value::Uuid(user.id.to_string()),
+                    Value::Text(name.to_owned()),
+                    Value::Text(sha),
+                ],
+            };
+            store.executor.execute(&insert).await.unwrap();
+        }
+    }
+
+    {
+        use lacrymira::Command;
+        let cleanse = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: i0721_store::migrate::MIGRATION_0004_DEDUPE_SQL.to_owned(),
+            params: vec![],
+        };
+        store.executor.execute(&cleanse).await.unwrap();
+    }
+
+    let files = store
+        .list_folder(user.id, None, None, 0, 100)
+        .await
+        .unwrap();
+    assert_eq!(files.len(), 4, "all rows live: {files:?}");
+    let mut names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        vec!["x.bin", "x.bin (2)", "x.bin (3)", "x.bin (4)"],
+        "rank pairing hands the two renamers distinct free candidates past the blocked (2)"
+    );
+
+    // The rebuilt index must accept this state.
+    {
+        use lacrymira::Command;
+        let rebuild = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "CREATE UNIQUE INDEX IF NOT EXISTS files_owner_folder_name_live_key \
+                   ON files (owner_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name) \
+                   WHERE deleted_at IS NULL"
+                .to_owned(),
+            params: vec![],
+        };
+        store.executor.execute(&rebuild).await.unwrap();
+    }
+}
+
+/// Upload-into-folder is the wave's headline: the persisted row must
+/// carry the requested parent (this is the defect C2 found hardwired
+/// to None on both store lanes).
+#[tokio::test]
+async fn pg_create_file_honors_parent_id() {
+    let Some(store) = db().await else { return };
+
+    let user = store
+        .create_user(CreateUser {
+            username: format!("parentfix_{}", uuid::Uuid::new_v4().simple()),
+            display_name: "ParentFix".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+
+    let folder = store.create_folder(user.id, None, "docs").await.unwrap();
+    let nested = store
+        .create_folder(user.id, Some(folder.id), "2026")
+        .await
+        .unwrap();
+    assert_eq!(
+        nested.parent_id,
+        Some(folder.id),
+        "the nested folder carries its parent"
+    );
+
+    let file = store
+        .create_file(i0721_proto::NewFile {
+            owner_id: user.id,
+            parent_id: Some(nested.id),
+            name: "report.bin".to_owned(),
+            kind: i0721_proto::FileKind::Other,
+            mime: "application/octet-stream".to_owned(),
+            size: 7,
+            sha256: format!("pf{}", uuid::Uuid::new_v4().simple()),
+            storage_backend: "local".to_owned(),
+            storage_key: format!("pf{}", uuid::Uuid::new_v4().simple()),
+            thumbnail_key: None,
+            original_name: "report.bin".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        file.parent_id,
+        Some(nested.id),
+        "the file lands in its folder"
+    );
+
+    let inside = store
+        .list_folder(user.id, Some(nested.id), None, 0, 10)
+        .await
+        .unwrap();
+    assert_eq!(inside.len(), 1, "the nested folder lists the file");
+    assert_eq!(inside[0].name, "report.bin");
+}

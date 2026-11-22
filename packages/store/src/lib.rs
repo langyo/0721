@@ -170,6 +170,14 @@ pub trait Store: Send + Sync {
 
     /// List one folder's live children (own-tree scope): the caller's
     /// files whose parent is `parent_id` (None = root).
+    /// Count the live rows in a folder listing without fetching them.
+    async fn count_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+    ) -> Result<u64, StoreError>;
+
     async fn list_folder(
         &self,
         owner_id: Uuid,

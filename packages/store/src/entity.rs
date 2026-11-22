@@ -242,7 +242,7 @@ pub fn file_model_from_new(id: Uuid, file: &NewFile, created_at: Timestamp) -> F
     FileModel {
         id,
         owner_id: file.owner_id,
-        parent_id: None,
+        parent_id: file.parent_id,
         name: file.name.clone(),
         kind: file.kind.as_str().to_owned(),
         mime: file.mime.clone(),
