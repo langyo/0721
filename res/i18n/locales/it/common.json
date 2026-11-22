@@ -1,0 +1,93 @@
+{
+  "app": {
+    "name": "0721 Risorse"
+  },
+  "nav": {
+    "portal": "Portale",
+    "users": "Utenti",
+    "settings": "Configurazione"
+  },
+  "actions": {
+    "upload": "Carica",
+    "refresh": "Aggiorna",
+    "delete": "Elimina",
+    "copyLink": "Copia link",
+    "copied": "Link copiato",
+    "cancel": "Annulla",
+    "save": "Salva",
+    "saved": "Salvato",
+    "create": "Crea",
+    "confirm": "Conferma",
+    "retry": "Riprova",
+    "close": "Chiudi",
+    "loadMore": "Carica altro",
+    "logout": "Esci",
+    "add": "Aggiungi",
+    "remove": "Rimuovi"
+  },
+  "common": {
+    "loading": "Caricamento",
+    "error": "Qualcosa è andato storto",
+    "empty": "Ancora niente qui",
+    "admin": "Amministratore",
+    "member": "Utente",
+    "total": "{count} in totale",
+    "version": "Versione {version}"
+  },
+  "auth": {
+    "title": "Accedi",
+    "subtitle": "Continua su 0721",
+    "username": "Nome utente",
+    "password": "Password",
+    "submit": "Accedi",
+    "failed": "Nome utente o password non validi"
+  },
+  "portal": {
+    "title": "Immagini",
+    "empty": "Nessun file — carica il primo con il pulsante +",
+    "uploading": "Caricamento di {name}",
+    "uploadFailed": "Caricamento non riuscito",
+    "deleteConfirm": "Eliminare questo file? Il link pubblico smetterà di funzionare.",
+    "openOriginal": "Apri originale"
+  },
+  "users": {
+    "title": "Utenti",
+    "empty": "Nessun utente",
+    "createTitle": "Crea utente",
+    "username": "Nome utente",
+    "password": "Password",
+    "displayName": "Nome visualizzato",
+    "role": "Ruolo",
+    "created": "Creato",
+    "deleteConfirm": "Eliminare l'utente {name}?",
+    "conflict": "Questo nome utente è già in uso."
+  },
+  "settings": {
+    "title": "Configurazione del sito",
+    "saved": "Impostazioni salvate",
+    "saveFailed": "Salvataggio non riuscito",
+    "strictHint": "Il salvataggio sostituisce l'intero documento di configurazione.",
+    "sectionPortal": "Portale",
+    "sectionRouter": "Router",
+    "sectionUpload": "Caricamento",
+    "titleSuffix": "Titolo del sito",
+    "footerBanner": "Testo del piè di pagina",
+    "language": "Lingua preferita",
+    "timezone": "Fuso orario (ore)",
+    "mediaEntryPath": "Percorso di ingresso multimediale",
+    "limitReferrerHost": "Elenco domini di provenienza consentiti",
+    "imageSizeLimit": "Limite di dimensione del caricamento",
+    "webpAutoConvert": "Converti automaticamente in formato WebP",
+    "useSourceFileName": "Usa il nome del file sorgente",
+    "bannerText": "Testo",
+    "bannerUrl": "Link (opzionale)",
+    "addBanner": "Aggiungi voce banner"
+  },
+  "chrome": {
+    "settings": "Impostazioni",
+    "theme": "Tema",
+    "language": "Lingua",
+    "about": "Informazioni",
+    "signOut": "Esci"
+  }
+}

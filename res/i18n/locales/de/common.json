@@ -1,0 +1,93 @@
+{
+  "app": {
+    "name": "0721 Ressourcen"
+  },
+  "nav": {
+    "portal": "Portal",
+    "users": "Benutzer",
+    "settings": "Konfiguration"
+  },
+  "actions": {
+    "upload": "Hochladen",
+    "refresh": "Aktualisieren",
+    "delete": "Löschen",
+    "copyLink": "Link kopieren",
+    "copied": "Link kopiert",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "saved": "Gespeichert",
+    "create": "Erstellen",
+    "confirm": "Bestätigen",
+    "retry": "Erneut versuchen",
+    "close": "Schließen",
+    "loadMore": "Mehr laden",
+    "logout": "Abmelden",
+    "add": "Hinzufügen",
+    "remove": "Entfernen"
+  },
+  "common": {
+    "loading": "Laden",
+    "error": "Etwas ist schiefgelaufen",
+    "empty": "Noch nichts hier",
+    "admin": "Admin",
+    "member": "Benutzer",
+    "total": "{count} insgesamt",
+    "version": "Version {version}"
+  },
+  "auth": {
+    "title": "Anmelden",
+    "subtitle": "Weiter zu 0721",
+    "username": "Benutzername",
+    "password": "Passwort",
+    "submit": "Anmelden",
+    "failed": "Ungültiger Benutzername oder falsches Passwort"
+  },
+  "portal": {
+    "title": "Bilder",
+    "empty": "Noch keine Dateien — die erste über + hochladen",
+    "uploading": "{name} wird hochgeladen",
+    "uploadFailed": "Hochladen fehlgeschlagen",
+    "deleteConfirm": "Diese Datei löschen? Der öffentliche Link stoppt dann.",
+    "openOriginal": "Original öffnen"
+  },
+  "users": {
+    "title": "Benutzer",
+    "empty": "Keine Benutzer",
+    "createTitle": "Benutzer erstellen",
+    "username": "Benutzername",
+    "password": "Passwort",
+    "displayName": "Anzeigename",
+    "role": "Rolle",
+    "created": "Erstellt",
+    "deleteConfirm": "Benutzer {name} löschen?",
+    "conflict": "Dieser Benutzername ist bereits vergeben."
+  },
+  "settings": {
+    "title": "Site-Konfiguration",
+    "saved": "Einstellungen gespeichert",
+    "saveFailed": "Speichern fehlgeschlagen",
+    "strictHint": "Speichern ersetzt das gesamte Konfigurationsdokument.",
+    "sectionPortal": "Portal",
+    "sectionRouter": "Router",
+    "sectionUpload": "Upload",
+    "titleSuffix": "Seitentitel",
+    "footerBanner": "Fußzeilentext",
+    "language": "Bevorzugte Sprache",
+    "timezone": "Zeitzonen-Offset (Stunden)",
+    "mediaEntryPath": "Medien-Routeneinstieg",
+    "limitReferrerHost": "Referrer-Host-Whitelist",
+    "imageSizeLimit": "Upload-Größenbeschränkung",
+    "webpAutoConvert": "Bilder automatisch in WebP konvertieren",
+    "useSourceFileName": "Quelldateinamen beibehalten",
+    "bannerText": "Text",
+    "bannerUrl": "Link (optional)",
+    "addBanner": "Banner-Eintrag hinzufügen"
+  },
+  "chrome": {
+    "settings": "Einstellungen",
+    "theme": "Design",
+    "language": "Sprache",
+    "about": "Über",
+    "signOut": "Abmelden"
+  }
+}

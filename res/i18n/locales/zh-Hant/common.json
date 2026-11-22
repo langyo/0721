@@ -1,0 +1,93 @@
+{
+  "app": {
+    "name": "0721 資源站"
+  },
+  "nav": {
+    "portal": "門戶",
+    "users": "用戶",
+    "settings": "配置"
+  },
+  "actions": {
+    "upload": "上傳",
+    "refresh": "重新整理",
+    "delete": "刪除",
+    "copyLink": "複製連結",
+    "copied": "連結已複製",
+    "cancel": "取消",
+    "save": "儲存",
+    "saved": "已儲存",
+    "create": "建立",
+    "confirm": "確認",
+    "retry": "重試",
+    "close": "關閉",
+    "loadMore": "載入更多",
+    "logout": "登出",
+    "add": "新增",
+    "remove": "移除"
+  },
+  "common": {
+    "loading": "載入中",
+    "error": "發生錯誤",
+    "empty": "這裡還沒有內容",
+    "admin": "管理員",
+    "member": "用戶",
+    "total": "共 {count} 項",
+    "version": "版本 {version}"
+  },
+  "auth": {
+    "title": "登入",
+    "subtitle": "前往 0721",
+    "username": "用戶名",
+    "password": "密碼",
+    "submit": "登入",
+    "failed": "用戶名或密碼錯誤"
+  },
+  "portal": {
+    "title": "圖片",
+    "empty": "還沒有檔案——點右上角加號上傳第一個",
+    "uploading": "正在上傳 {name}",
+    "uploadFailed": "上傳失敗",
+    "deleteConfirm": "刪除這個檔案？公開連結將失效。",
+    "openOriginal": "檢視原圖"
+  },
+  "users": {
+    "title": "用戶",
+    "empty": "暫無用戶",
+    "createTitle": "新增用戶",
+    "username": "用戶名",
+    "password": "密碼",
+    "displayName": "顯示名稱",
+    "role": "角色",
+    "created": "建立時間",
+    "deleteConfirm": "刪除用戶 {name}？",
+    "conflict": "該用戶名已被使用。"
+  },
+  "settings": {
+    "title": "站點配置",
+    "saved": "配置已儲存",
+    "saveFailed": "儲存失敗",
+    "strictHint": "儲存會整體替換配置文件。",
+    "sectionPortal": "門戶",
+    "sectionRouter": "路由",
+    "sectionUpload": "上傳",
+    "titleSuffix": "網站標題",
+    "footerBanner": "頁腳文本",
+    "language": "首選語言",
+    "timezone": "時區偏移（小時）",
+    "mediaEntryPath": "媒體路由入口",
+    "limitReferrerHost": "來源網域白名單",
+    "imageSizeLimit": "上傳大小限制",
+    "webpAutoConvert": "自動轉換為 WebP 格式",
+    "useSourceFileName": "使用原始檔名",
+    "bannerText": "文字",
+    "bannerUrl": "連結（可選）",
+    "addBanner": "新增頁腳條目"
+  },
+  "chrome": {
+    "settings": "設定",
+    "theme": "主題",
+    "language": "語言",
+    "about": "關於",
+    "signOut": "登出"
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "app": {
+    "name": "0721 Ressources"
+  },
+  "nav": {
+    "portal": "Portail",
+    "users": "Utilisateurs",
+    "settings": "Configuration"
+  },
+  "actions": {
+    "upload": "Téléverser",
+    "refresh": "Rafraîchir",
+    "delete": "Supprimer",
+    "copyLink": "Copier le lien",
+    "copied": "Lien copié",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saved": "Enregistré",
+    "create": "Créer",
+    "confirm": "Confirmer",
+    "retry": "Réessayer",
+    "close": "Fermer",
+    "loadMore": "Charger plus",
+    "logout": "Se déconnecter",
+    "add": "Ajouter",
+    "remove": "Retirer"
+  },
+  "common": {
+    "loading": "Chargement",
+    "error": "Une erreur est survenue",
+    "empty": "Rien ici pour l'instant",
+    "admin": "Admin",
+    "member": "Utilisateur",
+    "total": "{count} au total",
+    "version": "Version {version}"
+  },
+  "auth": {
+    "title": "Connexion",
+    "subtitle": "Continuer vers 0721",
+    "username": "Nom d'utilisateur",
+    "password": "Mot de passe",
+    "submit": "Se connecter",
+    "failed": "Nom d'utilisateur ou mot de passe incorrect"
+  },
+  "portal": {
+    "title": "Images",
+    "empty": "Aucun fichier — téléversez le premier avec le bouton +",
+    "uploading": "Téléversement de {name}",
+    "uploadFailed": "Échec du téléversement",
+    "deleteConfirm": "Supprimer ce fichier ? Son lien public cessera de fonctionner.",
+    "openOriginal": "Ouvrir l'original"
+  },
+  "users": {
+    "title": "Utilisateurs",
+    "empty": "Aucun utilisateur",
+    "createTitle": "Créer un utilisateur",
+    "username": "Nom d'utilisateur",
+    "password": "Mot de passe",
+    "displayName": "Nom affiché",
+    "role": "Rôle",
+    "created": "Créé le",
+    "deleteConfirm": "Supprimer l'utilisateur {name} ?",
+    "conflict": "Ce nom d'utilisateur est déjà pris."
+  },
+  "settings": {
+    "title": "Configuration du site",
+    "saved": "Paramètres enregistrés",
+    "saveFailed": "Échec de l'enregistrement",
+    "strictHint": "L'enregistrement remplace tout le document de configuration.",
+    "sectionPortal": "Portail",
+    "sectionRouter": "Routeur",
+    "sectionUpload": "Téléversement",
+    "titleSuffix": "Titre du site",
+    "footerBanner": "Texte du pied de page",
+    "language": "Langue préférée",
+    "timezone": "Décalage horaire (heures)",
+    "mediaEntryPath": "Entrée du routeur multimédia",
+    "limitReferrerHost": "Liste blanche des domaines référents",
+    "imageSizeLimit": "Limite de taille de téléversement",
+    "webpAutoConvert": "Convertir automatiquement en WebP",
+    "useSourceFileName": "Conserver le nom du fichier source",
+    "bannerText": "Texte",
+    "bannerUrl": "Lien (facultatif)",
+    "addBanner": "Ajouter une entrée de bannière"
+  },
+  "chrome": {
+    "settings": "Paramètres",
+    "theme": "Thème",
+    "language": "Langue",
+    "about": "À propos",
+    "signOut": "Se déconnecter"
+  }
+}

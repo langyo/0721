@@ -1,0 +1,28 @@
+packages:
+  - 'packages/webui'
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  vue-demi: true
+# Explicit base is required: pnpm's built-in release-age cutoff ignores
+# the exclude list unless minimumReleaseAge itself is set (one day — the
+# supply-chain cooling window the family standardizes on).
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  # The first-party family packages are consumed straight off the registry
+  # and republish frequently; the release-age gate otherwise silently
+  # resolves their previous (stale) versions right after each publish.
+  # This repo consumes hikari only (kirino/plana-* join with their waves).
+  - '@celestia-island/hikari'
+  # hikari's resolved version pulls these first-party runtime deps; both
+  # were first published same-day, so the exact-version pin is what
+  # exempts the lockfile verification pass (the bare hikari entry above
+  # does NOT cover its dependencies). Prune after the 24h window closes.
+  - '@celestia-island/tairitsu-host-client@0.1.0'
+  - '@celestia-island/tairitsu-transport@0.2.0'
+# Pin typescript to the 6.0 series across the whole workspace — TS 7 ships
+# a native Go compiler without the JS compiler API, which breaks vue-tsc.
+# The spec in package.json stays `~6.0`; this override is the single
+# source of truth for every transitive typescript in the tree.
+overrides:
+  typescript: ~6.0
