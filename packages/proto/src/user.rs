@@ -53,6 +53,8 @@ pub struct UserRecord {
     /// Argon2id hash; `None` = no password login for this user.
     #[serde(skip_serializing)]
     pub password_hash: Option<String>,
+    /// Per-user storage quota (bytes); `None` = the global default.
+    pub quota_bytes: Option<i64>,
     /// Account creation time.
     pub created_at: Timestamp,
 }

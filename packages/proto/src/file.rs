@@ -12,6 +12,10 @@ use uuid::Uuid;
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../webui/src/types/")]
 pub enum FileKind {
+    /// A directory row (netdisk): size 0, no blob, sha256 = `dir:`
+    /// placeholder (kept out of the dedupe key by the `dir:` prefix —
+    /// the per-owner dedupe index stays meaningful for files).
+    Folder,
     /// Raster/vector images.
     Image,
     /// Text documents, PDF, office files.
@@ -29,6 +33,7 @@ impl FileKind {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            FileKind::Folder => "folder",
             FileKind::Image => "image",
             FileKind::Document => "document",
             FileKind::Media => "media",
@@ -41,6 +46,7 @@ impl FileKind {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "folder" => Some(FileKind::Folder),
             "image" => Some(FileKind::Image),
             "document" => Some(FileKind::Document),
             "media" => Some(FileKind::Media),
@@ -79,8 +85,10 @@ pub fn classify_kind(mime: &str, file_name: &str) -> FileKind {
             | "msword"
             | "vnd.ms-excel"
             | "vnd.ms-powerpoint" => FileKind::Document,
+            "inode/directory" | "directory" => FileKind::Folder,
             _ => fallback_by_extension(file_name),
         },
+        "inode/directory" | "directory" => FileKind::Folder,
         _ => fallback_by_extension(file_name),
     }
 }
@@ -155,6 +163,9 @@ pub struct FileDto {
     pub id: Uuid,
     /// Owning user.
     pub owner_id: Uuid,
+    /// Parent folder (`None` = root).
+    #[ts(optional)]
+    pub parent_id: Option<Uuid>,
     /// Display name.
     pub name: String,
     /// Coarse content class.
@@ -180,6 +191,7 @@ impl From<FileRecord> for FileDto {
         Self {
             id: record.id,
             owner_id: record.owner_id,
+            parent_id: record.parent_id,
             name: record.name,
             kind: record.kind,
             mime: record.mime,
@@ -197,6 +209,8 @@ impl From<FileRecord> for FileDto {
 pub struct NewFile {
     /// Owning user.
     pub owner_id: Uuid,
+    /// Parent folder ( = root).
+    pub parent_id: Option<Uuid>,
     /// Display name.
     pub name: String,
     /// Coarse content class.
@@ -252,6 +266,7 @@ mod tests {
     #[test]
     fn kind_round_trips_tags() {
         for kind in [
+            FileKind::Folder,
             FileKind::Image,
             FileKind::Document,
             FileKind::Media,

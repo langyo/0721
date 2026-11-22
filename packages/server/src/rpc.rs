@@ -31,8 +31,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use i0721_proto::{
-    validate_display_name, validate_file_name, validate_username, FileDto, NewUser, PageArgs,
-    PageResult, Role, SiteConfigStrict, UserDto, CONFIG_SETTING_KEY,
+    validate_display_name, validate_file_name, validate_username, FileDto, NewShare, NewUser,
+    PageArgs, PageResult, QuotaInfo, Role, ShareDto, SiteConfigStrict, UserDto, CONFIG_SETTING_KEY,
 };
 use i0721_store::CreateUser;
 
@@ -325,6 +325,13 @@ pub fn build_server(state: AppState) -> RpcServer {
     let state_providers_delete = state.clone();
     let state_password_get = state.clone();
     let state_password_put = state.clone();
+    let state_create_folder = state.clone();
+    let state_files_move = state.clone();
+    let state_share_create = state.clone();
+    let state_share_list = state.clone();
+    let state_share_delete = state.clone();
+    let state_quota_get = state.clone();
+    let state_quota_put = state.clone();
     RpcServer::builder()
         .auth(move |headers: &HeaderMap, uri: &Uri| {
             let state = state.clone();
@@ -359,8 +366,47 @@ pub fn build_server(state: AppState) -> RpcServer {
         .method_ctx("files.list", move |ctx: RpcRequestCtx| {
             let state = state_files_list.clone();
             async move {
-                let args: PageArgs = params(&ctx)?;
-                let (offset, limit) = args.sanitize();
+                #[derive(serde::Deserialize)]
+                struct ListParams {
+                    #[serde(default)]
+                    offset: Option<u64>,
+                    #[serde(default)]
+                    limit: Option<u64>,
+                    /// The folder to list (own scope); None = root.
+                    #[serde(default)]
+                    folder_id: Option<uuid::Uuid>,
+                    /// "timeline" (the legacy global image stream, admin
+                    /// flavor) or "own" (the caller's netdisk tree).
+                #[serde(default)]
+                    scope: Option<String>,
+                    /// Optional kind filter ("image", "document", …).
+                    #[serde(default)]
+                    kind: Option<String>,
+                }
+                let args: ListParams = params(&ctx)?;
+                let user = user_of(&ctx);
+                let scope = args.scope.as_deref().unwrap_or("own");
+                // Members are pinned to their own tree: the timeline is
+                // the admin-flavored global stream.
+                let scope = if user.role != Role::Admin { "own" } else { scope };
+                if scope == "own" {
+                    let rows = state
+                        .store
+                        .list_folder(user.id, args.folder_id, args.kind)
+                        .await
+                        .map_err(store_err)?;
+                    let total = rows.len() as u64;
+                    let items = rows
+                        .into_iter()
+                        .map(FileDto::from)
+                        .collect::<Vec<_>>();
+                    return to_value(PageResult { total, offset: 0, limit: total.max(1), items });
+                }
+                let (offset, limit) = PageArgs {
+                    offset: args.offset,
+                    limit: args.limit,
+                }
+                .sanitize();
                 let total = state.store.count_files().await.map_err(store_err)?;
                 let items = state
                     .store
@@ -411,16 +457,78 @@ pub fn build_server(state: AppState) -> RpcServer {
                 }
                 let params: DeleteParams = params(&ctx)?;
                 let user = user_of(&ctx);
-                // The gate's fetch doubles as the pre-delete snapshot
-                // (the REST handler's pattern).
+                // The gate's fetch doubles as the pre-delete snapshot.
                 let record = require_file_owner_or_admin(&state, &user, params.id).await?;
-                let removed = state
+                // Cascade: collect the live subtree first (one walk),
+                // snapshot every row for the reclaim pass, then one batch
+                // soft-delete — deleting a folder deletes its subtree.
+                let subtree = state
                     .store
-                    .soft_delete_file(params.id)
+                    .subtree_live_ids(params.id)
                     .await
                     .map_err(store_err)?;
-                if !removed {
+                let rows = state
+                    .store
+                    .get_files_by_ids(&subtree)
+                    .await
+                    .map_err(store_err)?;
+                let removed = state
+                    .store
+                    .soft_delete_many(&subtree)
+                    .await
+                    .map_err(store_err)?;
+                if removed == 0 {
                     return Err(api_err(ApiError::not_found("file not found")));
+                }
+                if record.kind == i0721_proto::FileKind::Folder {
+                    // Batch blob reclaim for the whole subtree: per key,
+                    // unlink only when no other live row references it
+                    // (compare-and-restore against racing re-uploads —
+                    // the single-file lane's guard, applied per key).
+                    use std::collections::HashMap;
+                    let mut keys: HashMap<String, ()> = HashMap::new();
+                    for row in &rows {
+                        if row.kind != i0721_proto::FileKind::Folder
+                            && !row.storage_key.is_empty()
+                        {
+                            keys.insert(row.storage_key.clone(), ());
+                        }
+                    }
+                    for (key, ()) in keys {
+                        let still_live = state
+                            .store
+                            .count_live_files_by_storage_key(&key)
+                            .await
+                            .map_err(store_err)?;
+                        if still_live == 0 {
+                            let snapshot = state
+                                .blobs
+                                .get(crate::blob::BlobSlot::Media, &key)
+                                .await
+                                .map_err(blob_err)?;
+                            state
+                                .blobs
+                                .delete(crate::blob::BlobSlot::Media, &key)
+                                .await
+                                .map_err(blob_err)?;
+                            if state
+                                .store
+                                .count_live_files_by_storage_key(&key)
+                                .await
+                                .map_err(store_err)?
+                                > 0
+                            {
+                                if let Some(bytes) = snapshot {
+                                    state
+                                        .blobs
+                                        .put(crate::blob::BlobSlot::Media, &key, &bytes)
+                                        .await
+                                        .map_err(blob_err)?;
+                                }
+                            }
+                        }
+                    }
+                    return Ok(Value::Null);
                 }
                 if state
                     .store
@@ -756,5 +864,213 @@ pub fn build_server(state: AppState) -> RpcServer {
                 Ok(Value::Null)
             }
         })
-        .build()
+        .method_ctx("files.create_folder", move |ctx: RpcRequestCtx| {
+            let state = state_create_folder.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct FolderParams {
+                    name: String,
+                    #[serde(default)]
+                    parent_id: Option<uuid::Uuid>,
+                }
+                let args: FolderParams = params(&ctx)?;
+                let user = user_of(&ctx);
+                validate_file_name(&args.name)
+                    .map_err(|err| ApiError::bad_request(err.to_string()))
+                    .map_err(api_err)?;
+                if let Some(parent) = args.parent_id {
+                    // The parent must be the caller's live folder.
+                    let row = state.store.get_file(parent).await.map_err(store_err)?
+                        .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
+                        .ok_or_else(|| ApiError::bad_request("parent folder not found"))
+                        .map_err(api_err)?;
+                    if user.role != Role::Admin && row.owner_id != user.id {
+                        return Err(api_err(ApiError::forbidden("not your folder")));
+                    }
+                }
+                let record = state
+                    .store
+                    .create_folder(user.id, args.parent_id, &args.name)
+                    .await
+                    .map_err(|err| match err {
+                        i0721_store::StoreError::Conflict(reason) => ApiError::conflict(reason),
+                        other => ApiError::from(other),
+                    })
+                    .map_err(api_err)?;
+                to_value(FileDto::from(record))
+            }
+        })
+        .method_ctx("files.move", move |ctx: RpcRequestCtx| {
+            let state = state_files_move.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct MoveParams {
+                    id: uuid::Uuid,
+                    #[serde(default)]
+                    parent_id: Option<uuid::Uuid>,
+                }
+                let args: MoveParams = params(&ctx)?;
+                let user = user_of(&ctx);
+                let record = state.store.get_file(args.id).await.map_err(store_err)?
+                    .filter(|r| r.deleted_at.is_none())
+                    .ok_or_else(|| ApiError::not_found("file not found"))
+                    .map_err(api_err)?;
+                if user.role != Role::Admin && record.owner_id != user.id {
+                    return Err(api_err(ApiError::forbidden("not your file")));
+                }
+                if let Some(parent) = args.parent_id {
+                    let target = state.store.get_file(parent).await.map_err(store_err)?
+                        .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
+                        .ok_or_else(|| ApiError::bad_request("target folder not found"))
+                        .map_err(api_err)?;
+                    if user.role != Role::Admin && target.owner_id != user.id {
+                        return Err(api_err(ApiError::forbidden("not your folder")));
+                    }
+                    // Cycle: the target's ancestor chain must not pass
+                    // through the moved row itself.
+                    let chain = state.store.ancestor_ids(parent).await.map_err(store_err)?;
+                    if chain.contains(&args.id) {
+                        return Err(api_err(ApiError::bad_request(
+                            "cannot move a folder into its own subtree",
+                        )));
+                    }
+                }
+                // Same-layer duplicate check (exclude self: moving within
+                // its own layer keeping its name is a no-op, not 409).
+                let taken = state
+                    .store
+                    .folder_name_taken(record.owner_id, args.parent_id, &record.name, Some(args.id))
+                    .await
+                    .map_err(store_err)?;
+                if taken {
+                    return Err(api_err(ApiError::conflict(
+                        "a row with this name already exists in the target folder",
+                    )));
+                }
+                state.store.set_parent(args.id, args.parent_id).await.map_err(store_err)?;
+                let moved = state.store.get_file(args.id).await.map_err(store_err)?
+                    .ok_or_else(|| ApiError::not_found("file not found"))
+                    .map_err(api_err)?;
+                to_value(FileDto::from(moved))
+            }
+        })
+        .method_ctx("files.share_create", move |ctx: RpcRequestCtx| {
+            let state = state_share_create.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct ShareParams {
+                    file_id: uuid::Uuid,
+                    #[serde(default)]
+                    expires_at: Option<String>,
+                    #[serde(default)]
+                    allow_preview: bool,
+                }
+                let args: ShareParams = params(&ctx)?;
+                let user = user_of(&ctx);
+                let record = state.store.get_file(args.file_id).await.map_err(store_err)?
+                    .filter(|r| r.deleted_at.is_none() && r.kind != i0721_proto::FileKind::Folder)
+                    .ok_or_else(|| ApiError::not_found("file not found"))
+                    .map_err(api_err)?;
+                if user.role != Role::Admin && record.owner_id != user.id {
+                    return Err(api_err(ApiError::forbidden("not your file")));
+                }
+                let share = state
+                    .store
+                    .create_share(NewShare {
+                        file_id: args.file_id,
+                        owner_id: record.owner_id,
+                        expires_at: args.expires_at,
+                        allow_preview: args.allow_preview,
+                    })
+                    .await
+                    .map_err(store_err)?;
+                to_value(ShareDto::from((share, record.name.clone(), record.size)))
+            }
+        })
+        .method_ctx("files.share_list", move |ctx: RpcRequestCtx| {
+            let state = state_share_list.clone();
+            async move {
+                let user = user_of(&ctx);
+                let shares = state.store.list_shares(user.id).await.map_err(store_err)?;
+                let mut out = Vec::with_capacity(shares.len());
+                for share in shares {
+                    if let Some(file) = state.store.get_file(share.file_id).await.map_err(store_err)? {
+                        out.push(ShareDto::from((share, file.name, file.size)));
+                    }
+                }
+                to_value(out)
+            }
+        })
+        .method_ctx("files.share_delete", move |ctx: RpcRequestCtx| {
+            let state = state_share_delete.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct DeleteParams {
+                    token: String,
+                }
+                let args: DeleteParams = params(&ctx)?;
+                let user = user_of(&ctx);
+                let share = state.store.get_share(&args.token).await.map_err(store_err)?
+                    .ok_or_else(|| ApiError::not_found("share not found"))
+                    .map_err(api_err)?;
+                if user.role != Role::Admin && share.owner_id != user.id {
+                    return Err(api_err(ApiError::forbidden("not your share")));
+                }
+                state.store.delete_share(&args.token).await.map_err(store_err)?;
+                Ok(Value::Null)
+            }
+        })
+        .method_ctx("files.quota_get", move |ctx: RpcRequestCtx| {
+            let state = state_quota_get.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct QuotaParams {
+                    #[serde(default)]
+                    user_id: Option<uuid::Uuid>,
+                }
+                let args: QuotaParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                let target = match args.user_id {
+                    Some(id) => {
+                        if caller.role != Role::Admin && caller.id != id {
+                            return Err(api_err(ApiError::forbidden("admin role required")));
+                        }
+                        state.store.get_user(id).await.map_err(store_err)?
+                            .ok_or_else(|| ApiError::not_found("user not found"))
+                            .map_err(api_err)?
+                    }
+                    None => caller,
+                };
+                let used = state.store.sum_live_sizes(target.id).await.map_err(store_err)?;
+                to_value(QuotaInfo {
+                    used_bytes: used,
+                    quota_bytes: target.quota_bytes,
+                })
+            }
+        })
+        .method_ctx("files.quota_put", move |ctx: RpcRequestCtx| {
+            let state = state_quota_put.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct QuotaPutParams {
+                    user_id: uuid::Uuid,
+                    #[serde(default)]
+                    quota_bytes: Option<i64>,
+                }
+                let args: QuotaPutParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                if let Some(bytes) = args.quota_bytes {
+                    if bytes < 0 {
+                        return Err(api_err(ApiError::bad_request("quota_bytes must be >= 0")));
+                    }
+                }
+                state
+                    .store
+                    .set_user_quota(args.user_id, args.quota_bytes)
+                    .await
+                    .map_err(store_err)?;
+                Ok(Value::Null)
+            }
+        })        .build()
 }

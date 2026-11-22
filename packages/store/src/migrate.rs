@@ -124,6 +124,27 @@ pub fn migrations() -> Vec<Migration> {
                 ON files (storage_key) WHERE deleted_at IS NULL;
             "#,
         ),
+        Migration::new(
+            "20261122000004",
+            "netdisk: folders, per-user quota, folder-name uniqueness",
+            r#"
+            ALTER TABLE users ADD COLUMN quota_bytes BIGINT;
+
+            -- The folder kind joins the CHECK (the constraint is rebuilt:
+            -- ALTER ... ADD CONSTRAINT cannot edit a CHECK in place).
+            ALTER TABLE files DROP CONSTRAINT files_kind_check;
+            ALTER TABLE files ADD CONSTRAINT files_kind_check
+                CHECK (kind IN ('folder', 'image', 'document', 'media', 'archive', 'other'));
+
+            -- Same-layer name uniqueness per owner, live rows only. The
+            -- COALESCE folds "root" (NULL parent) into a sentinel uuid so
+            -- the unique index also catches root-level duplicates (plain
+            -- NULLs are distinct in a unique index).
+            CREATE UNIQUE INDEX files_owner_folder_name_live_key
+                ON files (owner_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name)
+                WHERE deleted_at IS NULL;
+            "#,
+        ),
     ]
 }
 

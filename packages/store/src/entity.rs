@@ -33,6 +33,8 @@ pub struct UserModel {
     pub role: String,
     /// Argon2id hash; NULL = no password login.
     pub password_hash: Option<String>,
+    /// Per-user storage quota (bytes); NULL = the global default.
+    pub quota_bytes: Option<i64>,
     /// Account creation time.
     pub created_at: Timestamp,
 }
@@ -183,6 +185,7 @@ pub fn user_model_to_record(model: UserModel) -> Result<UserRecord, StoreError> 
         display_name: model.display_name,
         role,
         password_hash: model.password_hash,
+        quota_bytes: model.quota_bytes,
         created_at: model.created_at,
     })
 }
@@ -203,6 +206,7 @@ pub fn user_model_from_new(
         display_name: display_name.to_owned(),
         role: role.as_str().to_owned(),
         password_hash: password_hash.map(str::to_owned),
+        quota_bytes: None,
         created_at,
     }
 }
@@ -250,5 +254,18 @@ pub fn file_model_from_new(id: Uuid, file: &NewFile, created_at: Timestamp) -> F
         original_name: file.original_name.clone(),
         created_at,
         deleted_at: None,
+    }
+}
+
+/// Convert a [`ShareModel`] into its record form.
+#[must_use]
+pub fn share_model_to_record(model: ShareModel) -> i0721_proto::ShareRecord {
+    i0721_proto::ShareRecord {
+        token: model.token,
+        file_id: model.file_id,
+        owner_id: model.owner_id,
+        expires_at: model.expires_at,
+        allow_preview: model.allow_preview,
+        created_at: model.created_at,
     }
 }

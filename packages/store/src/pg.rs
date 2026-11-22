@@ -13,10 +13,12 @@ use lacrymira::{Command, Condition, Entity, Reply, TypedColumnOps, Value};
 use lacrymira_pg::{MigrationResult, MigrationRunner, PgExecutor};
 use uuid::Uuid;
 
+use i0721_proto::{NewShare, ShareRecord};
+
 use crate::entity::{
-    file_model_from_new, file_model_to_record, user_model_from_new, user_model_to_record,
-    FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel, SettingColumn, SettingModel,
-    UserColumn, UserModel,
+    file_model_from_new, file_model_to_record, share_model_to_record, user_model_from_new,
+    user_model_to_record, FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel,
+    SettingColumn, SettingModel, ShareColumn, ShareModel, UserColumn, UserModel,
 };
 use crate::{migrations, CreateUser, Store, StoreError};
 
@@ -449,6 +451,317 @@ impl Store for PgStore {
             .execute(&cmd)
             .await
             .map_err(StoreError::from)?;
+        Ok(())
+    }
+
+    // ── netdisk lane ─────────────────────────────────────────────────
+
+    async fn list_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        kind: Option<String>,
+    ) -> Result<Vec<FileRecord>, StoreError> {
+        let mut filter = FileColumn::DeletedAt
+            .is_null()
+            .into_inner()
+            .and(FileColumn::OwnerId.eq(owner_id).into_inner());
+        filter = match parent_id {
+            Some(pid) => filter.and(FileColumn::ParentId.eq(pid).into_inner()),
+            None => filter.and(FileColumn::ParentId.is_null().into_inner()),
+        };
+        if let Some(kind) = kind {
+            filter = filter.and(FileColumn::Kind.eq(kind).into_inner());
+        }
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(filter),
+            order_by: vec![("created_at".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_all::<FileModel>(cmd)
+            .await?
+            .into_iter()
+            .map(file_model_to_record)
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    async fn folder_name_taken(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        name: &str,
+        exclude: Option<Uuid>,
+    ) -> Result<bool, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT COUNT(*) FROM files                    WHERE deleted_at IS NULL AND owner_id = $1                    AND COALESCE(parent_id::text, 'ROOT') = COALESCE($2::text, 'ROOT')                    AND name = $3 AND id <> $4"
+                .to_owned(),
+            params: vec![
+                Value::Uuid(owner_id.to_string()),
+                parent_id.map(|p| Value::Uuid(p.to_string())).unwrap_or(Value::Null),
+                Value::Text(name.to_owned()),
+                exclude.map(|e| Value::Uuid(e.to_string())).unwrap_or(Value::Uuid(Uuid::nil().to_string())),
+            ],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a COUNT".to_owned()));
+        };
+        let hit = rows
+            .first()
+            .and_then(|row| row.iter().next())
+            .and_then(|v| match v {
+                Value::I64(n) => Some(*n > 0),
+                Value::I32(n) => Some(*n > 0),
+                _ => None,
+            })
+            .unwrap_or(false);
+        Ok(hit)
+    }
+
+    async fn create_folder(
+        &self,
+        owner_id: Uuid,
+        parent_id: Option<Uuid>,
+        name: &str,
+    ) -> Result<FileRecord, StoreError> {
+        if self
+            .folder_name_taken(owner_id, parent_id, name, None)
+            .await?
+        {
+            return Err(StoreError::Conflict(format!(
+                "name {name:?} already exists in this folder"
+            )));
+        }
+        let model = FileModel {
+            id: Uuid::new_v4(),
+            owner_id,
+            parent_id,
+            name: name.to_owned(),
+            kind: "folder".to_owned(),
+            mime: "inode/directory".to_owned(),
+            size: 0,
+            sha256: format!("dir:{}", Uuid::new_v4().simple()),
+            storage_backend: "local".to_owned(),
+            storage_key: String::new(),
+            thumbnail_key: None,
+            original_name: name.to_owned(),
+            created_at: Timestamp::now(),
+            deleted_at: None,
+        };
+        let stored = self
+            .query_one::<FileModel>(insert_command::<FileModel>(&model))
+            .await?
+            .ok_or_else(|| StoreError::Db("INSERT returned no row".to_owned()))?;
+        file_model_to_record(stored)
+    }
+
+    async fn set_parent(&self, id: Uuid, parent_id: Option<Uuid>) -> Result<(), StoreError> {
+        let cmd = update_command::<FileModel>(
+            vec![(
+                "parent_id",
+                parent_id
+                    .map(|p| Value::Uuid(p.to_string()))
+                    .unwrap_or(Value::Null),
+            )],
+            FileColumn::DeletedAt
+                .is_null()
+                .into_inner()
+                .and(FileColumn::Id.eq(id).into_inner()),
+        )?;
+        self.executor.execute(&cmd).await?;
+        Ok(())
+    }
+
+    async fn ancestor_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "WITH RECURSIVE up(id, parent) AS (                    SELECT id, parent_id FROM files WHERE id = $1                    UNION ALL SELECT f.id, f.parent_id FROM files f                    JOIN up ON f.id = up.parent)                    SELECT parent FROM up WHERE parent IS NOT NULL"
+                .to_owned(),
+            params: vec![Value::Uuid(id.to_string())],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db(
+                "expected rows from the ancestor walk".to_owned(),
+            ));
+        };
+        Ok(rows
+            .iter()
+            .filter_map(|row| match row.iter().next() {
+                Some(Value::Uuid(u)) => Uuid::parse_str(u).ok(),
+                _ => None,
+            })
+            .collect())
+    }
+
+    async fn subtree_live_ids(&self, id: Uuid) -> Result<Vec<Uuid>, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "WITH RECURSIVE down(id) AS (                    SELECT id FROM files WHERE id = $1                    UNION ALL SELECT f.id FROM files f                    JOIN down ON f.parent_id = down.id                    WHERE f.deleted_at IS NULL)                    SELECT id FROM down"
+                .to_owned(),
+            params: vec![Value::Uuid(id.to_string())],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db(
+                "expected rows from the subtree walk".to_owned(),
+            ));
+        };
+        Ok(rows
+            .iter()
+            .filter_map(|row| match row.iter().next() {
+                Some(Value::Uuid(u)) => Uuid::parse_str(u).ok(),
+                _ => None,
+            })
+            .collect())
+    }
+
+    async fn soft_delete_many(&self, ids: &[Uuid]) -> Result<u64, StoreError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let stamp = Timestamp::now().to_string();
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: format!(
+                "UPDATE files SET deleted_at = {} WHERE deleted_at IS NULL AND id IN ({})",
+                format!("'{}'", stamp),
+                placeholders.join(", ")
+            ),
+            params: ids.iter().map(|id| Value::Uuid(id.to_string())).collect(),
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Affected(n) = reply else {
+            return Err(StoreError::Db("expected an affected count".to_owned()));
+        };
+        Ok(n)
+    }
+
+    async fn get_files_by_ids(&self, ids: &[Uuid]) -> Result<Vec<FileRecord>, StoreError> {
+        // Cascade batches are bounded by subtree size; N indexed reads
+        // keep the row mapping inside the entity layer (raw rows cannot
+        // be typed back without the projection).
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(record) = self.get_file(*id).await? {
+                out.push(record);
+            }
+        }
+        Ok(out)
+    }
+
+    async fn create_share(&self, share: NewShare) -> Result<ShareRecord, StoreError> {
+        if let Some(existing) = self
+            .query_one::<ShareModel>(Command::Select {
+                table: ShareModel::TABLE.to_owned(),
+                filter: Some(ShareColumn::FileId.eq(share.file_id).into_inner()),
+                order_by: vec![],
+                limit: None,
+                offset: None,
+                lock: None,
+            })
+            .await?
+        {
+            if existing.owner_id == share.owner_id {
+                return Ok(share_model_to_record(existing));
+            }
+        }
+        let model = ShareModel {
+            token: crate::new_share_token(),
+            file_id: share.file_id,
+            owner_id: share.owner_id,
+            expires_at: share.expires_at,
+            allow_preview: share.allow_preview,
+            created_at: Timestamp::now(),
+        };
+        let stored = self
+            .query_one::<ShareModel>(insert_command::<ShareModel>(&model))
+            .await?
+            .ok_or_else(|| StoreError::Db("INSERT returned no row".to_owned()))?;
+        Ok(share_model_to_record(stored))
+    }
+
+    async fn get_share(&self, token: &str) -> Result<Option<ShareRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ShareModel::TABLE.to_owned(),
+            filter: Some(ShareColumn::Token.eq(token).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_one::<ShareModel>(cmd)
+            .await?
+            .map(share_model_to_record))
+    }
+
+    async fn list_shares(&self, owner_id: Uuid) -> Result<Vec<ShareRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ShareModel::TABLE.to_owned(),
+            filter: Some(ShareColumn::OwnerId.eq(owner_id).into_inner()),
+            order_by: vec![("created_at".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_all::<ShareModel>(cmd)
+            .await?
+            .into_iter()
+            .map(share_model_to_record)
+            .collect())
+    }
+
+    async fn delete_share(&self, token: &str) -> Result<bool, StoreError> {
+        let removed = self
+            .executor
+            .delete::<ShareModel>(Some(ShareColumn::Token.eq(token).into_inner()))
+            .await?;
+        Ok(removed > 0)
+    }
+
+    async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT COALESCE(SUM(size), 0) AS used FROM files                    WHERE deleted_at IS NULL AND owner_id = $1 AND kind <> 'folder'"
+                .to_owned(),
+            params: vec![Value::Uuid(owner_id.to_string())],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a SUM".to_owned()));
+        };
+        Ok(rows
+            .first()
+            .and_then(|row| row.iter().next())
+            .and_then(|v| match v {
+                Value::I64(n) => Some(*n),
+                Value::I32(n) => Some(i64::from(*n)),
+                _ => None,
+            })
+            .unwrap_or(0))
+    }
+
+    async fn set_user_quota(
+        &self,
+        user_id: Uuid,
+        quota_bytes: Option<i64>,
+    ) -> Result<(), StoreError> {
+        let cmd = update_command::<UserModel>(
+            vec![(
+                "quota_bytes",
+                quota_bytes.map(Value::I64).unwrap_or(Value::Null),
+            )],
+            UserColumn::Id.eq(user_id).into_inner(),
+        )?;
+        self.executor.execute(&cmd).await?;
         Ok(())
     }
 }

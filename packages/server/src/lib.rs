@@ -14,6 +14,7 @@ pub mod oauth;
 pub mod pipeline;
 pub mod routes;
 pub mod rpc;
+pub mod share;
 pub mod state;
 pub mod static_files;
 pub mod ws_tickets;

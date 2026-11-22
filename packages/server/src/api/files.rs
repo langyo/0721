@@ -11,13 +11,15 @@ use crate::blob::BlobSlot;
 use crate::error::ApiError;
 use crate::pipeline::{process_upload, UploadRules};
 use crate::state::AppState;
-use i0721_proto::{validate_file_name, FileDto, NewFile};
+use i0721_proto::{validate_file_name, FileDto, NewFile, Role};
 
 /// Optional query of the upload endpoint (the legacy `?name=`).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UploadQuery {
     /// Force the display name of the uploaded file.
     pub name: Option<String>,
+    /// The destination folder (validated: exists, live, folder, owner).
+    pub folder_id: Option<uuid::Uuid>,
 }
 
 /// `POST /api/v1/files` (multipart, field `file`)
@@ -105,6 +107,31 @@ pub async fn upload(
             .await?;
     }
 
+    // Destination folder: must be the caller's live folder (admins may
+    // target any).
+    if let Some(folder_id) = args.folder_id {
+        let folder = state
+            .store
+            .get_file(folder_id)
+            .await?
+            .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
+            .ok_or_else(|| ApiError::bad_request("folder not found"))?;
+        if user.role != Role::Admin && folder.owner_id != user.id {
+            return Err(ApiError::forbidden("not your folder"));
+        }
+    }
+
+    // Quota: the caller's live bytes + this upload against their limit
+    // (user override ?? the global default; None = unlimited).
+    if let Some(quota) = user.quota_bytes {
+        let used = state.store.sum_live_sizes(user.id).await?;
+        if used + data.len() as i64 > quota {
+            return Err(ApiError::too_large(format!(
+                "quota exceeded: {used} bytes used, the limit is {quota}"
+            )));
+        }
+    }
+
     let name = args
         .name
         .clone()
@@ -120,6 +147,7 @@ pub async fn upload(
 
     let new_file = NewFile {
         owner_id: user.id,
+        parent_id: args.folder_id,
         name,
         kind: processed.kind,
         mime: processed.mime.clone(),

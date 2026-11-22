@@ -1064,6 +1064,7 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     // delete handler reaches the unlink.
     *racy.payload.lock().unwrap() = Some((
         i0721_proto::NewFile {
+            parent_id: None,
             owner_id: other.id,
             name: "raced.png".to_owned(),
             kind: i0721_proto::FileKind::Image,
