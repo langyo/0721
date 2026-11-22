@@ -151,7 +151,12 @@ required variable or an unparseable value refuses to start):
 | `I0721_DATABASE_URL` | required | PostgreSQL URL |
 | `JWT_SECRET` (container-side; compose sets it from `I0721_JWT_SECRET`) | required | HS256 secret for the transition-era tokens |
 | `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
-| `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it) |
+| `I0721_STORAGE_BACKEND` | `local` | blob backend selection: `local`, `s3` or `ipfs` (see [Storage backends](#storage-backends)) |
+| `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it); consumed by the `local` backend only |
+| `I0721_S3_ENDPOINT` | *(empty)* | S3-compatible endpoint (MinIO/R2; http only for internal networks). Empty = AWS |
+| `I0721_S3_BUCKET` / `I0721_S3_REGION` | required with `s3` | bucket name / region (`auto` works for MinIO) |
+| `I0721_S3_ACCESS_KEY` / `I0721_S3_SECRET_KEY` | required with `s3` | credentials |
+| `I0721_IPFS_API` | required with `ipfs` | kubo RPC base URL (e.g. `http://127.0.0.1:5001`) |
 | `I0721_PUBLIC_ORIGIN` | — | the deployment's absolute https origin (OAuth redirect URIs); unset = Host-header derivation |
 | `I0721_STATIC_DIR` | `dist/webui` | web UI dist directory (dev mode; the default build embeds the dist) |
 | `I0721_UPLOAD_CONCURRENCY` | `4` | concurrent upload-pipeline slots |
