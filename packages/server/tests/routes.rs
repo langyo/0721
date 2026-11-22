@@ -3,6 +3,7 @@
 //! services — PostgreSQL is covered by the opt-in lane in
 //! `i0721-store`'s `pg_lane` tests.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use axum::Router;
 use i0721_proto::{Role, SiteConfigStrict, UserRecord};
 use i0721_store::{CreateUser, MemoryStore, Store};
 use jiff::Timestamp;
+use sha2::Digest;
 use tower::ServiceExt;
 
 use i0721_server::auth::hash_password;
@@ -1755,4 +1757,654 @@ async fn a_ticket_opened_socket_answers_a_real_frame() {
     let envelope: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(envelope["result"]["username"], "admin");
     ws.close(None).await.ok();
+}
+
+// ── the OAuth dual-mode lane ────────────────────────────────────────────
+
+/// A local OAuth provider stub: the authorize endpoint records the
+/// PKCE challenge/method and redirects back with a code; the token
+/// endpoint validates the verifier against that challenge (S256 math)
+/// and the client secret; the userinfo endpoint answers a fixed
+/// subject. This is the flow's real evidence — the server under test
+/// performs genuine outbound HTTP against it.
+struct ProviderStub {
+    /// (challenge, method) seen at authorize.
+    challenge: std::sync::Mutex<(String, String)>,
+    /// The verifier seen at token (asserted against the challenge).
+    verifier_at_token: std::sync::Mutex<String>,
+    /// The secret the token endpoint demands.
+    secret: String,
+    authorize_hits: std::sync::Mutex<usize>,
+}
+
+impl ProviderStub {
+    fn router(self: Arc<Self>) -> Router {
+        let authorize_stub = self.clone();
+        let token_stub = self.clone();
+        Router::new()
+            .route(
+                "/oauth/authorize",
+                axum::routing::get(move |axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>| {
+                    let stub = authorize_stub.clone();
+                    async move {
+                        *stub.challenge.lock().unwrap() = (
+                            q.get("code_challenge").cloned().unwrap_or_default(),
+                            q.get("code_challenge_method").cloned().unwrap_or_default(),
+                        );
+                        *stub.authorize_hits.lock().unwrap() += 1;
+                        let state = q.get("state").cloned().unwrap_or_default();
+                        let redirect =
+                            format!("http://res.test/api/v1/auth/oauth/stub/callback?code=CODE123&state={state}");
+                        axum::response::Redirect::to(&redirect)
+                    }
+                }),
+            )
+            .route(
+                "/api/oauth/token",
+                axum::routing::post(move |body: String| {
+                    let stub = token_stub.clone();
+                    async move {
+                        let form: HashMap<String, String> =
+                            url::form_urlencoded::parse(body.as_bytes())
+                                .into_owned()
+                                .collect::<HashMap<String, String>>();
+                        let verifier = form.get("code_verifier").cloned().unwrap_or_default();
+                        *stub.verifier_at_token.lock().unwrap() = verifier.clone();
+                        // PKCE S256: BASE64URL(SHA256(verifier)) must equal
+                        // the challenge recorded at authorize.
+                        let digest = sha2::Sha256::digest(verifier.as_bytes());
+                        let expected = {
+                            use base64::Engine;
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+                        };
+                        let (challenge, method) = stub.challenge.lock().unwrap().clone();
+                        if method != "S256" || expected != challenge {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                axum::Json(serde_json::json!({
+                                    "error": "pkce_mismatch",
+                                    "method": method,
+                                })),
+                            );
+                        }
+                        if form.get("client_secret").map(String::as_str) != Some(stub.secret.as_str()) {
+                            return (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({"error": "bad_secret"})));
+                        }
+                        if form.get("code").map(String::as_str) != Some("CODE123") {
+                            return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"error": "bad_code"})));
+                        }
+                        (
+                            StatusCode::OK,
+                            axum::Json(serde_json::json!({
+                                "access_token": "stub-access-token",
+                                "token_type": "Bearer",
+                            })),
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/oauth/userinfo",
+                axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                    let auth = headers
+                        .get(header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or_default();
+                    if auth != "Bearer stub-access-token" {
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            axum::Json(serde_json::json!({"error": "bad_token"})),
+                        );
+                    }
+                    (
+                        StatusCode::OK,
+                        axum::Json(serde_json::json!({
+                            "sub": "subject-abcdef01",
+                            "name": "Stub User",
+                        })),
+                    )
+                }),
+            )
+    }
+}
+
+async fn oauth_test_state_with_stub() -> (AppState, Arc<ProviderStub>, String, UserRecord) {
+    let (state, admin) = test_state().await;
+    // The stub listener.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stub = Arc::new(ProviderStub {
+        challenge: std::sync::Mutex::new((String::new(), String::new())),
+        verifier_at_token: std::sync::Mutex::new(String::new()),
+        secret: "stub-secret-9999".to_owned(),
+        authorize_hits: std::sync::Mutex::new(0),
+    });
+    let app = stub.clone().router();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let base = format!("http://127.0.0.1:{}", addr.port());
+    // Register the provider as a builtin:erp row pointing at the stub.
+    let provider = serde_json::json!([{
+        "id": "stub",
+        "display_name": "Stub SSO",
+        "type": "builtin:erp",
+        "client_id": "stub-client",
+        "client_secret": "stub-secret-9999",
+        "base_url": base,
+        "enabled": true,
+    }]);
+    state
+        .store
+        .set_setting("oauth_providers", provider)
+        .await
+        .unwrap();
+    (state, stub, base, admin)
+}
+
+/// One full OAuth round against the stub: redirect entry → browser
+/// authorize leg → callback. Returns the callback's response.
+async fn oauth_login_round(state: &AppState) -> axum::http::Response<axum::body::Body> {
+    let redirect = app(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/stub")
+                .header(header::HOST, "res.test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(redirect.status(), StatusCode::FOUND);
+    let location = redirect
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let cookie = redirect
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let flow_value = cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .strip_prefix("i0721-oauth-state=")
+        .unwrap()
+        .to_owned();
+
+    // The browser leg (no redirect following — res.test is virtual).
+    let browser = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let authorize = browser.get(&location).send().await.expect("authorize leg");
+    assert!(authorize.status().is_redirection());
+    let back = authorize
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .trim_start_matches("http://res.test")
+        .to_owned();
+
+    app(state)
+        .oneshot(
+            Request::builder()
+                .uri(back)
+                .header(header::HOST, "res.test")
+                .header(header::COOKIE, format!("i0721-oauth-state={flow_value}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn oauth_end_to_end_against_a_local_stub_provider() {
+    use base64::Engine;
+    let (state, stub, _base, _admin) = oauth_test_state_with_stub().await;
+
+    // 1. The redirect entry: 302 with the state/PKCE cookie.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/stub")
+                .header(header::HOST, "res.test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(cookie.contains("HttpOnly"), "the flow cookie is HttpOnly");
+    assert!(
+        cookie.contains("Max-Age=600"),
+        "the flow cookie lives 600 s"
+    );
+    assert!(cookie.contains("SameSite=Lax"));
+    assert!(cookie.starts_with("i0721-oauth-state="));
+
+    // The authorize URL carries state + PKCE S256.
+    assert!(location.contains("/oauth/authorize?"));
+    assert!(location.contains("state="));
+    assert!(location.contains("code_challenge_method=S256"));
+
+    // The BROWSER leg: follow the authorize URL against the stub (the
+    // app's own HTTP client stands in for the browser). The stub
+    // records the challenge/method and 302s back to our callback.
+    let browser = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let authorize_response = browser
+        .get(&location)
+        .send()
+        .await
+        .expect("the authorize leg reaches the stub");
+    assert!(
+        authorize_response.status().is_redirection(),
+        "the stub redirects back: {}",
+        authorize_response.status()
+    );
+    let back = authorize_response
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(back.starts_with("http://res.test/api/v1/auth/oauth/stub/callback"));
+    // Drive the callback by its REAL redirected URI (query carries the
+    // provider-echoed state + code).
+    let callback = back.trim_start_matches("http://res.test").to_owned();
+
+    // 2. The callback: strict state check, code exchange, userinfo,
+    //    find_or_create, session cookie, 302 to /.
+    let flow_value = cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .strip_prefix("i0721-oauth-state=")
+        .unwrap()
+        .to_owned();
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(callback)
+                .header(header::HOST, "res.test")
+                .header(header::COOKIE, format!("i0721-oauth-state={flow_value}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    if response.status() != StatusCode::FOUND {
+        let body = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        panic!("DEBUG callback failed: {}", String::from_utf8_lossy(&body));
+    }
+    assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/");
+    let set_cookies: Vec<&str> = response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .map(|v| v.to_str().unwrap())
+        .collect();
+    let session = set_cookies
+        .iter()
+        .find(|c| c.starts_with("i0721-token="))
+        .expect("the OAuth login plants the session cookie");
+    assert!(session.contains("HttpOnly"));
+    // The flow cookie is cleared alongside.
+    assert!(set_cookies
+        .iter()
+        .any(|c| c.starts_with("i0721-oauth-state=;")));
+
+    // 3. PKCE S256 verified end-to-end: the verifier at token exchange
+    //    hashes to the challenge recorded at authorize.
+    let verifier = stub.verifier_at_token.lock().unwrap().clone();
+    let (challenge, method) = stub.challenge.lock().unwrap().clone();
+    assert_eq!(method, "S256");
+    let expected = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(sha2::Sha256::digest(verifier.as_bytes()));
+    assert_eq!(expected, challenge, "PKCE S256 math holds across the flow");
+
+    // 4. The minted session is REAL: auth.verify answers over the RPC
+    //    lane with the planted cookie.
+    let token = session
+        .split(';')
+        .next()
+        .unwrap()
+        .strip_prefix("i0721-token=")
+        .unwrap()
+        .to_owned();
+    let (status, envelope) = rpc(&state, &token, "auth.verify", serde_json::Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let user = envelope["result"].as_object().unwrap();
+    assert_eq!(
+        user["username"].as_str().unwrap(),
+        "stub_subject-", // {provider}_{subject[0..8]} sanitized
+        "the minted account follows the provider_subject8 rule"
+    );
+    assert_eq!(user["display_name"], "Stub User");
+    assert_eq!(user["role"], "member");
+}
+
+#[tokio::test]
+async fn oauth_second_login_is_idempotent() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+
+    let first = oauth_login_round(&state).await;
+    assert_eq!(first.status(), StatusCode::FOUND);
+    let users_after_first = state.store.count_users().await.unwrap();
+
+    // A second full round, same subject — NO second account.
+    let second = oauth_login_round(&state).await;
+    assert_eq!(second.status(), StatusCode::FOUND);
+    assert_eq!(
+        state.store.count_users().await.unwrap(),
+        users_after_first,
+        "the same (provider, subject) never mints twice"
+    );
+}
+
+#[tokio::test]
+async fn oauth_callback_rejects_a_wrong_state() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/stub/callback?code=CODE123&state=forged")
+                .header(header::HOST, "res.test")
+                .header(header::COOKIE, "i0721-oauth-state=realstate.realverifier")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn oauth_redirect_refuses_unknown_providers() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/definitely-not")
+                .header(header::HOST, "res.test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn login_methods_shape_and_secret_hygiene() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    // (The providers row is already planted by the stub fixture.)
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/login-methods")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["password"], true, "unpinned defaults to password ON");
+    let providers = json["providers"].as_array().unwrap();
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0]["id"], "stub");
+    assert_eq!(providers[0]["display_name"], "Stub SSO");
+    // The secret-hygiene pin (the negative control anchor): no secret
+    // material anywhere in the public payload.
+    let text = body.to_vec();
+    let text = String::from_utf8_lossy(&text);
+    assert!(
+        !text.contains("stub-secret-9999"),
+        "login-methods must never leak the client secret"
+    );
+    assert!(
+        !json["providers"][0]
+            .as_object()
+            .unwrap()
+            .contains_key("client_secret"),
+        "no client_secret key in the public shape"
+    );
+}
+
+#[tokio::test]
+async fn password_kill_switch_gates_login_and_login_methods() {
+    let (state, _stub, _base, admin) = oauth_test_state_with_stub().await;
+    let admin_token = state.signer.sign(admin.id, Timestamp::now());
+
+    // Off via the admin RPC.
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "auth.password.put",
+        serde_json::json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    // login-methods reports password:false.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/login-methods")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["password"], false);
+
+    // The password login itself: 403 with the uniform message.
+    let response = app(&state)
+        .oneshot(login_request("admin", "admin-password"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("password login is disabled"));
+
+    // Back on.
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "auth.password.put",
+        serde_json::json!({"enabled": true}),
+    )
+    .await;
+    let _ = envelope;
+    let response = app(&state)
+        .oneshot(login_request("admin", "admin-password"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn provider_crud_masks_secrets_and_empty_upsert_keeps_the_stored_one() {
+    let (state, _stub, _base, admin) = oauth_test_state_with_stub().await;
+    let admin_token = state.signer.sign(admin.id, Timestamp::now());
+
+    // List: masked — has_secret + tail, never the value.
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.list",
+        serde_json::Value::Null,
+    )
+    .await;
+    let list = envelope["result"].as_array().unwrap();
+    let stub_row = list.iter().find(|r| r["id"] == "stub").unwrap();
+    assert_eq!(stub_row["has_secret"], true);
+    assert_eq!(stub_row["secret_tail"], "9999");
+    assert!(
+        !serde_json::to_string(stub_row)
+            .unwrap()
+            .contains("stub-secret-9999"),
+        "the admin list is masked too"
+    );
+
+    // Upsert with an EMPTY secret: keeps the stored one.
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.upsert",
+        serde_json::json!({
+            "id": "stub",
+            "display_name": "Stub SSO renamed",
+            "type": "builtin:erp",
+            "client_id": "stub-client",
+            "client_secret": "",
+            "base_url": _base,
+            "enabled": false,
+        }),
+    )
+    .await;
+    assert_eq!(envelope["result"]["display_name"], "Stub SSO renamed");
+    assert_eq!(
+        envelope["result"]["has_secret"], true,
+        "empty secret KEEPS the stored one"
+    );
+    assert_eq!(envelope["result"]["secret_tail"], "9999");
+    // The flow still authenticates against the stub (secret intact):
+    // the disabled flag now HIDES the provider instead.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/login-methods")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&body).contains("Stub SSO"),
+        "disabled providers vanish"
+    );
+
+    // A bad type or id is refused.
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.upsert",
+        serde_json::json!({
+            "id": "Bad Id", "display_name": "x", "type": "builtin:erp",
+            "client_id": "c", "client_secret": "", "enabled": true,
+        }),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32602);
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.upsert",
+        serde_json::json!({
+            "id": "ok-id", "display_name": "x", "type": "twitter",
+            "client_id": "c", "client_secret": "", "enabled": true,
+        }),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32602);
+
+    // Delete: gone; a second delete is NOT_FOUND.
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.delete",
+        serde_json::json!({"id": "stub"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(envelope["result"].is_null());
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "providers.delete",
+        serde_json::json!({"id": "stub"}),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32006);
+
+    // Member gate: every providers.* method refuses non-admins.
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "member".to_owned(),
+            display_name: "Member".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    // Well-formed per-method params: the gate must fire BEFORE any
+    // params validation.
+    for (method, params) in [
+        ("providers.list", serde_json::Value::Null),
+        (
+            "providers.upsert",
+            serde_json::json!({
+                "id": "x", "display_name": "x", "type": "builtin:erp",
+                "client_id": "c", "client_secret": "", "enabled": true,
+            }),
+        ),
+        ("providers.delete", serde_json::json!({"id": "x"})),
+        ("auth.password.get", serde_json::Value::Null),
+        ("auth.password.put", serde_json::json!({"enabled": true})),
+    ] {
+        let (status, envelope) = rpc(&state, &member_token, method, params).await;
+        assert_eq!(status, StatusCode::OK, "{method}: {envelope}");
+        assert_eq!(rpc_error_code(&envelope), -32005, "{method} is admin-gated");
+    }
 }

@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use crate::entity::{
     file_model_from_new, file_model_to_record, user_model_from_new, user_model_to_record,
-    FileColumn, FileModel, SettingColumn, SettingModel, UserColumn, UserModel,
+    FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel, SettingColumn, SettingModel,
+    UserColumn, UserModel,
 };
 use crate::{migrations, CreateUser, Store, StoreError};
 
@@ -361,6 +362,62 @@ impl Store for PgStore {
             ))
             .await?;
         Ok(count as u64)
+    }
+
+    async fn get_oauth_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<Uuid>, StoreError> {
+        let cmd = Command::Select {
+            table: OAuthIdentityModel::TABLE.to_owned(),
+            filter: Some(
+                OAuthIdentityColumn::Provider
+                    .eq(provider)
+                    .into_inner()
+                    .and(OAuthIdentityColumn::Subject.eq(subject).into_inner()),
+            ),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+        };
+        Ok(self
+            .query_one::<OAuthIdentityModel>(cmd)
+            .await?
+            .map(|model| model.user_id))
+    }
+
+    async fn link_oauth_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+        user_id: Uuid,
+    ) -> Result<(), StoreError> {
+        let model = OAuthIdentityModel {
+            provider: provider.to_owned(),
+            subject: subject.to_owned(),
+            user_id,
+        };
+        match self
+            .query_one::<OAuthIdentityModel>(insert_command::<OAuthIdentityModel>(&model))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(StoreError::Conflict(reason)) => Err(StoreError::Conflict(reason)),
+            Err(StoreError::Db(reason)) => {
+                // A composite-PK collision surfaces as a unique-violation
+                // database error through the escape hatch; normalize the
+                // class the memory lane already speaks.
+                if reason.to_ascii_lowercase().contains("duplicate key") {
+                    Err(StoreError::Conflict(format!(
+                        "identity {provider}/{subject} is already linked"
+                    )))
+                } else {
+                    Err(StoreError::Db(reason))
+                }
+            }
+        }
     }
 
     async fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {

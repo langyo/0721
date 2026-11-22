@@ -8,6 +8,7 @@ use tokio::sync::Semaphore;
 use crate::auth::{JwtSigner, LoginLimiter};
 use crate::blob::BlobStore;
 use crate::config::Config;
+use crate::oauth::DiscoveryCache;
 use crate::ws_tickets::WsTicketStore;
 
 /// Everything a handler needs.
@@ -28,6 +29,10 @@ pub struct AppState {
     /// One-time WebSocket admission tickets (in-memory: single-instance
     /// deployments — see `ws_tickets`).
     pub ws_tickets: Arc<WsTicketStore>,
+    /// The server-side OAuth HTTP client (token exchange + discovery).
+    pub http_client: reqwest::Client,
+    /// In-process OIDC discovery cache (positive + negative).
+    pub discovery: Arc<DiscoveryCache>,
 }
 
 impl AppState {
@@ -44,6 +49,8 @@ impl AppState {
             login_limiter: Arc::new(LoginLimiter::default()),
             upload_slots,
             ws_tickets: Arc::new(WsTicketStore::new()),
+            http_client: reqwest::Client::new(),
+            discovery: Arc::new(DiscoveryCache::new()),
         }
     }
 }

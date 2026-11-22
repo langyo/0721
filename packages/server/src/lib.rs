@@ -10,6 +10,7 @@ pub mod blob;
 pub mod config;
 pub mod error;
 pub mod media;
+pub mod oauth;
 pub mod pipeline;
 pub mod routes;
 pub mod rpc;

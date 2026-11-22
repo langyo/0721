@@ -72,6 +72,12 @@ impl ApiError {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
 
+    /// `502 Bad Gateway` (an upstream OAuth provider failed us).
+    #[must_use]
+    pub fn bad_gateway(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_GATEWAY, message)
+    }
+
     /// The HTTP status this error carries (the RPC lane maps it onto the
     /// JSON-RPC error-code family).
     #[must_use]

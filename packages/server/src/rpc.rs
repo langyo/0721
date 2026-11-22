@@ -52,10 +52,15 @@ pub struct CreateUserRequest {
     #[serde(default)]
     pub role: Option<Role>,
 }
+use crate::api::auth::{password_login_enabled, PASSWORD_LOGIN_SETTINGS_KEY};
 use crate::api::settings::site_config;
 use crate::auth::{clears_watermark, hash_password, watermark_key};
 use crate::blob::BlobSlot;
 use crate::error::ApiError;
+use crate::oauth::{
+    load_providers, save_providers, valid_provider_id, valid_provider_type, OAuthProvider,
+    OAuthProviderUpsert,
+};
 use crate::state::AppState;
 
 /// Extension error codes of this service (the plana standard family:
@@ -315,6 +320,11 @@ pub fn build_server(state: AppState) -> RpcServer {
     let state_users_delete = state.clone();
     let state_settings_get = state.clone();
     let state_settings_put = state.clone();
+    let state_providers_list = state.clone();
+    let state_providers_upsert = state.clone();
+    let state_providers_delete = state.clone();
+    let state_password_get = state.clone();
+    let state_password_put = state.clone();
     RpcServer::builder()
         .auth(move |headers: &HeaderMap, uri: &Uri| {
             let state = state.clone();
@@ -605,6 +615,113 @@ pub fn build_server(state: AppState) -> RpcServer {
                                 "config serialization failed: {err}"
                             ))
                         })?,
+                    )
+                    .await
+                    .map_err(store_err)?;
+                Ok(Value::Null)
+            }
+        })
+        .method_ctx("providers.list", move |ctx: RpcRequestCtx| {
+            let state = state_providers_list.clone();
+            async move {
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                let rows = load_providers(&state).await;
+                to_value(rows.iter().map(OAuthProvider::masked).collect::<Vec<_>>())
+            }
+        })
+        .method_ctx("providers.upsert", move |ctx: RpcRequestCtx| {
+            let state = state_providers_upsert.clone();
+            async move {
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                let upsert: OAuthProviderUpsert = params(&ctx)?;
+                if !valid_provider_id(&upsert.id) {
+                    return Err(api_err(ApiError::bad_request(
+                        "provider id must be [a-z0-9][a-z0-9._-]* (max 48)",
+                    )));
+                }
+                if !valid_provider_type(&upsert.provider_type) {
+                    return Err(api_err(ApiError::bad_request(
+                        "type must be builtin:github | builtin:feishu | builtin:erp | oidc",
+                    )));
+                }
+                let mut providers = load_providers(&state).await;
+                // Empty secret = keep the stored one (the admin form
+                // never echoes secrets back).
+                let stored_secret = providers
+                    .iter()
+                    .find(|p| p.id == upsert.id)
+                    .map(|p| p.client_secret.clone())
+                    .unwrap_or_default();
+                let secret = if upsert.client_secret.is_empty() {
+                    stored_secret
+                } else {
+                    upsert.client_secret.clone()
+                };
+                let row = OAuthProvider {
+                    id: upsert.id,
+                    display_name: upsert.display_name,
+                    provider_type: upsert.provider_type,
+                    client_id: upsert.client_id,
+                    client_secret: secret,
+                    base_url: upsert.base_url,
+                    issuer_url: upsert.issuer_url,
+                    scopes: upsert.scopes,
+                    enabled: upsert.enabled,
+                    icon: upsert.icon,
+                };
+                match providers.iter().position(|p| p.id == row.id) {
+                    Some(index) => providers[index] = row.clone(),
+                    None => providers.push(row.clone()),
+                }
+                save_providers(&state, &providers).await.map_err(api_err)?;
+                to_value(row.masked())
+            }
+        })
+        .method_ctx("providers.delete", move |ctx: RpcRequestCtx| {
+            let state = state_providers_delete.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct DeleteParams {
+                    id: String,
+                }
+                let params: DeleteParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                let mut providers = load_providers(&state).await;
+                let before = providers.len();
+                providers.retain(|p| p.id != params.id);
+                if providers.len() == before {
+                    return Err(api_err(ApiError::not_found("provider not found")));
+                }
+                save_providers(&state, &providers).await.map_err(api_err)?;
+                Ok(Value::Null)
+            }
+        })
+        .method_ctx("auth.password.get", move |ctx: RpcRequestCtx| {
+            let state = state_password_get.clone();
+            async move {
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                to_value(password_login_enabled(&state).await)
+            }
+        })
+        .method_ctx("auth.password.put", move |ctx: RpcRequestCtx| {
+            let state = state_password_put.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct PutParams {
+                    enabled: bool,
+                }
+                let params: PutParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                state
+                    .store
+                    .set_setting(
+                        PASSWORD_LOGIN_SETTINGS_KEY,
+                        serde_json::Value::Bool(params.enabled),
                     )
                     .await
                     .map_err(store_err)?;

@@ -136,6 +136,68 @@ pub(crate) async fn require_auth(
     Ok((claims, user))
 }
 
+/// system_settings key for the password kill-switch. Precedence: a
+/// well-formed row first, then the env pin (`I0721_PASSWORD_LOGIN`),
+/// then default ON (a fresh deployment with no OAuth configured must
+/// not lock itself out).
+pub const PASSWORD_LOGIN_SETTINGS_KEY: &str = "auth_password_login";
+
+/// The wire message when the switch is off (chest-identical wording so
+/// a shared frontend error table maps both).
+pub const PASSWORD_LOGIN_DISABLED_MESSAGE: &str = "password login is disabled";
+
+/// The kill-switch's decision core (pure, so the precedence matrix is
+/// testable without a store): a well-formed row wins; a JUNK row
+/// arrives as `None` and defers to the env pin instead of failing OPEN
+/// — a malformed operator edit must not silently re-enable a disabled
+/// surface. Unpinned = on.
+pub(crate) fn resolve_password_login(row: Option<bool>, env_pin: Option<bool>) -> bool {
+    row.or(env_pin).unwrap_or(true)
+}
+
+/// Whether the password credential surface is offered.
+pub(crate) async fn password_login_enabled(state: &AppState) -> bool {
+    let row = state
+        .store
+        .get_setting(PASSWORD_LOGIN_SETTINGS_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| value.as_bool());
+    let env_pin = std::env::var("I0721_PASSWORD_LOGIN").ok().and_then(|raw| {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    });
+    resolve_password_login(row, env_pin)
+}
+
+/// `GET /api/v1/auth/login-methods` — the public login-page descriptor:
+/// the password kill-switch's state plus the enabled provider summary
+/// (NO secret material anywhere in the payload).
+pub async fn login_methods(
+    State(state): State<AppState>,
+) -> axum::response::Json<crate::oauth::LoginMethods> {
+    let password = password_login_enabled(&state).await;
+    let providers = crate::oauth::load_providers(&state)
+        .await
+        .into_iter()
+        .filter(|provider| provider.enabled)
+        .map(|provider| crate::oauth::LoginMethodProvider {
+            id: provider.id,
+            display_name: provider.display_name,
+            provider_type: provider.provider_type,
+            icon: provider.icon,
+        })
+        .collect();
+    axum::response::Json(crate::oauth::LoginMethods {
+        password,
+        providers,
+    })
+}
+
 /// `POST /api/v1/auth/login` — mints the session and plants it as an
 /// httpOnly cookie; the body carries only the expiry and the user (the
 /// cookie is the credential — see [`AuthSession`]).
@@ -145,6 +207,11 @@ pub async fn login(
     headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
+    // The password kill-switch: fail closed for every password attempt
+    // when the switch is off (login-methods already hides the form).
+    if !password_login_enabled(&state).await {
+        return Err(ApiError::forbidden(PASSWORD_LOGIN_DISABLED_MESSAGE));
+    }
     let client_ip = effective_client_ip(&state.config.trusted_proxies, source.ip(), &headers);
     state.login_limiter.record(client_ip)?;
 
@@ -272,9 +339,26 @@ fn session_cookie(token: &str, session: AuthSession) -> Response {
         .into_response()
 }
 
-fn expiry_rfc3339(now: Timestamp) -> String {
+pub(crate) fn expiry_rfc3339(now: Timestamp) -> String {
     let exp = now
         .checked_add(jiff::Span::new().hours(crate::auth::TOKEN_TTL_DAYS * 24))
         .unwrap_or(now);
     exp.to_string()
+}
+
+#[cfg(test)]
+mod password_switch_tests {
+    use super::*;
+
+    #[test]
+    fn decision_matrix_row_wins_then_env_then_default_on() {
+        // A well-formed row wins over everything.
+        assert!(resolve_password_login(Some(true), Some(false)));
+        assert!(!resolve_password_login(Some(false), Some(true)));
+        // Junk rows arrive as None and defer to the env pin.
+        assert!(resolve_password_login(None, Some(true)));
+        assert!(!resolve_password_login(None, Some(false)));
+        // Unpinned defaults ON (fresh deployments must not lock out).
+        assert!(resolve_password_login(None, None));
+    }
 }
