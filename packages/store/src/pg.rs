@@ -103,6 +103,7 @@ impl PgStore {
 fn command_kind(cmd: &Command) -> &'static str {
     match cmd {
         Command::Select { .. } => "SELECT",
+        Command::Aggregate { .. } => "AGGREGATE",
         Command::Insert { .. } => "INSERT",
         Command::Update { .. } => "UPDATE",
         Command::Delete { .. } => "DELETE",
@@ -127,6 +128,7 @@ fn insert_command<E: Entity>(model: &E::Model) -> Command {
 fn update_command<E: Entity>(
     sets: Vec<(&str, Value)>,
     filter: Condition,
+    returning: bool,
 ) -> Result<Command, StoreError> {
     let mut seen = std::collections::HashSet::new();
     for (column, _) in &sets {
@@ -141,6 +143,7 @@ fn update_command<E: Entity>(
             .map(|(column, value)| (column.to_owned(), value))
             .collect(),
         filter: Some(filter),
+        returning,
     })
 }
 
@@ -152,6 +155,7 @@ fn user_by_pk(id: Uuid) -> Command {
         limit: None,
         offset: None,
         lock: None,
+        distinct: false,
     }
 }
 
@@ -168,6 +172,7 @@ fn live_file_by(column: FileColumn, value: impl Into<Value>) -> Command {
         limit: None,
         offset: None,
         lock: None,
+        distinct: false,
     }
 }
 
@@ -201,6 +206,7 @@ impl Store for PgStore {
             limit: Some(limit),
             offset: Some(offset),
             lock: None,
+            distinct: false,
         };
         self.query_all::<UserModel>(cmd)
             .await?
@@ -229,6 +235,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         self.query_one::<UserModel>(cmd)
             .await?
@@ -274,6 +281,7 @@ impl Store for PgStore {
             limit: Some(limit),
             offset: Some(offset),
             lock: None,
+            distinct: false,
         };
         self.query_all::<FileModel>(cmd)
             .await?
@@ -315,6 +323,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         self.query_one::<FileModel>(cmd)
             .await?
@@ -370,6 +379,7 @@ impl Store for PgStore {
                 .eq(id)
                 .into_inner()
                 .and(FileColumn::DeletedAt.is_null().into_inner()),
+            true,
         )?;
         self.query_one::<FileModel>(cmd)
             .await?
@@ -386,6 +396,7 @@ impl Store for PgStore {
                 .eq(id)
                 .into_inner()
                 .and(FileColumn::DeletedAt.is_null().into_inner()),
+            true,
         )?;
         Ok(self.query_one::<FileModel>(cmd).await?.is_some())
     }
@@ -420,6 +431,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(self
             .query_one::<OAuthIdentityModel>(cmd)
@@ -472,6 +484,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(self.query_all::<FileModel>(cmd).await?.len() as u64)
     }
@@ -517,6 +530,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(self
             .query_all::<ApiKeyModel>(cmd)
@@ -533,6 +547,7 @@ impl Store for PgStore {
                 .eq(id)
                 .into_inner()
                 .and(ApiKeyColumn::RevokedAt.is_null().into_inner()),
+            false,
         )?;
         let reply = self.executor.execute(&cmd).await?;
         let Reply::Affected(n) = reply else {
@@ -557,6 +572,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(self
             .query_one::<ApiKeyModel>(cmd)
@@ -568,6 +584,7 @@ impl Store for PgStore {
         let cmd = update_command::<ApiKeyModel>(
             vec![("last_used_at", Value::Text(Timestamp::now().to_string()))],
             ApiKeyColumn::Id.eq(id).into_inner(),
+            false,
         )?;
         self.executor.execute(&cmd).await?;
         Ok(())
@@ -581,6 +598,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(self
             .query_one::<SettingModel>(cmd)
@@ -643,6 +661,7 @@ impl Store for PgStore {
             limit: Some(limit),
             offset: Some(offset),
             lock: None,
+            distinct: false,
         };
         Ok(self
             .query_all::<FileModel>(cmd)
@@ -681,6 +700,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(!self.query_all::<FileModel>(cmd).await?.is_empty())
     }
@@ -747,6 +767,7 @@ impl Store for PgStore {
                 .is_null()
                 .into_inner()
                 .and(FileColumn::Id.eq(id).into_inner()),
+            false,
         )?;
         self.executor.execute(&cmd).await?;
         Ok(())
@@ -792,6 +813,7 @@ impl Store for PgStore {
                 limit: None,
                 offset: None,
                 lock: None,
+                distinct: false,
             };
             for child in self.query_all::<FileModel>(cmd).await? {
                 ids.push(child.id);
@@ -845,6 +867,7 @@ impl Store for PgStore {
                 limit: None,
                 offset: None,
                 lock: None,
+                distinct: false,
             })
             .await?
         {
@@ -875,6 +898,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(self
             .query_one::<ShareModel>(cmd)
@@ -902,6 +926,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(self
             .query_one::<ShareModel>(cmd)
@@ -917,6 +942,7 @@ impl Store for PgStore {
             limit: None,
             offset: None,
             lock: None,
+            distinct: false,
         };
         Ok(self
             .query_all::<ShareModel>(cmd)
@@ -985,6 +1011,7 @@ impl Store for PgStore {
                 quota_bytes.map(Value::I64).unwrap_or(Value::Null),
             )],
             UserColumn::Id.eq(user_id).into_inner(),
+            false,
         )?;
         self.executor.execute(&cmd).await?;
         Ok(())

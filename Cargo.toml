@@ -43,12 +43,10 @@ tracing = "^0.1"
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 
 # data access (family ORM; timestamps are jiff — chrono is absent by design).
-# REGISTRY FALLBACK: lacrymira/lacrymira-pg 0.1.0 as published on crates.io
-# are a stale, mutually incompatible pair (the core predates uuid/jiff model
-# typing; the pg driver predates the find/insert helpers). Until a coherent
-# version is published, pin the family git master (Cargo.lock pins the rev).
-lacrymira = { git = "https://github.com/celestia-island/lacrymira", branch = "master", version = "0.1" }
-lacrymira-pg = { git = "https://github.com/celestia-island/lacrymira", branch = "master", version = "0.1" }
+# Registry line: 0.2 resolves a coherent published pair (the 0.1.0 pair was
+# mutually incompatible, which is why the git pin existed).
+lacrymira = "^0.2"
+lacrymira-pg = "^0.2"
 
 # misc
 async-trait = "^0.1"
