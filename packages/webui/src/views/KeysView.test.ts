@@ -195,6 +195,34 @@ describe("KeysView clipboard", () => {
   });
 });
 
+describe("KeysView stale lane (family scaffold)", () => {
+  it("keeps the rows on a failed reload and shows the stale banner", async () => {
+    // The polarity pin: if the hard error ever wins while rows are on
+    // screen, the body is replaced and the roster blanks.
+    listKeysMock.mockReset().mockResolvedValue([KEY_ROW]);
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll("tbody tr").length).toBeGreaterThan(0);
+
+    listKeysMock.mockRejectedValueOnce(new Error("reload boom"));
+    // Scoped to THIS harness host: earlier cases in this file append
+    // their own hosts to the document, and a document-wide query can
+    // grab a leftover button instead of this view's refresh action.
+    const host = wrapper.element as HTMLElement;
+    const refresh = Array.from(host.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label") === "Refresh",
+    );
+    expect(refresh, "the harness must render the refresh action").toBeTruthy();
+    refresh!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+    expect(listKeysMock).toHaveBeenCalledTimes(2);
+    expect(wrapper.findAll("tbody tr").length).toBeGreaterThan(0);
+    expect(wrapper.text()).toContain("reload boom");
+    wrapper.unmount();
+  });
+});
+
 describe("KeysView error surface (family scaffold)", () => {
   it("hands a list failure to the table scaffold instead of a bare paragraph", async () => {
     listKeysMock.mockRejectedValue(new Error("boom"));

@@ -121,9 +121,7 @@ async function submitCreate() {
     createError.value =
       err instanceof ApiError && err.status === 409
         ? t("common.users.conflict")
-        : err instanceof Error
-          ? err.message
-          : t("common.status.error");
+        : errorText(err);
   } finally {
     createBusy.value = false;
   }
@@ -165,7 +163,7 @@ async function confirmDelete() {
     total.value = Math.max(0, total.value - 1);
     pendingDelete.value = null;
   } catch (err) {
-    deleteError.value = err instanceof Error ? err.message : t("common.status.error");
+    deleteError.value = errorText(err);
   } finally {
     deleteBusy.value = false;
   }

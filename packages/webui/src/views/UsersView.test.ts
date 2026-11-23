@@ -58,7 +58,7 @@ function mountView(): ReturnType<typeof mount> {
       return () => [h(UsersView), h("div", { class: "probe-actions" }, bar.actions.value.flatMap((r) => r()))];
     },
   };
-  return mount(Harness, { global: { plugins: [pinia, router, i18n] } });
+  return mount(Harness, { global: { plugins: [pinia, router, i18n] }, attachTo: document.body });
 }
 
 let wrapper: ReturnType<typeof mount> | null = null;
@@ -192,6 +192,41 @@ describe("UsersView (family table roster)", () => {
     await flushPromises();
     expect(wrapper.find(".hk-alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("rpc timeout");
+  });
+
+  it("renders the localized fallback for an Error with an empty message", async () => {
+    // The lane is falsy-gated: an Error carrying an empty message must
+    // fall through to the localized text, or the failure renders no
+    // alert at all.
+    listUsersMock.mockRejectedValue(new Error(""));
+    wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain(i18n.global.t("common.status.error"));
+  });
+
+  it("surfaces a failed delete in the dialog instead of closing silently", async () => {
+    listUsersMock.mockResolvedValue({
+      items: [user("me", "me", "admin"), user("u2", "alice", "member")],
+      total: 5,
+    });
+    deleteUserMock.mockRejectedValue("rpc timeout");
+    wrapper = mountView();
+    await flushPromises();
+    const del = wrapper.find(`button[aria-label="${i18n.global.t("common.actions.delete")}"]`);
+    await del.trigger("click");
+    await flushPromises();
+    // Confirm inside the dialog — the adaptive dialog teleports, so the
+    // footer's danger action lives at the document level.
+    const confirm = Array.from(document.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === i18n.global.t("common.actions.delete"),
+    );
+    expect(confirm).toBeTruthy();
+    confirm!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    // The dialog (teleported) stays open and carries the rejection text.
+    expect(document.body.textContent).toContain("rpc timeout");
+    expect(wrapper.findAll("tbody tr").length).toBe(2);
   });
 
   it("renders the scaffold's empty state when the roster is empty", async () => {
