@@ -5,6 +5,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { FileDto } from "@/types";
+import { formatSize } from "@/composables/formatSize";
 
 /**
  * The embedded file detail — the pane every list surface (files, portal,
@@ -24,18 +25,6 @@ const kindIcon = computed(() => {
   return ImageIcon;
 });
 
-function formatSize(bytes: number): string {
-  const n = bytes;
-  if (!Number.isFinite(n) || n < 0) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = n;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
-}
 
 function formatWhen(iso: string): string {
   const date = new Date(iso);

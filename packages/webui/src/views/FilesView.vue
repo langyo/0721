@@ -28,6 +28,7 @@ import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { FileDto } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
 import FileDetailView from "@/components/FileDetailView.vue";
+import { formatSize } from "@/composables/formatSize";
 
 const { t } = useI18n();
 
@@ -97,7 +98,6 @@ const crumbs = computed(() => {
   return trail;
 });
 
-/** The pane's selection — this page's state, never the component's. */
 const selected = ref<FileDto | null>(null);
 
 function openFolder(f: FileDto) {
@@ -279,19 +279,6 @@ async function doDelete() {
   }
 }
 
-/** FileDto.size is a `number` on the wire (ts-rs pins
- * `#[ts(type = "number")]` on the i64); the guard below is for a
- * malformed/absent value, not for a second numeric type. */
-function formatSize(bytes: number): string {
-  const n = bytes;
-  if (!Number.isFinite(n) || n < 0) return "—";
-  if (n < 1024) return `${n} B`;
-  const units = ["KiB", "MiB", "GiB"];
-  let v = n;
-  let u = -1;
-  do { v /= 1024; u++; } while (v >= 1024 && u < units.length - 1);
-  return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[u]}`;
-}
 
 const quotaPercent = computed(() => {
   if (!quotaLimit.value || quotaLimit.value === 0) return null;

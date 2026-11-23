@@ -10,16 +10,8 @@ import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { FileDto } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
 import FileDetailView from "@/components/FileDetailView.vue";
+import { formatSize } from "@/composables/formatSize";
 
-/**
- * The timeline face: newest-first grid of everything on the instance,
- * multi-file upload with per-file progress, and the per-file inline
- * actions (copy link / open original / delete).
- *
- * The page's primary create action — the upload — lives in the header's
- * action cluster as the plus, LEFT of the refresh (the slot law); the
- * page body never carries its own upload button.
- */
 
 const { t } = useI18n();
 
@@ -183,20 +175,6 @@ function iconFor(file: FileDto) {
   }
 }
 
-/** See FilesView's twin: `number` per the ts-rs contract. */
-function formatSize(bytes: number): string {
-  const n = bytes;
-  if (!Number.isFinite(n) || n < 0) return "—";
-  if (n < 1024) return `${n} B`;
-  const units = ["KiB", "MiB", "GiB"];
-  let value = n;
-  let unit = -1;
-  do {
-    value /= 1024;
-    unit += 1;
-  } while (value >= 1024 && unit < units.length - 1);
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
-}
 </script>
 
 <template>
