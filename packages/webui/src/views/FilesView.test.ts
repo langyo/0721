@@ -213,6 +213,8 @@ describe("FilesView surface (mount pin)", () => {
     listFolderMock.mockResolvedValue({ total: 1, offset: 0, limit: 30, items: [file("b")], crumbs: [] });
     // Drive the header's own refresh action (registered by usePageRefresh)
     // rather than reaching into setup state the harness doesn't expose.
+    // MUT:header-refresh-lane — reverting the roster to a direct load()
+    // call reddens the reload pins above.
     const refresh = w.find('.harness-actions button[aria-label="' + i18n.global.t("common.actions.refresh") + '"]');
     expect(refresh.exists(), "the harness must render the refresh action").toBe(true);
     await refresh.trigger("click");
