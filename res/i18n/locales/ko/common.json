@@ -62,7 +62,8 @@
     "role": "역할",
     "created": "생성일",
     "deleteConfirm": "사용자 {name}을(를) 삭제할까요?",
-    "conflict": "이미 사용 중인 사용자 이름입니다."
+    "conflict": "이미 사용 중인 사용자 이름입니다.",
+    "account": "계정"
   },
   "settings": {
     "title": "사이트 설정",
@@ -113,7 +114,9 @@
     "enabled": "활성",
     "deleteConfirm": "제공자 {id}을(를) 삭제할까요?",
     "scopes": "스코프",
-    "scopesHint": "공백 구분. 내장 유형은 이 값을 무시합니다(템플릿이 자체 스코프를 사용)."
+    "scopesHint": "공백 구분. 내장 유형은 이 값을 무시합니다(템플릿이 자체 스코프를 사용).",
+    "secret": "시크릿",
+    "edit": "편집"
   },
   "files": {
     "title": "파일",
@@ -142,7 +145,9 @@
     "download": "다운로드",
     "preview": "미리보기",
     "fileNotAvailable": "이 파일은 더 이상 사용할 수 없습니다",
-    "breadcrumbRoot": "내 파일"
+    "breadcrumbRoot": "내 파일",
+    "fileName": "파일",
+    "size": "크기"
   },
   "keys": {
     "title": "API 키",
@@ -158,7 +163,10 @@
     "promptTemplate": "{endpoint}의 0721 MCP 서버를 API 키 {key}로 사용하세요. 사용 가능한 도구: list_files, file_info, upload_file, get_share_link, search_files.",
     "revoke": "취소",
     "revokeConfirm": "키 {name}을(를) 취소할까요?",
-    "revoked": "취소됨"
+    "revoked": "취소됨",
+    "prefix": "접두사",
+    "state": "상태",
+    "active": "활성"
   },
   "menu": {
     "account": "계정"

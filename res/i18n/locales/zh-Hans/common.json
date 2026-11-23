@@ -62,7 +62,8 @@
     "role": "角色",
     "created": "创建时间",
     "deleteConfirm": "删除用户 {name}？",
-    "conflict": "该用户名已被占用。"
+    "conflict": "该用户名已被占用。",
+    "account": "账户"
   },
   "settings": {
     "title": "站点配置",
@@ -113,7 +114,9 @@
     "enabled": "启用",
     "deleteConfirm": "删除提供方 {id}？",
     "scopes": "作用域",
-    "scopesHint": "空格分隔。内置类型忽略此值（模板自带作用域）。"
+    "scopesHint": "空格分隔。内置类型忽略此值（模板自带作用域）。",
+    "secret": "密钥",
+    "edit": "编辑"
   },
   "files": {
     "title": "文件",
@@ -142,7 +145,9 @@
     "download": "下载",
     "preview": "预览",
     "fileNotAvailable": "该文件不再可用",
-    "breadcrumbRoot": "我的文件"
+    "breadcrumbRoot": "我的文件",
+    "fileName": "文件",
+    "size": "大小"
   },
   "keys": {
     "title": "API 密钥",
@@ -158,7 +163,10 @@
     "promptTemplate": "请使用 {endpoint} 上的 0721 MCP 服务器，API 密钥为 {key}。可用工具：list_files、file_info、upload_file、get_share_link、search_files。",
     "revoke": "吊销",
     "revokeConfirm": "吊销密钥 {name}？",
-    "revoked": "已吊销"
+    "revoked": "已吊销",
+    "prefix": "前缀",
+    "state": "状态",
+    "active": "启用中"
   },
   "menu": {
     "account": "账户"

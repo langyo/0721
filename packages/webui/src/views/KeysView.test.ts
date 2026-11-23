@@ -14,6 +14,8 @@ vi.mock("@/api", () => ({
 import KeysView from "./KeysView.vue";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
+
+const i18n = createAppI18n();
 import { defineComponent, h } from "vue";
 
 /**
@@ -190,5 +192,67 @@ describe("KeysView clipboard", () => {
     expect(byTestId("copy-key").textContent?.trim()).not.toBe("Copied!");
     expect(byTestId("copy-failed").textContent?.length).toBeGreaterThan(0);
     vi.useRealTimers();
+  });
+});
+
+describe("KeysView stale lane (family scaffold)", () => {
+  it("keeps the rows on a failed reload and shows the stale banner", async () => {
+    // The polarity pin: if the hard error ever wins while rows are on
+    // screen, the body is replaced and the roster blanks.
+    listKeysMock.mockReset().mockResolvedValue([KEY_ROW]);
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll("tbody tr").length).toBeGreaterThan(0);
+
+    listKeysMock.mockRejectedValueOnce(new Error("reload boom"));
+    // Scoped to THIS harness host: earlier cases in this file append
+    // their own hosts to the document, and a document-wide query can
+    // grab a leftover button instead of this view's refresh action.
+    const host = wrapper.element as HTMLElement;
+    const refresh = Array.from(host.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label") === "Refresh",
+    );
+    expect(refresh, "the harness must render the refresh action").toBeTruthy();
+    refresh!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+    expect(listKeysMock).toHaveBeenCalledTimes(2);
+    expect(wrapper.findAll("tbody tr").length).toBeGreaterThan(0);
+    expect(wrapper.text()).toContain("reload boom");
+    wrapper.unmount();
+  });
+});
+
+describe("KeysView error surface (family scaffold)", () => {
+  it("hands a list failure to the table scaffold instead of a bare paragraph", async () => {
+    listKeysMock.mockRejectedValue(new Error("boom"));
+    const wrapper = mount(KeysView, { global: { plugins: [i18n] } });
+    await flushPromises();
+    // The scaffold's alert is where a hard error belongs (the other three
+    // rosters bind it too); a hand-rolled <p class="err"> was the old
+    // shape and is gone from the template.
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.find(".err").exists()).toBe(false);
+  });
+
+  it("still reports a non-Error rejection instead of showing a silent empty roster", async () => {
+    // A JSON-RPC/WS lane commonly rejects with a bare string; the old
+    // fallback turned that into "" which renders NO alert at all, so a
+    // failed cold start read as "no keys yet".
+    listKeysMock.mockRejectedValue("rpc timeout");
+    const wrapper = mount(KeysView, { global: { plugins: [i18n] } });
+    await flushPromises();
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain("rpc timeout");
+    wrapper.unmount();
+
+    // And the localized fallback for anything else (null, objects) —
+    // String(e) flattening would ship "undefined" to users.
+    listKeysMock.mockReset().mockRejectedValue(undefined);
+    const w2 = mount(KeysView, { global: { plugins: [createAppI18n()] } });
+    await flushPromises();
+    expect(w2.find(".hk-alert").exists()).toBe(true);
+    expect(w2.text()).toContain(i18n.global.t("common.status.error"));
+    w2.unmount();
   });
 });

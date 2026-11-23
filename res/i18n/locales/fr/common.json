@@ -62,7 +62,8 @@
     "role": "Rôle",
     "created": "Créé le",
     "deleteConfirm": "Supprimer l'utilisateur {name} ?",
-    "conflict": "Ce nom d'utilisateur est déjà pris."
+    "conflict": "Ce nom d'utilisateur est déjà pris.",
+    "account": "Compte"
   },
   "settings": {
     "title": "Configuration du site",
@@ -113,7 +114,9 @@
     "enabled": "Activé",
     "deleteConfirm": "Supprimer le fournisseur {id} ?",
     "scopes": "Scopes",
-    "scopesHint": "Séparés par des espaces. Les types intégrés ignorent cette valeur (leurs modèles apportent leurs scopes)."
+    "scopesHint": "Séparés par des espaces. Les types intégrés ignorent cette valeur (leurs modèles apportent leurs scopes).",
+    "secret": "Secret",
+    "edit": "Modifier"
   },
   "files": {
     "title": "Fichiers",
@@ -142,7 +145,9 @@
     "download": "Télécharger",
     "preview": "Aperçu",
     "fileNotAvailable": "Ce fichier n'est plus disponible",
-    "breadcrumbRoot": "Mes fichiers"
+    "breadcrumbRoot": "Mes fichiers",
+    "fileName": "Fichier",
+    "size": "Taille"
   },
   "keys": {
     "title": "Clés API",
@@ -158,7 +163,10 @@
     "promptTemplate": "Utilisez le serveur MCP 0721 à l'adresse {endpoint} avec la clé d'API {key}. Outils disponibles : list_files, file_info, upload_file, get_share_link, search_files.",
     "revoke": "Révoquer",
     "revokeConfirm": "Révoquer la clé {name} ?",
-    "revoked": "Révoquée"
+    "revoked": "Révoquée",
+    "prefix": "Préfixe",
+    "state": "État",
+    "active": "Active"
   },
   "menu": {
     "account": "Compte"

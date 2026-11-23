@@ -62,7 +62,8 @@
     "role": "Rol",
     "created": "Creado",
     "deleteConfirm": "¿Eliminar al usuario {name}?",
-    "conflict": "Ese nombre de usuario ya está en uso."
+    "conflict": "Ese nombre de usuario ya está en uso.",
+    "account": "Cuenta"
   },
   "settings": {
     "title": "Configuración del sitio",
@@ -113,7 +114,9 @@
     "enabled": "Activo",
     "deleteConfirm": "¿Eliminar el proveedor {id}?",
     "scopes": "Ámbitos",
-    "scopesHint": "Separados por espacios. Los tipos integrados ignoran este valor (sus plantillas traen sus propios ámbitos)."
+    "scopesHint": "Separados por espacios. Los tipos integrados ignoran este valor (sus plantillas traen sus propios ámbitos).",
+    "secret": "Secreto",
+    "edit": "Editar"
   },
   "files": {
     "title": "Archivos",
@@ -142,7 +145,9 @@
     "download": "Descargar",
     "preview": "Vista previa",
     "fileNotAvailable": "Este archivo ya no está disponible",
-    "breadcrumbRoot": "Mis archivos"
+    "breadcrumbRoot": "Mis archivos",
+    "fileName": "Archivo",
+    "size": "Tamaño"
   },
   "keys": {
     "title": "Claves API",
@@ -158,7 +163,10 @@
     "promptTemplate": "Usa el servidor MCP 0721 en {endpoint} con la clave de API {key}. Herramientas disponibles: list_files, file_info, upload_file, get_share_link, search_files.",
     "revoke": "Revocar",
     "revokeConfirm": "¿Revocar la clave {name}?",
-    "revoked": "Revocada"
+    "revoked": "Revocada",
+    "prefix": "Prefijo",
+    "state": "Estado",
+    "active": "Activa"
   },
   "menu": {
     "account": "Cuenta"

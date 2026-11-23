@@ -62,7 +62,8 @@
     "role": "الدور",
     "created": "تاريخ الإنشاء",
     "deleteConfirm": "حذف المستخدم {name}؟",
-    "conflict": "اسم المستخدم هذا محجوز بالفعل."
+    "conflict": "اسم المستخدم هذا محجوز بالفعل.",
+    "account": "الحساب"
   },
   "settings": {
     "title": "إعدادات الموقع",
@@ -113,7 +114,9 @@
     "enabled": "مُفعّل",
     "deleteConfirm": "حذف المزوّد {id}؟",
     "scopes": "النطاقات",
-    "scopesHint": "مفصولة بمسافات. الأنواع المدمجة تتجاهل هذه القيمة (قوالبها تحمل نطاقاتها الخاصة)."
+    "scopesHint": "مفصولة بمسافات. الأنواع المدمجة تتجاهل هذه القيمة (قوالبها تحمل نطاقاتها الخاصة).",
+    "secret": "السر",
+    "edit": "تعديل"
   },
   "files": {
     "title": "الملفات",
@@ -142,7 +145,9 @@
     "download": "تحميل",
     "preview": "معاينة",
     "fileNotAvailable": "هذا الملف لم يعد متاحاً",
-    "breadcrumbRoot": "ملفاتي"
+    "breadcrumbRoot": "ملفاتي",
+    "fileName": "اسم الملف",
+    "size": "الحجم"
   },
   "keys": {
     "title": "مفاتيح API",
@@ -158,7 +163,10 @@
     "promptTemplate": "استخدم خادم MCP 0721 على {endpoint} بمفتاح API {key}. الأدوات المتاحة: list_files وfile_info وupload_file وget_share_link وsearch_files.",
     "revoke": "إلغاء",
     "revokeConfirm": "إلغاء المفتاح {name}؟",
-    "revoked": "ملغى"
+    "revoked": "ملغى",
+    "prefix": "البادئة",
+    "state": "الحالة",
+    "active": "نشط"
   },
   "menu": {
     "account": "الحساب"

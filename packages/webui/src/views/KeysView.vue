@@ -1,7 +1,15 @@
 <script setup lang="ts">
-import { HkAdaptiveDialog, HkButton, HkEmptyState, HkInput } from "@celestia-island/hikari";
+import {
+  HkAdaptiveDialog,
+  HkAdminTablePage,
+  HkBadge,
+  HkButton,
+  HkIconButton,
+  HkInput,
+  type HTableColumn,
+} from "@celestia-island/hikari";
 import { Copy, KeyRound, Trash2 } from "lucide-vue-next";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import * as api from "@/api";
 import { usePageCreateAction } from "@/composables/usePageCreateAction";
@@ -24,9 +32,30 @@ const copyFailed = ref(false);
 const pendingRevoke = ref<ApiKeyPublic | null>(null);
 const revokeBusy = ref(false);
 
+/** The roster's column set (the family table anatomy). `key` doubles as
+ * the cell-slot name (`cell-<key>`); the action column opts out of
+ * click-to-copy. */
+const columns = computed<HTableColumn[]>(() => [
+  { key: "name", title: t("common.keys.nameLabel") },
+  { key: "prefix", title: t("common.keys.prefix"), copyable: false },
+  { key: "state", title: t("common.keys.state") },
+  { key: "actions", title: "", align: "right", width: "3.5rem", copyable: false },
+]);
+
+/** Failure text for the roster banner: never empty. A JSON-RPC/WS lane
+ * commonly rejects with a bare string, and an empty message renders no
+ * alert at all (the scaffold's message is falsy-checked), which would
+ * show a silent "no rows yet" over a real failure. */
+function errorText(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  if (typeof e === "string" && e.length > 0) return e;
+  return t("common.status.error");
+}
+
 async function load() {
+  error.value = null;
   loading.value = true;
-  try { keys.value = await api.listKeys(); } catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { loading.value = false; }
+  try { keys.value = await api.listKeys(); } catch (e) { error.value = errorText(e); } finally { loading.value = false; }
 }
 onMounted(() => void load());
 usePageRefresh(() => load(), { loading });
@@ -42,7 +71,7 @@ async function doCreate() {
     created.value = await api.createKey(newName.value.trim());
     createOpen.value = false;
     await load();
-  } catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { createBusy.value = false; }
+  } catch (e) { error.value = errorText(e); } finally { createBusy.value = false; }
 }
 
 /// The MCP endpoint an agent connects to (the SSE lane).
@@ -81,15 +110,12 @@ async function doRevoke() {
   if (!pendingRevoke.value || revokeBusy.value) return;
   revokeBusy.value = true;
   try { await api.revokeKey(pendingRevoke.value.id); pendingRevoke.value = null; void load(); }
-  catch (e) { error.value = e instanceof Error ? e.message : ""; } finally { revokeBusy.value = false; }
+  catch (e) { error.value = errorText(e); } finally { revokeBusy.value = false; }
 }
 </script>
 
 <template>
   <section class="keys-page">
-    <p v-if="error" role="alert" class="err">{{ error }}</p>
-    <HkEmptyState v-if="!loading && keys.length === 0 && !created" boxed :icon="KeyRound" :title="t('common.keys.empty')" />
-
     <!-- Copy-once card: shown immediately after creation -->
     <div v-if="created" class="copy-once" data-testid="copy-once-card">
       <p class="warning">{{ t("common.keys.copyOnceWarning") }}</p>
@@ -109,17 +135,48 @@ async function doRevoke() {
       <p v-if="copyFailed" role="alert" data-testid="copy-failed" class="copy-failed">{{ t("common.keys.copyFailed") }}</p>
     </div>
 
-    <ul v-if="keys.length > 0" class="key-list">
-      <li v-for="k in keys" :key="k.id" class="key-row" :class="{ revoked: !!k.revoked_at }">
-        <KeyRound :size="16" class="icon" />
-        <span class="name">{{ k.name }}</span>
-        <code class="prefix">{{ k.key_prefix }}</code>
-        <span class="meta">{{ k.revoked_at ? t("common.keys.revoked") : "" }}</span>
-        <button v-if="!k.revoked_at" type="button" class="revoke" :aria-label="t('common.keys.revoke')" @click="pendingRevoke = k">
-          <Trash2 :size="14" />
-        </button>
-      </li>
-    </ul>
+    <HkAdminTablePage
+      :title="t('common.keys.title')"
+      :subtitle="t('common.status.total', { count: keys.length })"
+      :count-readout="false"
+      :icon="KeyRound"
+      :rows="keys"
+      :columns="columns"
+      row-key="id"
+      :loading="loading"
+      :error="keys.length === 0 ? (error ?? undefined) : undefined"
+      :stale-error="keys.length > 0 ? (error ?? undefined) : undefined"
+      :empty-title="t('common.keys.empty')"
+    >
+      <template #cell-name="{ row }">
+        <span class="key-name-cell">
+          <KeyRound :size="14" />
+          <span>{{ row.name }}</span>
+        </span>
+      </template>
+
+      <template #cell-prefix="{ row }">
+        <code class="key-prefix">{{ row.key_prefix }}</code>
+      </template>
+
+      <template #cell-state="{ row }">
+        <HkBadge v-if="row.revoked_at" variant="muted" pill>{{ t("common.keys.revoked") }}</HkBadge>
+        <HkBadge v-else variant="success" pill>{{ t("common.keys.active") }}</HkBadge>
+      </template>
+
+      <template #cell-actions="{ row }">
+        <HkIconButton
+          v-if="!row.revoked_at"
+          :size="24"
+          variant="ghost"
+          :aria-label="t('common.keys.revoke')"
+          :title="t('common.keys.revoke')"
+          @click="pendingRevoke = row"
+        >
+          <template #icon><Trash2 :size="14" /></template>
+        </HkIconButton>
+      </template>
+    </HkAdminTablePage>
 
     <HkAdaptiveDialog :model-value="createOpen" :title="t('common.keys.create')" width="26rem" @update:model-value="(v: boolean) => (createOpen = v)">
       <div class="dialog-body">
@@ -139,21 +196,13 @@ async function doRevoke() {
 </template>
 
 <style scoped>
+.key-name-cell { display: inline-flex; align-items: center; gap: 0.4rem; }
+.key-prefix { font-family: var(--hk-font-mono, ui-monospace, monospace); opacity: 0.8; }
 .keys-page { display: flex; flex-direction: column; gap: 1rem; }
-.err { color: rgb(220 38 38); }
 .copy-once { padding: 1rem; border: 2px solid rgb(217 138 43); border-radius: 0.75rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .warning { color: rgb(217 138 43); font-size: 0.85rem; margin: 0; }
 .copy-failed { color: rgb(220 38 38); font-size: 0.8rem; margin: 0; }
 .key-text { font-size: 0.9rem; padding: 0.5rem; border-radius: 0.4rem; background: color-mix(in srgb, currentColor 6%, transparent); word-break: break-all; }
 .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.key-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-.key-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.75rem; border: 1px solid color-mix(in srgb, currentColor 16%, transparent); border-radius: 0.6rem; }
-.key-row.revoked { opacity: 0.5; }
-.icon { opacity: 0.5; }
-.name { font-weight: 600; font-size: 0.85rem; flex: 1; }
-.prefix { font-size: 0.78rem; opacity: 0.6; font-family: monospace; }
-.meta { font-size: 0.75rem; color: rgb(220 38 38); }
-.revoke { border: none; background: transparent; color: inherit; opacity: 0.5; cursor: pointer; padding: 0.25rem; border-radius: 0.35rem; }
-.revoke:hover { opacity: 1; color: rgb(220 38 38); }
 .dialog-body { display: flex; flex-direction: column; gap: 0.75rem; }
 </style>
