@@ -22,8 +22,7 @@
 - **webui**：hikari Vue/TS，**家族范式对齐**（2026-11-23 webui 波次；参照 ayane 的迭代）：
   `HkAdminShell` 四槽壳（header/sidebar/content/footer）+ 分组侧边栏（内容/接入/管理，管理组 admin 专属）
   + `HkAdminHeader` 身份面（头像账户窗/语言级联/登出）+ `HkStatusBar` 页脚（面板版本+引擎身份+传输探针）
-  + `HkLoginFlow` 登录面（账密通道 + provider sso 通道，单通道无段组）+ `HkAdminTablePage`+`HTable`
-  四张名册 + `HkMasterDetail` 三面主从（Files/Portal/Timeline）+ `HkSelect`/`HkRadio`/`HkSwitch` 表单族
+  + `HkLoginFlow` 登录面（账密通道 + provider sso 通道，单通道无段组）+ `HkAdminTablePage` 四张名册（列契约 = `HTableColumn` 类型） + `HkMasterDetail` 三面主从（Files/Portal/Timeline）+ `HkSelect`/`HkRadio`/`HkSwitch` 表单族
   + `HkAboutBody` 关于页 + `HkToast` 根挂载 + 12 语种 i18n（零未用键）+ ts-rs 单向类型。
   **共享工厂**（勿再逐视图拷贝）：`composables/errorText.ts`（never-empty 失败文案）、
   `composables/formatSize.ts`（二进制单位尺寸）。

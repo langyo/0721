@@ -57,7 +57,7 @@ describe("SettingsDialog", () => {
 
     // The picker lists locales; pick one that is not the current locale.
     const rows = Array.from(
-      document.querySelectorAll<HTMLElement>(".hk-menu-row, [role='option'], .hk-locale-row"),
+      document.querySelectorAll<HTMLElement>(".hk-menu-row, [role='option']"),
     );
     expect(rows.length, `rows: ${rows.map((r) => r.textContent?.trim()).join("|")}`).toBeGreaterThan(0);
     const target = rows.find((r) => (r.textContent ?? "").includes("简体中文"));
