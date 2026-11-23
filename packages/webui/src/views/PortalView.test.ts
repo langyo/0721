@@ -70,10 +70,11 @@ describe("PortalView failure lane (never-empty)", () => {
   });
 
   it("keeps the upload lane's own fallback wording end-to-end", async () => {
-    // MUT:portal-upload-fallback-key — this is the only lane carrying a
-    // non-default fallback key, so it is the sole end-to-end proof that
-    // the view actually PASSES that key (a copy-paste slip back to the
-    // default key would keep every factory unit test green).
+    // MUT:portal-upload-fallback-key — this lane and the settings save
+    // lanes are the ones carrying non-default fallback keys; this pin is
+    // the end-to-end proof THIS view passes its key (a slip back to the
+    // default key would keep every factory unit test green). The save
+    // lanes' pin lands with the settings UI wave (issue #31 pattern).
     listFilesMock.mockResolvedValue(page([]));
     uploadFileMock.mockRejectedValue(new Error(""));
     const wrapper = await mountView();
