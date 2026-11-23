@@ -439,8 +439,9 @@ describe("LoginView dual-mode (family login panel)", () => {
     });
     const { wrapper } = await mountView();
     await flushPromises();
-    // Two redirect-only identities need a chooser; the provider names are
-    // then the honest labels for that choice.
+    // Two redirect-only identities need a chooser. The TABS carry panel
+    // copy (the peer reads "Celestia ID", the other "Single sign-on"), and
+    // each provider's own name stays on its row — never on a tab.
     expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(2);
     expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
   });
