@@ -23,7 +23,8 @@ vi.mock("@/api/client", () => ({
   onUnauthorized: vi.fn(),
 }));
 
-import { HkLoginFlow } from "@celestia-island/hikari";
+
+import { HkLoginFlow, HkStatusBar } from "@celestia-island/hikari";
 
 import LoginView from "./LoginView.vue";
 import { ApiError } from "@/api/client";
@@ -56,8 +57,13 @@ async function mountView(query: Record<string, string> = {}) {
     ],
   });
   await router.push({ path: "/login", query });
+  // attachTo keeps the tree in the live document — teleported panels and
+  // document-scoped queries reach it (a detached mount hides them).
+  const host = document.createElement("div");
+  document.body.appendChild(host);
   const wrapper = mount(LoginView, {
     global: { plugins: [i18n, router, createPinia()] },
+    attachTo: host,
   });
   // The login-methods descriptor resolves async — the card mounts after.
   await flushPromises();
@@ -124,7 +130,34 @@ describe("LoginView", () => {
   });
 });
 
-describe("LoginView failure lane (never-empty)", () => {
+describe("LoginView status strip (family footer)", () => {
+  it("feeds the family status bar the panel version and the engine identity", async () => {
+    // MUT:login-statusbar-seam — the HkStatusBar prop-name seam is untyped
+    // (fallthrough attrs type-check clean), so the wiring is pinned the
+    // same way as the shell's: a real health payload must reach
+    // engineVersion, and the sessionless face must report `idle`.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "ok", version: "sentinel-engine-9.9.9", config_source: "settings" }),
+      }),
+    );
+    const { wrapper: w } = await mountView();
+    await flushPromises();
+    const bar = w.getComponent(HkStatusBar);
+    expect(bar.props("engineVersion")).toBe("sentinel-engine-9.9.9");
+    expect(bar.props("version")).toBe(__APP_VERSION__);
+    expect(bar.props("connectionStatus")).toBe("idle");
+    // The strip is this face's own footer: standalone must stay OFF, or
+    // the bar renders its own fixed <footer> and nests inside ours.
+    expect(bar.props("standalone")).toBe(false);
+    expect(w.findAll("footer.s-status-bar").length).toBe(0);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("LoginView dead state (W4 R2)", () => {
   it("shows the localized fallback for an Error with an empty message", async () => {
     // MUT:login-errortext-lane — the old narrowing ternary rendered ""
     // here, and the alert paragraph is falsy-gated: a failed sign-in
@@ -334,7 +367,7 @@ describe("LoginView redirect handling", () => {
   });
 });
 
-describe("LoginView dead state (W4 R2)", () => {
+describe("LoginView dead state (descriptor offers nothing)", () => {
   it("renders the guidance when no login method exists", async () => {
     loginMethodsMock.mockResolvedValue({ password: false, providers: [] });
     const { wrapper } = await mountView();
