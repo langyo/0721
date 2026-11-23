@@ -25,6 +25,8 @@ vi.mock("@/api/client", () => ({
 
 import { HkLoginFlow } from "@celestia-island/hikari";
 
+import { HkStatusBar } from "@celestia-island/hikari";
+
 import LoginView from "./LoginView.vue";
 import { ApiError } from "@/api/client";
 import { createAppI18n } from "@/i18n";
@@ -124,7 +126,31 @@ describe("LoginView", () => {
   });
 });
 
-describe("LoginView failure lane (never-empty)", () => {
+describe("LoginView status strip (family footer)", () => {
+  it("feeds the family status bar the panel version and the engine identity", async () => {
+    // MUT:login-statusbar-seam — the HkStatusBar prop-name seam is untyped
+    // (fallthrough attrs type-check clean), so the wiring is pinned the
+    // same way as the shell's: a real health payload must reach
+    // engineVersion, and the sessionless face must report `idle`.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "ok", version: "sentinel-engine-9.9.9", config_source: "settings" }),
+      }),
+    );
+    const { wrapper: w } = await mountView();
+    await flushPromises();
+    const bar = w.getComponent(HkStatusBar);
+    expect(bar.props("engineVersion")).toBe("sentinel-engine-9.9.9");
+    expect(bar.props("version")).toBe(__APP_VERSION__);
+    expect(bar.props("connectionStatus")).toBe("idle");
+    vi.unstubAllGlobals();
+  });
+
+});
+
+describe("LoginView dead state (W4 R2)", () => {
   it("shows the localized fallback for an Error with an empty message", async () => {
     // MUT:login-errortext-lane — the old narrowing ternary rendered ""
     // here, and the alert paragraph is falsy-gated: a failed sign-in
