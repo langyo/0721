@@ -306,11 +306,13 @@ describe("LoginView dual-mode (family login panel)", () => {
     expect(channels[0]!.buttonLabel).toBe("Mystery IdP"); // the row names it
   });
 
-  it("keeps every segment label distinct when a type repeats", async () => {
+  it("numbers repeated tabs and pins the exact panel copy", async () => {
     // Two OIDC providers are a real deployment (multi-IdP). The rows name
-    // the destinations, but the TABS must still be tellable apart — the
-    // family's copy rule forbids borrowing the server's name for that, so
-    // the panel disambiguates with its own ordinal.
+    // the destinations; the TABS must be tellable apart, and the family's
+    // copy rule forbids borrowing the server's name for that — so the
+    // panel numbers them. The expected strings are spelled out: a mangled
+    // ordinal (missing separator, wrong base, skipped index) is a copy
+    // regression, not a stylistic choice.
     loginMethodsMock.mockResolvedValue({
       password: false,
       providers: [
@@ -322,14 +324,57 @@ describe("LoginView dual-mode (family login panel)", () => {
     await flushPromises();
 
     const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
-    expect(labels.length).toBe(2);
-    // MUT:duplicate-tab-labels — a single shared label reddens the
-    // uniqueness assertion below (the tabs would read the same).
-    expect(new Set(labels).size).toBe(labels.length);
-    expect(labels.every((label) => label.startsWith("Single sign-on"))).toBe(true);
+    // MUT:ordinal-copy — any change to these two strings reddens here.
+    expect(labels).toEqual(["Single sign-on · 1", "Single sign-on · 2"]);
     // Still panel copy: neither server name leaks into a tab.
     expect(labels.join(" ")).not.toContain("Keycloak");
     expect(labels.join(" ")).not.toContain("Auth0");
+  });
+
+  it("treats a duplicated peer type as ordinary lanes, not one winner", async () => {
+    // ProvidersView defaults a new provider to builtin:erp, and the server
+    // accepts any number of them — so two erp providers are reachable. The
+    // peer lane is singular by contract: neither may hijack the
+    // "Celestia ID" tab while the other is demoted to generic copy.
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [
+        { id: "e1", display_name: "Celestia ID", type: "builtin:erp", icon: null },
+        { id: "e2", display_name: "Acme ERP", type: "builtin:erp", icon: null },
+      ],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
+    expect(labels).toEqual(["Single sign-on · 1", "Single sign-on · 2"]);
+    expect(labels).not.toContain("Celestia ID");
+
+    // Both destinations stay reachable, each named on its own row.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      buttonLabel?: string;
+    }>;
+    expect(channels.map((c) => c.buttonLabel)).toEqual(["Celestia ID", "Acme ERP"]);
+  });
+
+  it("navigates when a provider ROW under the account card is picked", async () => {
+    // The rows exist again on the password lane; without the method-select
+    // handler they render but do nothing (that regression shipped once).
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [{ id: "gh", display_name: "GitHub", type: "builtin:github", icon: null }],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const hrefSetter = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, set href(v: string) { hrefSetter(v); }, get href() { return "http://localhost:3000/"; } },
+    });
+    wrapper.getComponent(HkLoginFlow).vm.$emit("method-select", "password", "gh");
+    await flushPromises();
+    expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/gh");
   });
 
   it("grows the segment group only once a second channel exists", async () => {

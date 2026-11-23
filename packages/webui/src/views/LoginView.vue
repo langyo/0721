@@ -79,7 +79,14 @@ const channels = computed<HkLoginChannel[]>(() => {
   // Celestia ID is the peer lane; every other provider is an alternative
   // row under the account card (hikari: a provider name in the segment
   // reads as "log in to ERP" rather than "log in with your organization").
-  const peer = providers.find((provider) => provider.type === PEER_PROVIDER_TYPE);
+  // Singular by construction: with TWO erp providers neither owns the
+  // "Celestia ID" tab — a deployment that duplicated the peer type gets
+  // the ordinary lanes instead of one arbitrary winner and one generic
+  // tab (the ordinal disambiguates, the rows name them).
+  const peerCandidates = providers.filter(
+    (provider) => provider.type === PEER_PROVIDER_TYPE,
+  );
+  const peer = peerCandidates.length === 1 ? peerCandidates[0] : undefined;
   const others = providers.filter((provider) => provider !== peer);
   const list: HkLoginChannel[] = [];
 
@@ -186,6 +193,13 @@ async function onAccountSubmit(_channel: string, username: string, password: str
 function onSsoClick(channelKey: string): void {
   signInWith(channelKey);
 }
+
+/** An alternative-method row under the account card: the same full-page
+ * redirect as a peer channel (the rows exist again now that non-peer
+ * providers ride the card, so this handler must exist with them). */
+function onMethodSelect(_channel: string, providerId: string): void {
+  signInWith(providerId);
+}
 </script>
 
 <template>
@@ -203,6 +217,7 @@ function onSsoClick(channelKey: string): void {
         :subtitle="t('common.auth.subtitle')"
         @account-submit="onAccountSubmit"
         @sso-click="onSsoClick"
+        @method-select="onMethodSelect"
       />
       <!-- No password and no provider: the honest dead state. It needs a
            live descriptor replying with neither method — the catch lane
