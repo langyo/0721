@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { HkAboutBody, HkLocalePicker, HkSettingsDialog, HkSettingsGroup, HkThemePanelContent, type HAboutComponentVersion, type HAboutCredit, type HAboutLink } from "@celestia-island/hikari";
-import { Check, Info, Languages, Palette } from "lucide-vue-next";
+import { Info, Languages, Palette } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -99,7 +99,7 @@ const componentRows = computed<HAboutComponentVersion[]>(() => {
         <HkLocalePicker
           :locales="localeCodes"
           :current-locale="locale"
-          @update:current-locale="(code: string) => chooseLocale(code)"
+          @select="(code: string) => chooseLocale(code)"
         />
       </HkSettingsGroup>
     </template>
@@ -120,42 +120,3 @@ const componentRows = computed<HAboutComponentVersion[]>(() => {
     </template>
   </HkSettingsDialog>
 </template>
-
-<style scoped lang="scss">
-.locale-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.locale-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  border: none;
-  border-radius: 0.5rem;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  text-align: start;
-
-  &:hover {
-    background: color-mix(in srgb, currentColor 8%, transparent);
-  }
-}
-
-.locale-code {
-  margin-inline-start: auto;
-  opacity: 0.6;
-  font-size: 0.85em;
-}
-
-.locale-check {
-  opacity: 0.9;
-}
-</style>
