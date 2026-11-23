@@ -36,16 +36,22 @@ function file(id: string, over: Partial<FileDto> = {}): FileDto {
     url: `/media/${id}`,
     created_at: "2026-11-01T10:00:00Z",
     ...over,
-  } as FileDto;
+  };
 }
 
 function withHarness(View: typeof TimelineView | typeof FilesView) {
   return {
     components: { View },
     setup() {
-      provideActionBar();
+      const bar = provideActionBar();
+      return { bar };
     },
-    template: "<div><View /></div>",
+    // The bar's registered entries render above the view, so the refresh
+    // action is a real button (the reload pins drive it).
+    template:
+      '<div><div class="harness-actions">' +
+      '<component :is="() => bar.actions.value.flatMap((r) => r())" />' +
+      "</div><View /></div>",
   };
 }
 
@@ -109,6 +115,27 @@ describe("TimelineView (master-detail)", () => {
     await flushPromises();
     expect(w.text()).toContain(i18n.global.t("common.files.pickHint"));
     expect(w.text()).not.toContain("a-original.webp");
+  });
+
+  it("drops the pane when a reload no longer carries the row", async () => {
+    window.innerWidth = 1280;
+    listTimelineMock.mockResolvedValue({ total: 1, offset: 0, limit: 40, items: [file("a")] });
+    const { wrapper: w } = mountTimeline();
+    wrapper = w;
+    await flushPromises();
+    await w.findAll(".tile-btn")[0]!.trigger("click");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(true);
+
+    listTimelineMock.mockResolvedValue({ total: 1, offset: 0, limit: 40, items: [file("b")] });
+    const host = w.element as HTMLElement;
+    const refresh = Array.from(host.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label") === i18n.global.t("common.actions.refresh"),
+    );
+    expect(refresh, "the harness renders the refresh action").toBeTruthy();
+    refresh!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(false);
   });
 
   it("on a narrow viewport the pane is a drawer that only exists while open", async () => {

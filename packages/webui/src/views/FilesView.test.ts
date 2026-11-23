@@ -59,7 +59,7 @@ function file(id: string, over: Partial<FileDto> = {}): FileDto {
     url: `/media/${id}`,
     created_at: "2026-11-01T10:00:00Z",
     ...over,
-  } as FileDto;
+  };
 }
 
 const folder: FileDto = file("f1", { kind: "folder", mime: "", name: "docs", original_name: "docs" });
@@ -122,9 +122,8 @@ describe("FilesView surface (mount pin)", () => {
     expect(w.find(".file-grid").exists()).toBe(true);
     // The pane's own root: a missing component leaves nothing here.
     expect(w.findAll(".file-tile").length).toBe(2);
-    // The roster's own formatter must handle the bigint wire value; the
-    // degraded shape is "—", so a numeric size proves the coercion ran on
-    // THIS surface (the pane has a formatter of its own).
+    // The roster's own formatter (the pane has one of its own) must render
+    // a real size — the degraded shape for a non-finite value is "—".
     const tileSize = w.find(".tile-size");
     expect(tileSize.exists()).toBe(true);
     expect(tileSize.text()).toMatch(/[0-9.]+\s?(B|KB|KiB|MB|MiB)/);
@@ -166,9 +165,7 @@ describe("FilesView surface (mount pin)", () => {
     await w.findAll(".tile-body")[0]!.trigger("click");
     await flushPromises();
     expect(w.find(".file-detail").text()).toContain("a-original.webp");
-    // The wire type is a bigint; a truthfully-typed fixture must format
-    // (the degraded shape is "—", so a numeric size here proves the
-    // coercion ran).
+    // A real size must format (a non-finite value degrades to "—").
     expect(w.find(".file-detail").text()).toMatch(/[0-9.]+\s?(B|KB|KiB|MB|MiB|GB|GiB)/);
 
     // Rename through the tile's own dialog: the roster reload carries the
@@ -263,7 +260,12 @@ describe("FilesView surface (mount pin)", () => {
     await flushPromises();
     expect(w.find(".file-detail").exists()).toBe(true);
 
-    listFolderMock.mockResolvedValue({ total: 1, offset: 0, limit: 30, items: [folder], crumbs: [] });
+    // Hold the post-move roster PENDING: the reload-drop guard cannot
+    // have fired yet, so the pane can only be gone because the move guard
+    // cleared it. (The old shape was satisfied by reload-drop instead —
+    // deleting the move guard left it green.)
+    let release: (v: unknown) => void = () => undefined;
+    listFolderMock.mockReturnValue(new Promise((resolve) => { release = resolve; }));
     moveFileMock.mockResolvedValue(undefined);
     // Scope to the FILE's own tile: .t-action spans every tile, and the
     // folder's move button comes first.
@@ -289,6 +291,9 @@ describe("FilesView surface (mount pin)", () => {
 
     expect(moveFileMock).toHaveBeenCalled();
     // The pane is gone (its root unmounts with the selection).
+    expect(w.find(".file-detail").exists()).toBe(false);
+    release({ total: 1, offset: 0, limit: 30, items: [folder], crumbs: [] });
+    await flushPromises();
     expect(w.find(".file-detail").exists()).toBe(false);
   });
 });
@@ -337,9 +342,7 @@ describe("PortalView surface (mount pin)", () => {
     await flushPromises();
     expect(w.find(".file-detail").exists()).toBe(true);
     expect(w.find(".file-detail").text()).toContain("a-original.webp");
-    // The wire type is a bigint; a truthfully-typed fixture must format
-    // (the degraded shape is "—", so a numeric size here proves the
-    // coercion ran).
+    // A real size must format (a non-finite value degrades to "—").
     expect(w.find(".file-detail").text()).toMatch(/[0-9.]+\s?(B|KB|KiB|MB|MiB|GB|GiB)/);
   });
 });
