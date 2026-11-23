@@ -111,6 +111,21 @@ describe("ProvidersView (family table roster)", () => {
     expect(wrapper.text()).toContain("rpc timeout");
   });
 
+  it("announces a failed toggle with the rejection text instead of snapping back silently", async () => {
+    listProvidersMock.mockResolvedValue([provider({ enabled: false })]);
+    upsertProviderMock.mockRejectedValue("rpc timeout");
+    wrapper = mountView();
+    await flushPromises();
+    const toggle = wrapper.find('input[type="checkbox"]');
+    await toggle.setValue(true);
+    await flushPromises();
+    // The toggle's own alert lane (role=alert above the table) carries
+    // the string; the row's optimistic flip snaps back.
+    const alert = wrapper.find('[role="alert"]');
+    expect(alert.exists()).toBe(true);
+    expect(alert.text()).toContain("rpc timeout");
+  });
+
   it("wires the enable switch to the toggle call", async () => {
     listProvidersMock.mockResolvedValue([provider({ enabled: false })]);
     upsertProviderMock.mockResolvedValue(undefined);

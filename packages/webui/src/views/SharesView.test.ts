@@ -110,6 +110,16 @@ describe("SharesView (family table roster)", () => {
     expect(wrapper.text()).toContain("nope");
   });
 
+  it("carries a bare-string rejection instead of an empty banner", async () => {
+    // The JSON-RPC lane's common rejection shape; the empty-message
+    // case renders no alert at all.
+    shareListMock.mockRejectedValue("rpc timeout");
+    wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain("rpc timeout");
+  });
+
   it("drops the row after a successful revoke reloads the roster", async () => {
     shareListMock.mockResolvedValueOnce([share("tok_abcdefgh1234"), share("tok_second99999")]);
     shareDeleteMock.mockResolvedValue(undefined);

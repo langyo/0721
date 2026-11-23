@@ -14,6 +14,8 @@ vi.mock("@/api", () => ({
 import KeysView from "./KeysView.vue";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
+
+const i18n = createAppI18n();
 import { defineComponent, h } from "vue";
 
 /**
@@ -196,7 +198,7 @@ describe("KeysView clipboard", () => {
 describe("KeysView error surface (family scaffold)", () => {
   it("hands a list failure to the table scaffold instead of a bare paragraph", async () => {
     listKeysMock.mockRejectedValue(new Error("boom"));
-    const wrapper = mount(KeysView, { global: { plugins: [createAppI18n()] } });
+    const wrapper = mount(KeysView, { global: { plugins: [i18n] } });
     await flushPromises();
     // The scaffold's alert is where a hard error belongs (the other three
     // rosters bind it too); a hand-rolled <p class="err"> was the old
@@ -210,10 +212,19 @@ describe("KeysView error surface (family scaffold)", () => {
     // fallback turned that into "" which renders NO alert at all, so a
     // failed cold start read as "no keys yet".
     listKeysMock.mockRejectedValue("rpc timeout");
-    const wrapper = mount(KeysView, { global: { plugins: [createAppI18n()] } });
+    const wrapper = mount(KeysView, { global: { plugins: [i18n] } });
     await flushPromises();
     expect(wrapper.find(".hk-alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("rpc timeout");
     wrapper.unmount();
+
+    // And the localized fallback for anything else (null, objects) —
+    // String(e) flattening would ship "undefined" to users.
+    listKeysMock.mockReset().mockRejectedValue(undefined);
+    const w2 = mount(KeysView, { global: { plugins: [createAppI18n()] } });
+    await flushPromises();
+    expect(w2.find(".hk-alert").exists()).toBe(true);
+    expect(w2.text()).toContain(i18n.global.t("common.status.error"));
+    w2.unmount();
   });
 });

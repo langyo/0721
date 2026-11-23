@@ -156,7 +156,7 @@ async function save() {
     dialogOpen.value = false;
     await load();
   } catch (err) {
-    saveError.value = err instanceof Error ? err.message : t("common.status.error");
+    saveError.value = errorText(err);
   } finally {
     saving.value = false;
   }
@@ -184,7 +184,7 @@ async function toggle(row: OAuthProviderPublic, enabled: boolean) {
   } catch (err) {
     rows.value = previous;
     // The failure must be VISIBLE (the row just snapped back — say why).
-    toggleError.value = err instanceof Error ? err.message : t("common.status.error");
+    toggleError.value = errorText(err);
   }
 }
 
@@ -220,7 +220,7 @@ async function confirmDelete() {
     rows.value = rows.value.filter((r) => r.id !== target.id);
     pendingDelete.value = null;
   } catch (err) {
-    deleteError.value = err instanceof Error ? err.message : t("common.status.error");
+    deleteError.value = errorText(err);
   } finally {
     deleteBusy.value = false;
   }

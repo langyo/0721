@@ -46,7 +46,6 @@ function errorText(e: unknown): string {
   return t("common.status.error");
 }
 
-
 async function load(reset: boolean) {
   // Re-entrancy guard: the paging offset below is read from the live
   // list, so two overlapping calls would append the same page twice.
