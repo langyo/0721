@@ -124,6 +124,37 @@ describe("LoginView", () => {
   });
 });
 
+describe("LoginView failure lane (never-empty)", () => {
+  it("shows the localized fallback for an Error with an empty message", async () => {
+    // MUT:login-errortext-lane — the old narrowing ternary rendered ""
+    // here, and the alert paragraph is falsy-gated: a failed sign-in
+    // read as an untouched page.
+    loginMock.mockRejectedValue(new Error(""));
+    const { wrapper } = await mountView();
+    const inputs = wrapper.findAll("input");
+    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
+    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
+    await flushPromises();
+    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
+    await flushPromises();
+    const alert = wrapper.find('[role="alert"]');
+    expect(alert.exists()).toBe(true);
+    expect(alert.text()).toBe("Something went wrong");
+  });
+
+  it("carries a bare-string rejection", async () => {
+    loginMock.mockRejectedValue("rpc timeout");
+    const { wrapper } = await mountView();
+    const inputs = wrapper.findAll("input");
+    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
+    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
+    await flushPromises();
+    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').text()).toBe("rpc timeout");
+  });
+});
+
 describe("LoginView dual-mode (family login panel)", () => {
   it("renders one full-width row per provider and navigates to its OAuth entry", async () => {
     loginMethodsMock.mockResolvedValue({

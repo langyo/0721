@@ -10,21 +10,16 @@ import { useI18n } from "vue-i18n";
 import * as files from "@/api/files";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { ShareDto } from "@/types";
+import { makeErrorText } from "@/composables/errorText";
 
 const { t } = useI18n();
 const shares = ref<ShareDto[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 
-/** Failure text for the roster banner: never empty. A JSON-RPC/WS lane
- * commonly rejects with a bare string, and an empty message renders no
- * alert at all (the scaffold's message is falsy-checked), which would
- * show a silent "no rows yet" over a real failure. */
-function errorText(e: unknown): string {
-  if (e instanceof Error && e.message) return e.message;
-  if (typeof e === "string" && e.length > 0) return e;
-  return t("common.status.error");
-}
+// The never-empty failure text (shared factory; the contract and
+// its pins live in composables/errorText).
+const errorText = makeErrorText(t);
 
 async function load() {
   error.value = null;

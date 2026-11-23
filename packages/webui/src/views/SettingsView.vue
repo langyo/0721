@@ -13,6 +13,7 @@ import { useI18n } from "vue-i18n";
 import * as api from "@/api";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { SiteConfig, SiteConfigStrict } from "@/types";
+import { makeErrorText } from "@/composables/errorText";
 
 /**
  * The site configuration editor — a STRICT full-document form.
@@ -26,6 +27,9 @@ import type { SiteConfig, SiteConfigStrict } from "@/types";
  */
 
 const { t } = useI18n();
+
+const errorText = makeErrorText(t);
+const saveErrorText = makeErrorText(t, "common.settings.saveFailed");
 
 const loading = ref(false);
 const loadError = ref<string | null>(null);
@@ -87,7 +91,7 @@ async function load() {
   try {
     fill(await api.getSiteConfig());
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : t("common.status.error");
+    loadError.value = errorText(err);
   } finally {
     loading.value = false;
   }
@@ -114,7 +118,7 @@ async function savePasswordLogin(enabled: boolean) {
     }, 2400);
   } catch (err) {
     passwordLogin.value = previous;
-    saveError.value = err instanceof Error ? err.message : t("common.settings.saveFailed");
+    saveError.value = saveErrorText(err);
   } finally {
     passwordBusy.value = false;
   }
@@ -190,7 +194,7 @@ async function save() {
       savedFlash.value = false;
     }, 2400);
   } catch (err) {
-    saveError.value = err instanceof Error ? err.message : t("common.settings.saveFailed");
+    saveError.value = saveErrorText(err);
   } finally {
     saveBusy.value = false;
   }

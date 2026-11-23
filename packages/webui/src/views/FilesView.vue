@@ -34,8 +34,11 @@ import { useActionBar } from "@/composables/useActionBar";
 import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { FileDto } from "@/types";
+import { makeErrorText } from "@/composables/errorText";
 
 const { t } = useI18n();
+
+const errorText = makeErrorText(t);
 const route = useRoute();
 const router = useRouter();
 
@@ -60,7 +63,7 @@ async function load() {
     quotaUsed.value = Number(q.used_bytes);
     quotaLimit.value = q.quota_bytes != null ? Number(q.quota_bytes) : null;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t("common.status.error");
+    error.value = errorText(e);
   } finally {
     loading.value = false;
   }
@@ -150,7 +153,7 @@ async function createFolder() {
     newFolderOpen.value = false;
     void load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t("common.status.error");
+    error.value = errorText(e);
   } finally {
     newFolderBusy.value = false;
   }
@@ -169,7 +172,7 @@ async function doRename() {
     renameTarget.value = null;
     void load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t("common.status.error");
+    error.value = errorText(e);
   } finally {
     renameBusy.value = false;
   }
@@ -188,7 +191,7 @@ async function doMove() {
     moveTarget.value = null;
     void load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t("common.status.error");
+    error.value = errorText(e);
   } finally {
     moveBusy.value = false;
   }
@@ -235,7 +238,7 @@ async function doShare() {
       copyOk.value = false; // visible failure → manual copy prompt
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t("common.status.error");
+    error.value = errorText(e);
   } finally {
     shareBusy.value = false;
   }
@@ -253,7 +256,7 @@ async function doDelete() {
     deleteTarget.value = null;
     void load();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t("common.status.error");
+    error.value = errorText(e);
   } finally {
     deleteBusy.value = false;
   }

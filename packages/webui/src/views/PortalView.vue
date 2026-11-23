@@ -21,6 +21,7 @@ import * as api from "@/api";
 import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { FileDto } from "@/types";
+import { makeErrorText } from "@/composables/errorText";
 
 /**
  * The timeline face: newest-first grid of everything on the instance,
@@ -33,6 +34,9 @@ import type { FileDto } from "@/types";
  */
 
 const { t } = useI18n();
+
+const errorText = makeErrorText(t);
+const uploadErrorText = makeErrorText(t, "common.portal.uploadFailed");
 
 const PAGE_SIZE = 30;
 
@@ -64,7 +68,7 @@ async function load(reset: boolean) {
     files.value = reset ? page.items : [...files.value, ...page.items];
     total.value = page.total;
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : t("common.status.error");
+    loadError.value = errorText(err);
   } finally {
     loading.value = false;
   }
@@ -98,7 +102,7 @@ function onFilesPicked(event: Event) {
         void load(true);
       })
       .catch((err: unknown) => {
-        entry.error = err instanceof Error ? err.message : t("common.portal.uploadFailed");
+        entry.error = uploadErrorText(err);
         uploads.value = [...uploads.value];
       });
   }
@@ -140,7 +144,7 @@ async function confirmDelete() {
     total.value = Math.max(0, total.value - 1);
     pendingDelete.value = null;
   } catch (err) {
-    deleteError.value = err instanceof Error ? err.message : t("common.status.error");
+    deleteError.value = errorText(err);
   } finally {
     deleteBusy.value = false;
   }
@@ -278,7 +282,7 @@ function formatSize(bytes: number): string {
         <HkProgressRing :value="entry.progress" :size="20" :stroke-width="3" />
         <span class="upload-name" :title="entry.name">{{ entry.name }}</span>
         <span v-if="entry.error" class="upload-error" role="alert">
-          {{ t("common.portal.uploadFailed") }} — {{ entry.error }}
+          {{ entry.error }}
         </span>
       </div>
     </div>
