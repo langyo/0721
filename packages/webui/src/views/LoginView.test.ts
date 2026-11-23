@@ -393,8 +393,11 @@ describe("LoginView password kill-switch (W4 closing)", () => {
     await flushPromises();
     const alert = wrapper.find('[role="alert"]');
     expect(alert.exists()).toBe(true);
-    // The kill-switch copy, NOT the 401 invalid-credentials copy.
-    expect(alert.text()).toBe("Password login is disabled — use a provider below.");
+    // The kill-switch copy, NOT the 401 invalid-credentials copy. The
+    // wording names a channel, not a row "below" the card — providers are
+    // peers in the segment group now, so the old phrasing pointed at
+    // nothing (MUT:disabled-copy — restoring it reddens here).
+    expect(alert.text()).toBe("Password login is disabled — pick another sign-in channel.");
     expect(alert.text()).not.toContain("Invalid username");
   });
 });

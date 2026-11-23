@@ -60,7 +60,6 @@ function providerIcon() {
   return h(KeyRound, { size: 16 });
 }
 
-
 const channels = computed<HkLoginChannel[]>(() => {
   const providers = methods.value?.providers ?? [];
   const list: HkLoginChannel[] = [];
@@ -148,12 +147,6 @@ async function onAccountSubmit(_channel: string, username: string, password: str
 function onSsoClick(channelKey: string): void {
   signInWith(channelKey);
 }
-
-/** An alternative-method row under the credential card: same full-page
- * redirect as an sso channel. */
-function onMethodSelect(_channel: string, providerId: string): void {
-  signInWith(providerId);
-}
 </script>
 
 <template>
@@ -171,7 +164,6 @@ function onMethodSelect(_channel: string, providerId: string): void {
         :subtitle="t('common.auth.subtitle')"
         @account-submit="onAccountSubmit"
         @sso-click="onSsoClick"
-        @method-select="onMethodSelect"
       />
       <!-- No password and no provider: the honest dead state. It needs a
            live descriptor replying with neither method — the catch lane

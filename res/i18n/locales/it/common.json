@@ -33,7 +33,7 @@
     "title": "Accedi",
     "subtitle": "Continua su 0721",
     "failed": "Nome utente o password non validi",
-    "passwordDisabled": "Login con password disattivato: usa un provider qui sotto.",
+    "passwordDisabled": "L'accesso con password è disabilitato — scegli un altro canale.",
     "noMethods": "Nessun metodo di accesso disponibile: un amministratore deve attivare un provider o il login con password.",
     "passwordChannel": "Password",
     "submit": "Accedi"

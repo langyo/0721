@@ -33,7 +33,7 @@
     "title": "Sign in",
     "subtitle": "Continue to 0721",
     "failed": "Invalid username or password",
-    "passwordDisabled": "Password login is disabled — use a provider below.",
+    "passwordDisabled": "Password login is disabled — pick another sign-in channel.",
     "noMethods": "No login method is available — an administrator must enable a provider or password login.",
     "passwordChannel": "Password",
     "submit": "Sign in"

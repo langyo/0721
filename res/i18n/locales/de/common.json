@@ -33,7 +33,7 @@
     "title": "Anmelden",
     "subtitle": "Weiter zu 0721",
     "failed": "Ungültiger Benutzername oder falsches Passwort",
-    "passwordDisabled": "Passwort-Login ist deaktiviert — nutzen Sie unten einen Anbieter.",
+    "passwordDisabled": "Passwort-Anmeldung ist deaktiviert — wählen Sie einen anderen Anmeldeweg.",
     "noMethods": "Keine Anmeldemethode verfügbar — ein Administrator muss einen Anbieter oder das Passwort-Login aktivieren.",
     "passwordChannel": "Passwort",
     "submit": "Anmelden"

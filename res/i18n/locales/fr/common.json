@@ -33,7 +33,7 @@
     "title": "Connexion",
     "subtitle": "Continuer vers 0721",
     "failed": "Nom d'utilisateur ou mot de passe incorrect",
-    "passwordDisabled": "Connexion par mot de passe désactivée — utilisez un fournisseur ci-dessous.",
+    "passwordDisabled": "La connexion par mot de passe est désactivée — choisissez un autre canal.",
     "noMethods": "Aucune méthode de connexion disponible — un administrateur doit activer un fournisseur ou la connexion par mot de passe.",
     "passwordChannel": "Mot de passe",
     "submit": "Se connecter"
