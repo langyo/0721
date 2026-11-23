@@ -84,8 +84,14 @@ describe("ProvidersView (family table roster)", () => {
     ]);
     wrapper = mountView();
     await flushPromises();
-    expect(wrapper.text()).toContain("••••1234");
-    expect(wrapper.text()).toContain(i18n.global.t("common.providers.noSecret"));
+    // Row-scoped on purpose: whole-document contains would pass with the
+    // mask/value mapping inverted (both strings present somewhere), and
+    // a secret's tail must never appear on the row that has no secret.
+    const rows = wrapper.findAll("tbody tr");
+    expect(rows[0]!.text()).toContain("••••1234");
+    expect(rows[0]!.text()).not.toContain(i18n.global.t("common.providers.noSecret"));
+    expect(rows[1]!.text()).toContain(i18n.global.t("common.providers.noSecret"));
+    expect(rows[1]!.text()).not.toContain("1234");
   });
 
   it("wires the enable switch to the toggle call", async () => {
