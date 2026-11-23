@@ -30,9 +30,8 @@ confidence-threshold = 0.8
 # Workspace crates are publish = false.
 private = { ignore = true }
 
-# The family's own ORM (currently consumed from its git master) carries the
-# SySL 1.0 text via license-file; the hash pins it so a swapped license
-# would fail loudly.
+# The family's own ORM (crates.io since 0.2) carries the SySL 1.0 text via
+# license-file; the hash pins it so a swapped license would fail loudly.
 [[licenses.clarify]]
 name = "lacrymira"
 expression = "LicenseRef-SySL-1.0"
@@ -77,9 +76,8 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Registry fallback (see Cargo.toml): the family ORM master carries the
-# find/insert helpers the service is built on.
+# plana + plana-rpc-server stay on git: the published rpc-server still
+# pairs with plana ^0.3. lacrymira is on crates.io and needs no allow-git.
 allow-git = [
-    "https://github.com/celestia-island/lacrymira",
     "https://github.com/celestia-island/plana",
 ]

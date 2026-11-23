@@ -12,7 +12,7 @@
 
 ## 架构终态（11 波全部合并，#19–#26）
 
-- **服务端**：axum 0.8 + tokio + lacrymira ^0.1（PostgreSQL，`i0721-pg`）+ jiff（禁 chrono）。
+- **服务端**：axum 0.8 + tokio + lacrymira ^0.2（PostgreSQL，`i0721-pg`）+ jiff（禁 chrono）。
 - **通信面**：WS JSON-RPC（plana-rpc-server @ `/api/rpc`，一次性 WS ticket + httpOnly cookie）+
   REST 白名单（health / auth bootstrap / refresh / logout / ws-ticket / upload / media / share / MCP SSE+message）+
   MCP（SSE transport + 5 agent 工具 + API key `i0721-<32hex>` 哈希存储 + copy-once）。
