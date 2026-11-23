@@ -240,6 +240,40 @@ describe("FilesView surface (mount pin)", () => {
     // folder moved into its own subtree); its sibling still is.
     expect(optionTexts).not.toContain("alpha");
     expect(optionTexts).toContain("beta");
+    // Only folders are destinations: the plain file in the roster is not
+    // offered.
+    expect(optionTexts).not.toContain("a.webp");
+  });
+
+  it("moves to the ROOT when the root entry is picked", async () => {
+    // The view normalises the picker's "" to null for the API; nothing
+    // used to exercise that path.
+    listFolderMock.mockResolvedValueOnce({
+      total: 2,
+      offset: 0,
+      limit: 30,
+      items: [folder, file("a")],
+      crumbs: [],
+    });
+    const { wrapper: w } = mountWithRouter(FilesView);
+    wrapper = w;
+    await flushPromises();
+    moveFileMock.mockResolvedValue(undefined);
+    listFolderMock.mockResolvedValue({ total: 1, offset: 0, limit: 30, items: [folder], crumbs: [] });
+
+    const moveBtn = w.findAll(".file-tile")[1]!.findAll(".t-action").find(
+      (b) => b.attributes("title") === i18n.global.t("common.files.move"),
+    );
+    await moveBtn!.trigger("click");
+    await flushPromises();
+    // Leave the default (root) selection untouched and confirm.
+    const submit = Array.from(document.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === i18n.global.t("common.actions.confirm"),
+    );
+    expect(submit).toBeTruthy();
+    submit!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    expect(moveFileMock).toHaveBeenCalledWith("a", null);
   });
 
   it("drops the pane when a reload no longer carries the row", async () => {
@@ -353,6 +387,37 @@ describe("FilesView surface (mount pin)", () => {
 });
 
 describe("PortalView pane guards", () => {
+
+  it("moves to the ROOT when the root entry is picked", async () => {
+    // The view normalises the picker's "" to null for the API; nothing
+    // used to exercise that path.
+    listFolderMock.mockResolvedValueOnce({
+      total: 2,
+      offset: 0,
+      limit: 30,
+      items: [folder, file("a")],
+      crumbs: [],
+    });
+    const { wrapper: w } = mountWithRouter(FilesView);
+    wrapper = w;
+    await flushPromises();
+    moveFileMock.mockResolvedValue(undefined);
+    listFolderMock.mockResolvedValue({ total: 1, offset: 0, limit: 30, items: [folder], crumbs: [] });
+
+    const moveBtn = w.findAll(".file-tile")[1]!.findAll(".t-action").find(
+      (b) => b.attributes("title") === i18n.global.t("common.files.move"),
+    );
+    await moveBtn!.trigger("click");
+    await flushPromises();
+    // Leave the default (root) selection untouched and confirm.
+    const submit = Array.from(document.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === i18n.global.t("common.actions.confirm"),
+    );
+    expect(submit).toBeTruthy();
+    submit!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    expect(moveFileMock).toHaveBeenCalledWith("a", null);
+  });
 
   it("drops the pane when a reload no longer carries the row", async () => {
     listFilesMock.mockResolvedValueOnce({ total: 1, offset: 0, limit: 30, items: [file("a")] });
