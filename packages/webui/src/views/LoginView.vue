@@ -3,7 +3,6 @@ import {
   HkEmptyState,
   HkLoginFlow,
   HkStatusBar,
-  type HkAuthChannelListEntry,
   type HkLoginChannel,
 } from "@celestia-island/hikari";
 import { KeyRound, Unplug } from "lucide-vue-next";
@@ -22,10 +21,9 @@ import { makeErrorText } from "@/composables/errorText";
  * The sign-in face, driven by `GET /api/v1/auth/login-methods`.
  *
  * It is hikari's `HkLoginFlow` panel, not a hand-built card, so the
- * channel/step semantics (and the copy rules the component spells out in
- * its own docstring — provider names belong on rows, never in the channel
- * segment) come from the upstream component rather than from this file.
- * The descriptor becomes the channel list —
+ * channel/step semantics come from the upstream component rather than
+ * from this file. The descriptor becomes the channel list, and the lanes
+ * are PEERS — not a form with alternatives tucked beneath it:
  *
  *  - the password kill-switch on  → one credentials channel (the
  *    account + password card);
@@ -35,8 +33,10 @@ import { makeErrorText } from "@/composables/errorText";
  *    which a fetch cannot carry through).
  *
  * The segment group renders only for two or more channels (the
- * component's own rule), so a deployment configured for Celestia ID
- * alone shows exactly one panel with no segment at all.
+ * component's own rule — a lone dead segment reads as a broken switch),
+ * so a deployment configured for Celestia ID alone shows exactly one
+ * panel with no segment at all. A deployment with both shows the switch,
+ * and the card body crossfades between the lanes.
  */
 
 const { t } = useI18n();
@@ -60,17 +60,6 @@ function providerIcon() {
   return h(KeyRound, { size: 16 });
 }
 
-/** Provider rows for the credentials card's alternative-methods list —
- * the family shape: a provider is a ROW under the form, not a channel
- * tab (a provider name in the channel segment read as "log in to ERP"
- * instead of "log in with your organization"). */
-const providerRows = computed<HkAuthChannelListEntry[]>(() =>
-  (methods.value?.providers ?? []).map((provider) => ({
-    key: provider.id,
-    label: provider.display_name,
-    icon: providerIcon(),
-  })),
-);
 
 const channels = computed<HkLoginChannel[]>(() => {
   const providers = methods.value?.providers ?? [];

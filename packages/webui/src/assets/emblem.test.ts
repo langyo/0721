@@ -26,11 +26,26 @@ function sha256(path: string): string {
 describe("brand assets", () => {
   it("ships the corrected emblem — the one whose interior whites survived", () => {
     // MUT:emblem-vendor — re-vendoring upstream's white-keyed copy changes
-    // these bytes and reddens this pin (measured on the two candidates:
-    // the corrected render keeps 252 opaque near-white pixels, the keyed
-    // one keeps 0).
+    // these bytes and reddens this pin. The distinguishing measurement
+    // (threshold RGB>=235/225, alpha=255): the corrected render keeps the
+    // enclosed near-whites at >150 px, the keyed copy keeps 0.
     expect(sha256(resolve(PUBLIC, "logo.webp"))).toBe(
-      "5ad83f187536c75e756d590832a41a0a2ca76c0ff7ea6ea92e6ecb0f67fc661c",
+      "390211788de22e99e220a106d5c3a3ee74d55c50cc7bde40fd2ebbdf703b54a0",
+    );
+  });
+
+  it("ships the emblem in the format its name and Content-Type claim", () => {
+    // The server picks Content-Type by extension (`static_files.rs` maps
+    // .webp -> image/webp), so a PNG saved under a .webp name would be
+    // served under the wrong type and browsers only survive it by
+    // sniffing. This happened once while re-rendering the asset.
+    const bytes = readFileSync(resolve(PUBLIC, "logo.webp"));
+    // RIFF....WEBP
+    expect(bytes.subarray(0, 4).toString("ascii")).toBe("RIFF");
+    expect(bytes.subarray(8, 12).toString("ascii")).toBe("WEBP");
+    // ...and it is NOT a PNG wearing the name.
+    expect(bytes.subarray(0, 8)).not.toEqual(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     );
   });
 
