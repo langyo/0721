@@ -147,7 +147,12 @@
     "fileNotAvailable": "Este archivo ya no está disponible",
     "breadcrumbRoot": "Mis archivos",
     "fileName": "Archivo",
-    "size": "Tamaño"
+    "size": "Tamaño",
+    "uploaded": "Subido",
+    "kind": "Tipo",
+    "kindFolder": "Carpeta",
+    "details": "Detalles",
+    "pickHint": "Selecciona un elemento para verlo"
   },
   "keys": {
     "title": "Claves API",

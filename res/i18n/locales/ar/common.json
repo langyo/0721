@@ -147,7 +147,12 @@
     "fileNotAvailable": "هذا الملف لم يعد متاحاً",
     "breadcrumbRoot": "ملفاتي",
     "fileName": "اسم الملف",
-    "size": "الحجم"
+    "size": "الحجم",
+    "uploaded": "مرفوع",
+    "kind": "النوع",
+    "kindFolder": "مجلد",
+    "details": "التفاصيل",
+    "pickHint": "اختر عنصرًا لعرض تفاصيله"
   },
   "keys": {
     "title": "مفاتيح API",

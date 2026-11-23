@@ -147,7 +147,12 @@
     "fileNotAvailable": "Questo file non è più disponibile",
     "breadcrumbRoot": "I miei file",
     "fileName": "File",
-    "size": "Dimensione"
+    "size": "Dimensione",
+    "uploaded": "Caricato",
+    "kind": "Tipo",
+    "kindFolder": "Cartella",
+    "details": "Dettagli",
+    "pickHint": "Seleziona un elemento per ispezionarlo"
   },
   "keys": {
     "title": "Chiavi API",

@@ -147,7 +147,12 @@
     "fileNotAvailable": "Ce fichier n'est plus disponible",
     "breadcrumbRoot": "Mes fichiers",
     "fileName": "Fichier",
-    "size": "Taille"
+    "size": "Taille",
+    "uploaded": "Mis en ligne",
+    "kind": "Type",
+    "kindFolder": "Dossier",
+    "details": "Détails",
+    "pickHint": "Sélectionnez un élément pour l'inspecter"
   },
   "keys": {
     "title": "Clés API",

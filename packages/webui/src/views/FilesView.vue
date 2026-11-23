@@ -1,13 +1,5 @@
 <script setup lang="ts">
-import {
-  HkAdaptiveDialog,
-  HkButton,
-  HkEmptyState,
-  HkIconButton,
-  HkInput,
-  HkSwitch,
-  useChromeActionSize,
-} from "@celestia-island/hikari";
+import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkInput, HkMasterDetail, HkSwitch, useChromeActionSize } from "@celestia-island/hikari";
 import {
   Copy,
   FileArchive,
@@ -35,6 +27,8 @@ import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { FileDto } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
+import FileDetailView from "@/components/FileDetailView.vue";
+import { formatSize } from "@/composables/formatSize";
 
 const { t } = useI18n();
 
@@ -59,6 +53,11 @@ async function load() {
   error.value = null;
   try {
     items.value = (await files.listFolder(folderId.value)).items;
+    // The pane holds an OBJECT: a reload that drops its row (deleted
+    // elsewhere, moved by another tab) must not keep rendering it.
+    if (selected.value && !items.value.some((f) => f.id === selected.value?.id)) {
+      selected.value = null;
+    }
     const q = await files.quotaGet();
     quotaUsed.value = Number(q.used_bytes);
     quotaLimit.value = q.quota_bytes != null ? Number(q.quota_bytes) : null;
@@ -70,7 +69,11 @@ async function load() {
 }
 
 onMounted(() => void load());
-watch(folderId, () => void load());
+watch(folderId, () => {
+  // A new folder is a new roster; the pane must not keep the parent's row.
+  selected.value = null;
+  void load();
+});
 usePageRefresh(() => load(), { loading });
 
 // Breadcrumb: root → … → current, via files.chain (deep-linkable).
@@ -95,9 +98,13 @@ const crumbs = computed(() => {
   return trail;
 });
 
+const selected = ref<FileDto | null>(null);
+
 function openFolder(f: FileDto) {
   if (f.kind === "folder") {
     void router.push(`/files/${f.id}`);
+  } else {
+    selected.value = f;
   }
 }
 
@@ -167,10 +174,16 @@ const renameBusy = ref(false);
 async function doRename() {
   if (!renameTarget.value || !renameName.value.trim()) return;
   renameBusy.value = true;
+  const renamedId = renameTarget.value.id;
   try {
-    await files.renameFile(renameTarget.value.id, renameName.value.trim());
+    await files.renameFile(renamedId, renameName.value.trim());
     renameTarget.value = null;
-    void load();
+    await load();
+    // The pane holds an OBJECT, not an id: a reload replaces the array,
+    // so re-point it or the detail keeps showing the pre-rename row.
+    if (selected.value?.id === renamedId) {
+      selected.value = items.value.find((f) => f.id === renamedId) ?? null;
+    }
   } catch (e) {
     error.value = errorText(e);
   } finally {
@@ -187,7 +200,9 @@ async function doMove() {
   if (!moveTarget.value || moveBusy.value) return;
   moveBusy.value = true;
   try {
-    await files.moveFile(moveTarget.value.id, moveParent.value || null);
+    const movedId = moveTarget.value.id;
+    if (selected.value?.id === movedId) selected.value = null;
+    await files.moveFile(movedId, moveParent.value || null);
     moveTarget.value = null;
     void load();
   } catch (e) {
@@ -252,6 +267,8 @@ async function doDelete() {
   if (!deleteTarget.value || deleteBusy.value) return;
   deleteBusy.value = true;
   try {
+    // The pane must not keep showing the row that just vanished.
+    if (selected.value?.id === deleteTarget.value.id) selected.value = null;
     await files.deleteFile(deleteTarget.value.id);
     deleteTarget.value = null;
     void load();
@@ -262,14 +279,6 @@ async function doDelete() {
   }
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB"];
-  let v = bytes;
-  let u = -1;
-  do { v /= 1024; u++; } while (v >= 1024 && u < units.length - 1);
-  return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[u]}`;
-}
 
 const quotaPercent = computed(() => {
   if (!quotaLimit.value || quotaLimit.value === 0) return null;
@@ -319,8 +328,17 @@ bar.setActions(() => {
     <HkEmptyState v-if="loading && items.length === 0" loading boxed :title="t('common.status.loading')" />
     <HkEmptyState v-else-if="items.length === 0" boxed :icon="Folder" :title="t('common.files.empty')" />
 
-    <ul v-else class="file-grid">
-      <li v-for="f in items" :key="f.id" class="file-tile" :class="{ folder: f.kind === 'folder' }">
+    <HkMasterDetail v-else
+      :detail-open="selected !== null"
+      :detail-title="selected?.original_name || selected?.name || ''"
+      :empty-title="t('common.files.details')"
+      :empty-description="t('common.files.pickHint')"
+      :close-label="t('common.actions.cancel')"
+      @close="selected = null"
+    >
+      <template #list>
+    <ul class="file-grid">
+      <li v-for="f in items" :key="f.id" class="file-tile" :class="{ folder: f.kind === 'folder', picked: selected?.id === f.id }">
         <button type="button" class="tile-body" @click="openFolder(f)" @dblclick="openFolder(f)">
           <component :is="iconFor(f)" v-if="f.kind !== 'image'" :size="32" class="tile-icon" />
           <img v-else :src="`${f.url}?thumbnail=true`" :alt="f.original_name || f.name" loading="lazy" />
@@ -345,6 +363,12 @@ bar.setActions(() => {
         </div>
       </li>
     </ul>
+      </template>
+
+      <template #detail>
+        <FileDetailView v-if="selected" :file="selected" />
+      </template>
+    </HkMasterDetail>
 
     <!-- Upload progress overlay -->
     <div v-if="uploadProgress.size > 0" class="upload-overlay" role="status">
@@ -449,6 +473,10 @@ bar.setActions(() => {
 .quota-text { font-size: 0.78rem; opacity: 0.7; white-space: nowrap; }
 .error { color: rgb(220 38 38); font-size: 0.85rem; margin: 0; }
 .file-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: 0.75rem; }
+.file-tile.picked .tile-body {
+  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+  outline-offset: -2px;
+}
 .file-tile { display: flex; flex-direction: column; border: 1px solid color-mix(in srgb, currentColor 16%, transparent); border-radius: 0.75rem; overflow: hidden; background: color-mix(in srgb, currentColor 4%, transparent); }
 .tile-body { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; width: 100%; border: none; background: transparent; cursor: pointer; color: inherit; padding: 0;
   img { width: 100%; height: 100%; object-fit: cover; } }

@@ -147,7 +147,12 @@
     "fileNotAvailable": "Файл больше недоступен",
     "breadcrumbRoot": "Мои файлы",
     "fileName": "Файл",
-    "size": "Размер"
+    "size": "Размер",
+    "uploaded": "Загружено",
+    "kind": "Тип",
+    "kindFolder": "Папка",
+    "details": "Сведения",
+    "pickHint": "Выберите элемент, чтобы посмотреть его"
   },
   "keys": {
     "title": "API-ключи",
