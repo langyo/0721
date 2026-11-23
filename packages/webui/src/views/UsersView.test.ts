@@ -174,6 +174,26 @@ describe("UsersView (family table roster)", () => {
     expect(wrapper.text()).toContain("load blew up");
   });
 
+  it("reports a non-Error rejection instead of a silent empty roster", async () => {
+    // A JSON-RPC lane commonly rejects with a bare string; the fallback
+    // must yield a real message, or a failed cold start reads as
+    // "no users yet" with no alert at all.
+    listUsersMock.mockRejectedValue(undefined);
+    wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain(i18n.global.t("common.status.error"));
+    wrapper!.unmount();
+
+    // And the bare-string arm (a JSON-RPC lane's common shape) carries
+    // the string itself.
+    listUsersMock.mockRejectedValue("rpc timeout");
+    wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain("rpc timeout");
+  });
+
   it("renders the scaffold's empty state when the roster is empty", async () => {
     listUsersMock.mockResolvedValue({ items: [], total: 0 });
     wrapper = mountView();

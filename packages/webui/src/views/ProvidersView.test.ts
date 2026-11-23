@@ -94,6 +94,23 @@ describe("ProvidersView (family table roster)", () => {
     expect(rows[1]!.text()).not.toContain("1234");
   });
 
+  it("reports a non-Error rejection instead of a silent empty roster", async () => {
+    listProvidersMock.mockRejectedValue(undefined);
+    wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain(i18n.global.t("common.status.error"));
+    wrapper!.unmount();
+
+    // And the bare-string arm (a JSON-RPC lane's common shape) carries
+    // the string itself.
+    listProvidersMock.mockRejectedValue("rpc timeout");
+    wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.find(".hk-alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain("rpc timeout");
+  });
+
   it("wires the enable switch to the toggle call", async () => {
     listProvidersMock.mockResolvedValue([provider({ enabled: false })]);
     upsertProviderMock.mockResolvedValue(undefined);

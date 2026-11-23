@@ -36,6 +36,17 @@ const loading = ref(false);
 const loadError = ref<string | null>(null);
 const hasMore = computed(() => users.value.length < total.value);
 
+/** Failure text for the roster banner: never empty. A JSON-RPC/WS lane
+ * commonly rejects with a bare string, and an empty message renders no
+ * alert at all (the scaffold's message is falsy-checked), which would
+ * show a silent "no rows yet" over a real failure. */
+function errorText(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  if (typeof e === "string" && e.length > 0) return e;
+  return t("common.status.error");
+}
+
+
 async function load(reset: boolean) {
   // Re-entrancy guard: the paging offset below is read from the live
   // list, so two overlapping calls would append the same page twice.
@@ -48,7 +59,7 @@ async function load(reset: boolean) {
     users.value = reset ? page.items : [...users.value, ...page.items];
     total.value = page.total;
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : t("common.status.error");
+    loadError.value = errorText(err);
   } finally {
     loading.value = false;
   }
