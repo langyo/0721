@@ -189,7 +189,7 @@ describe("LoginView dead state (W4 R2)", () => {
 });
 
 describe("LoginView dual-mode (family login panel)", () => {
-  it("offers every provider as its own channel and navigates on sso-click", async () => {
+  it("makes Celestia ID a peer channel and keeps other providers as rows", async () => {
     loginMethodsMock.mockResolvedValue({
       password: true,
       providers: [
@@ -200,24 +200,21 @@ describe("LoginView dual-mode (family login panel)", () => {
     const { wrapper } = await mountView();
     await flushPromises();
 
-    // MUT:channel-peers — the account lane and each provider are PEERS in
-    // the segment group, so the group renders once a second choice exists
-    // (hikari hides a lone segment). Demoting them back to form rows
-    // reddens both the channel count and the group assertion.
+    // MUT:peer-lane — Celestia ID is the peer lane (the family's central
+    // sign-in); every other provider is an alternative ROW under the
+    // account card, which is where hikari puts provider names.
     const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
       key: string;
       mode: string;
-      label?: string;
-      methods?: unknown[];
+      methods?: Array<{ key: string; label: string }>;
     }>;
-    expect(channels.length).toBe(3);
+    expect(channels).toHaveLength(2);
     expect(channels[0]).toMatchObject({ key: "password", mode: "credentials" });
-    expect(channels.slice(1).map((c) => c.mode)).toEqual(["sso", "sso"]);
-    // No channel carries the other lane as a form row any more.
-    expect(channels.every((c) => (c.methods ?? []).length === 0)).toBe(true);
+    expect(channels[1]).toMatchObject({ key: "erp", mode: "sso" });
+    // GitHub rides the credentials card as a row, not as a segment.
+    expect(channels[0]!.methods).toEqual([{ key: "gh", label: "GitHub", icon: expect.anything() }]);
 
-    // Navigation is a FULL page load (an httpOnly state cookie is planted
-    // and the server 302s) — pin the destination, not a router push.
+    // The peer lane's row navigates the whole page to its redirect entry.
     const hrefSetter = vi.fn();
     Object.defineProperty(window, "location", {
       configurable: true,
@@ -283,6 +280,30 @@ describe("LoginView dual-mode (family login panel)", () => {
       buttonLabel?: string;
     }>;
     expect(channels[1]).toMatchObject({ mode: "sso", buttonLabel: "Acme Corp Internal" });
+  });
+
+  it("never renders a raw locale key when a provider type is unknown", async () => {
+    // Contract-reachable: the Rust enum is closed at four types today, but
+    // adding a fifth must not put a literal key on a tab. With no password
+    // lane every provider is its own channel — including an unknown one.
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [{ id: "x", display_name: "Mystery IdP", type: "builtin:mystery", icon: null }],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
+    // One channel alone → no segment group, but the card's row still names
+    // the destination; nothing may show "common.auth.*".
+    expect(labels.join(" ")).not.toContain("common.auth.");
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      label?: string;
+      buttonLabel?: string;
+    }>;
+    expect(channels).toHaveLength(1);
+    expect(channels[0]!.label).toBe("Single sign-on");   // panel copy, not a key
+    expect(channels[0]!.buttonLabel).toBe("Mystery IdP"); // the row names it
   });
 
   it("grows the segment group only once a second channel exists", async () => {

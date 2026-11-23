@@ -36,7 +36,10 @@
     "passwordDisabled": "パスワードログインは無効です — 別のログイン方法を選んでください。",
     "noMethods": "利用できるログイン方法がありません——管理者がプロバイダーまたはパスワードログインを有効にする必要があります。",
     "passwordChannel": "パスワード",
-    "submit": "サインイン"
+    "submit": "サインイン",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "シングルサインオン",
+    "orContinue": "または次で続行"
   },
   "portal": {
     "title": "画像",

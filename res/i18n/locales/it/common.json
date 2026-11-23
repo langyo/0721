@@ -36,7 +36,10 @@
     "passwordDisabled": "L'accesso con password è disabilitato — scegli un altro canale.",
     "noMethods": "Nessun metodo di accesso disponibile: un amministratore deve attivare un provider o il login con password.",
     "passwordChannel": "Password",
-    "submit": "Accedi"
+    "submit": "Accedi",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Accesso unico",
+    "orContinue": "oppure continua con"
   },
   "portal": {
     "title": "Immagini",

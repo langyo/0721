@@ -60,12 +60,11 @@ const error = ref<string | null>(null);
  * is the closed provider-TYPE enum, so this table is our code, not
  * remote data; the server's `display_name` stays where it belongs — on
  * the channel's row (`buttonLabel`). */
-const PROVIDER_CHANNEL_LABEL: Record<string, string> = {
-  "builtin:erp": "Celestia ID",
-  "builtin:github": "GitHub",
-  "builtin:feishu": "Feishu",
-  oidc: "OIDC",
-};
+/** The one provider that IS a peer channel, not a row: the family's
+ * central sign-in (auth.cw's "组织登录" counterpart). Everything else is
+ * an alternative under the account card, which is where hikari puts
+ * provider names — rows, never segments. */
+const PEER_PROVIDER_TYPE = "builtin:erp";
 
 /** Provider marks are loose-typed by the family (a brand SVG or <img>);
  * 0721 ships no brand assets, so every SSO row rides the same neutral
@@ -76,14 +75,15 @@ function providerIcon() {
 
 const channels = computed<HkLoginChannel[]>(() => {
   const providers = methods.value?.providers ?? [];
+  const password = methods.value?.password ?? false;
+  // Celestia ID is the peer lane; every other provider is an alternative
+  // row under the account card (hikari: a provider name in the segment
+  // reads as "log in to ERP" rather than "log in with your organization").
+  const peer = providers.find((provider) => provider.type === PEER_PROVIDER_TYPE);
+  const others = providers.filter((provider) => provider !== peer);
   const list: HkLoginChannel[] = [];
 
-  // Channel one: the account card. Celestia ID is NOT a row beneath it —
-  // the family shape is a segment group over one card per channel (the
-  // caller switches, the body crossfades), so a deployment offering both
-  // renders two peers rather than a form with an alternative buried in
-  // the footer.
-  if (methods.value?.password) {
+  if (password) {
     list.push({
       key: "password",
       mode: "credentials",
@@ -94,24 +94,42 @@ const channels = computed<HkLoginChannel[]>(() => {
       usernameAutocomplete: "username",
       passwordField: true,
       submitLabel: t("common.auth.submit"),
+      // Rows under the card: the family home for provider names.
+      methods: others.map((provider) => ({
+        key: provider.id,
+        label: provider.display_name,
+        icon: providerIcon(),
+      })),
+      methodsDivider:
+        others.length > 0 ? t("common.auth.orContinue") : undefined,
     });
+  } else {
+    // No password lane: every provider must be reachable on its own, so
+    // each is a whole-flow channel. Their tabs stay panel copy (the type
+    // label), and the provider's own name rides the row.
+    for (const provider of others) {
+      list.push({
+        key: provider.id,
+        mode: "sso" as const,
+        label: t("common.auth.ssoChannel"),
+        title: t("common.auth.title"),
+        subtitle: t("common.auth.subtitle"),
+        icon: providerIcon(),
+        buttonLabel: provider.display_name,
+      });
+    }
   }
 
-  // Channel two+: each provider's whole sign-in is one redirect, so every
-  // one of them is its own sso channel (its own segment) — the segment
-  // group appears as soon as a second choice exists, which is exactly
-  // hikari's rule ("a lone dead segment reads as a broken switch").
-  for (const provider of providers) {
+  if (peer) {
     list.push({
-      key: provider.id,
+      key: peer.id,
       mode: "sso" as const,
-      // Panel-owned tab text; the provider's own name rides the row.
-      label:
-        PROVIDER_CHANNEL_LABEL[provider.type] ?? t("common.auth.ssoChannel"),
+      // Panel copy, never the server's display_name (locked copy rule).
+      label: t("common.auth.celestiaChannel"),
       title: t("common.auth.title"),
       subtitle: t("common.auth.subtitle"),
       icon: providerIcon(),
-      buttonLabel: provider.display_name,
+      buttonLabel: peer.display_name,
     });
   }
 

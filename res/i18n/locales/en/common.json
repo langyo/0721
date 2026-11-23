@@ -36,7 +36,10 @@
     "passwordDisabled": "Password login is disabled — pick another sign-in channel.",
     "noMethods": "No login method is available — an administrator must enable a provider or password login.",
     "passwordChannel": "Password",
-    "submit": "Sign in"
+    "submit": "Sign in",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Single sign-on",
+    "orContinue": "or continue with"
   },
   "portal": {
     "title": "Portal",

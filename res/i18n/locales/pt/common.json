@@ -36,7 +36,10 @@
     "passwordDisabled": "O login por senha está desativado — escolha outro canal de acesso.",
     "noMethods": "Nenhum método de login disponível — um administrador precisa ativar um provedor ou o login por senha.",
     "passwordChannel": "Senha",
-    "submit": "Entrar"
+    "submit": "Entrar",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Login único",
+    "orContinue": "ou continuar com"
   },
   "portal": {
     "title": "Imagens",

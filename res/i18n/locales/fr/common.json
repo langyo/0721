@@ -36,7 +36,10 @@
     "passwordDisabled": "La connexion par mot de passe est désactivée — choisissez un autre canal.",
     "noMethods": "Aucune méthode de connexion disponible — un administrateur doit activer un fournisseur ou la connexion par mot de passe.",
     "passwordChannel": "Mot de passe",
-    "submit": "Se connecter"
+    "submit": "Se connecter",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Authentification unique",
+    "orContinue": "ou continuer avec"
   },
   "portal": {
     "title": "Images",

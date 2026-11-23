@@ -36,7 +36,10 @@
     "passwordDisabled": "El inicio con contraseña está desactivado: elija otro canal de acceso.",
     "noMethods": "No hay ningún método de acceso disponible: un administrador debe activar un proveedor o el acceso con contraseña.",
     "passwordChannel": "Contraseña",
-    "submit": "Iniciar sesión"
+    "submit": "Iniciar sesión",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Inicio de sesión único",
+    "orContinue": "o continuar con"
   },
   "portal": {
     "title": "Imágenes",

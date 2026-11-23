@@ -36,7 +36,10 @@
     "passwordDisabled": "密码登录已停用——请改用其他登录通道。",
     "noMethods": "没有任何可用的登录方式——需要管理员启用一个登录提供方或开启密码登录。",
     "passwordChannel": "密码",
-    "submit": "登录"
+    "submit": "登录",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "单点登录",
+    "orContinue": "或使用以下方式继续"
   },
   "portal": {
     "title": "图片",

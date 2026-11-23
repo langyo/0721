@@ -36,7 +36,10 @@
     "passwordDisabled": "Passwort-Anmeldung ist deaktiviert — wählen Sie einen anderen Anmeldeweg.",
     "noMethods": "Keine Anmeldemethode verfügbar — ein Administrator muss einen Anbieter oder das Passwort-Login aktivieren.",
     "passwordChannel": "Passwort",
-    "submit": "Anmelden"
+    "submit": "Anmelden",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Single Sign-on",
+    "orContinue": "oder weiter mit"
   },
   "portal": {
     "title": "Bilder",
