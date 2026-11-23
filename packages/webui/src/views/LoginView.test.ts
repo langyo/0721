@@ -147,7 +147,6 @@ describe("LoginView status strip (family footer)", () => {
     expect(bar.props("connectionStatus")).toBe("idle");
     vi.unstubAllGlobals();
   });
-
 });
 
 describe("LoginView dead state (W4 R2)", () => {
@@ -360,7 +359,7 @@ describe("LoginView redirect handling", () => {
   });
 });
 
-describe("LoginView dead state (W4 R2)", () => {
+describe("LoginView dead state (descriptor offers nothing)", () => {
   it("renders the guidance when no login method exists", async () => {
     loginMethodsMock.mockResolvedValue({ password: false, providers: [] });
     const { wrapper } = await mountView();

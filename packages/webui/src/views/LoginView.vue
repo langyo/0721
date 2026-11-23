@@ -197,7 +197,10 @@ function onMethodSelect(_channel: string, providerId: string): void {
          light. Sessionless, so the connection state stays idle (a WS
          probe here would hang red forever — no token yet). -->
     <footer class="login-footer">
+      <!-- standalone=false: the strip is this face's own footer element;
+           the default renders its own fixed <footer> and would nest. -->
       <HkStatusBar
+        :standalone="false"
         :version="appVersion"
         :engine-version="health?.engineVersion ?? null"
         connection-status="idle"
