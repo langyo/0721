@@ -9,6 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // unresolved component is null, which throws inside the master-detail
 // slot and takes the subtree with it). A per-surface mount that asserts
 // the roster actually drew is what catches that class.
+//
+// MUT:surface-mount-pin — deleting the pane component's import reddens
+// these cases (the slot resolves to null and the pane root never exists).
 
 const listFilesMock = vi.fn();
 const deleteFileMock = vi.fn();
@@ -129,6 +132,8 @@ describe("FilesView surface (mount pin)", () => {
     expect(tileSize.text()).toMatch(/[0-9.]+\s?(B|KB|KiB|MB|MiB)/);
     // The detail slot must RESOLVE, not merely exist: open the pane and
     // demand the component's own root (a closed pane never mounts it).
+    // MUT:surface-mount-pin — removing the import leaves this assertion
+    // with no `.file-detail` to find.
     await w.findAll(".tile-body")[1]!.trigger("click");
     await flushPromises();
     expect(w.find(".file-detail").exists()).toBe(true);
