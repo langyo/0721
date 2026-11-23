@@ -24,8 +24,8 @@ const kindIcon = computed(() => {
   return ImageIcon;
 });
 
-function formatSize(bytes: bigint | number): string {
-  const n = typeof bytes === "bigint" ? Number(bytes) : bytes;
+function formatSize(bytes: number): string {
+  const n = bytes;
   if (!Number.isFinite(n) || n < 0) return "—";
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = n;

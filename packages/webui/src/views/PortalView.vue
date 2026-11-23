@@ -183,10 +183,9 @@ function iconFor(file: FileDto) {
   }
 }
 
-/** See FilesView's twin: the wire type is a bigint, a JSON-decoded value
- * is a number, and mixing them in arithmetic throws. */
-function formatSize(bytes: bigint | number): string {
-  const n = typeof bytes === "bigint" ? Number(bytes) : bytes;
+/** See FilesView's twin: `number` per the ts-rs contract. */
+function formatSize(bytes: number): string {
+  const n = bytes;
   if (!Number.isFinite(n) || n < 0) return "—";
   if (n < 1024) return `${n} B`;
   const units = ["KiB", "MiB", "GiB"];

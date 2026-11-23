@@ -30,7 +30,7 @@ function file(id: string, over: Partial<FileDto> = {}): FileDto {
     name: `${id}.webp`,
     kind: "image",
     mime: "image/webp",
-    size: 2048n,
+    size: 2048,
     sha256: id,
     original_name: `${id}-original.webp`,
     url: `/media/${id}`,

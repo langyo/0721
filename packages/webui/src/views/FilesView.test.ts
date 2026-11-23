@@ -11,13 +11,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // the roster actually drew is what catches that class.
 
 const listFilesMock = vi.fn();
+const deleteFileMock = vi.fn();
 const listFolderMock = vi.fn();
 const listTimelineMock = vi.fn();
 const renameFileMock = vi.fn();
 const moveFileMock = vi.fn();
 vi.mock("@/api", () => ({
   listFiles: (...a: unknown[]) => listFilesMock(...a),
-  deleteFile: vi.fn(),
+  deleteFile: (...a: unknown[]) => deleteFileMock(...a),
   uploadFile: vi.fn(),
   createFolder: vi.fn(),
   renameFile: (...a: unknown[]) => renameFileMock(...a),
@@ -26,8 +27,8 @@ vi.mock("@/api", () => ({
 }));
 vi.mock("@/api/files", () => ({
   listFolder: (...a: unknown[]) => listFolderMock(...a),
+  deleteFile: (...a: unknown[]) => deleteFileMock(...a),
   quotaGet: vi.fn().mockResolvedValue({ used_bytes: 2048, quota_bytes: null }),
-  deleteFile: vi.fn(),
   renameFile: (...a: unknown[]) => renameFileMock(...a),
   moveFile: (...a: unknown[]) => moveFileMock(...a),
   listTimeline: (...a: unknown[]) => listTimelineMock(...a),
@@ -52,7 +53,7 @@ function file(id: string, over: Partial<FileDto> = {}): FileDto {
     name: `${id}.webp`,
     kind: "image",
     mime: "image/webp",
-    size: 2048n,
+    size: 2048,
     sha256: id,
     original_name: `${id}-original.webp`,
     url: `/media/${id}`,
@@ -87,7 +88,9 @@ function mountWithRouter(View: typeof FilesView | typeof PortalView): { wrapper:
       { path: "/files/:folderId?", component: { template: "<div class='folder-stub'/>" } },
     ],
   });
-  const wrapper = mount(harness(View), { global: { plugins: [pinia, router, i18n] } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const wrapper = mount(harness(View), { global: { plugins: [pinia, router, i18n] }, attachTo: host });
   return { wrapper, router };
 }
 
@@ -100,6 +103,7 @@ beforeEach(() => {
   listFolderMock.mockReset().mockResolvedValue({ total: 0, offset: 0, limit: 30, items: [] });
   listTimelineMock.mockResolvedValue({ total: 0, offset: 0, limit: 40, items: [] });
   renameFileMock.mockReset();
+  deleteFileMock.mockReset();
   moveFileMock.mockReset();
 });
 
@@ -219,7 +223,7 @@ describe("FilesView surface (mount pin)", () => {
     expect(w.find(".file-detail").exists()).toBe(false);
   });
 
-  it("clears the pane when navigating into another folder", async () => {
+  it("clears the pane the moment navigation starts, before the roster resolves", async () => {
     listFolderMock.mockResolvedValueOnce({ total: 2, offset: 0, limit: 30, items: [folder, file("a")], crumbs: [] });
     const { wrapper: w, router } = mountWithRouter(FilesView);
     wrapper = w;
@@ -228,8 +232,17 @@ describe("FilesView surface (mount pin)", () => {
     await flushPromises();
     expect(w.find(".file-detail").exists()).toBe(true);
 
-    listFolderMock.mockResolvedValue({ total: 0, offset: 0, limit: 30, items: [], crumbs: [] });
+    // Hold the destination roster PENDING so the pane cannot disappear by
+    // roster-emptiness — the guard itself has to have cleared it. (The
+    // previous version of this pin used an empty destination, which
+    // unmounts HkMasterDetail wholesale and left the guard unproven.)
+    let release: (v: unknown) => void = () => undefined;
+    listFolderMock.mockReturnValue(new Promise((resolve) => { release = resolve; }));
     await router.push("/files/f1");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(false);
+
+    release({ total: 1, offset: 0, limit: 30, items: [folder], crumbs: [] });
     await flushPromises();
     expect(w.find(".file-detail").exists()).toBe(false);
   });
@@ -276,6 +289,28 @@ describe("FilesView surface (mount pin)", () => {
 
     expect(moveFileMock).toHaveBeenCalled();
     // The pane is gone (its root unmounts with the selection).
+    expect(w.find(".file-detail").exists()).toBe(false);
+  });
+});
+
+describe("PortalView pane guards", () => {
+  it("drops the pane when a reload no longer carries the row", async () => {
+    listFilesMock.mockResolvedValueOnce({ total: 1, offset: 0, limit: 30, items: [file("a")] });
+    const { wrapper: w } = mountWithRouter(PortalView);
+    wrapper = w;
+    await flushPromises();
+    await w.find(".tile-media").trigger("click");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(true);
+
+    listFilesMock.mockResolvedValue({ total: 1, offset: 0, limit: 30, items: [file("b")] });
+    const host = w.element as HTMLElement;
+    const refresh = Array.from(host.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label") === i18n.global.t("common.actions.refresh"),
+    );
+    expect(refresh, "the harness renders the refresh action").toBeTruthy();
+    refresh!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
     expect(w.find(".file-detail").exists()).toBe(false);
   });
 });

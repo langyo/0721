@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HkEmptyState, HkIconButton, HkMasterDetail } from "@celestia-island/hikari";
+import { HkButton, HkEmptyState, HkIconButton, HkMasterDetail } from "@celestia-island/hikari";
 import { ExternalLink, Images } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -63,9 +63,9 @@ function openExternal(url: string): void {
           </li>
         </ul>
         <div v-if="items.length < total" class="more">
-          <HkIconButton :size="28" variant="ghost" :disabled="loading" :aria-label="t('common.actions.loadMore')" @click="load(false)">
-            <template #icon><Images :size="16" /></template>
-          </HkIconButton>
+          <HkButton variant="ghost" :disabled="loading" @click="load(false)">
+            {{ t("common.actions.loadMore") }}
+          </HkButton>
         </div>
       </template>
 

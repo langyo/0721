@@ -279,11 +279,11 @@ async function doDelete() {
   }
 }
 
-/** The wire type is a bigint (ts-rs); a JSON-decoded value arrives as a
- * number. Both must format without throwing (`Cannot mix BigInt and
- * other types` is a real crash, surfaced by the surface mount test). */
-function formatSize(bytes: bigint | number): string {
-  const n = typeof bytes === "bigint" ? Number(bytes) : bytes;
+/** FileDto.size is a `number` on the wire (ts-rs pins
+ * `#[ts(type = "number")]` on the i64); the guard below is for a
+ * malformed/absent value, not for a second numeric type. */
+function formatSize(bytes: number): string {
+  const n = bytes;
   if (!Number.isFinite(n) || n < 0) return "—";
   if (n < 1024) return `${n} B`;
   const units = ["KiB", "MiB", "GiB"];
