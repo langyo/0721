@@ -178,6 +178,7 @@ const columns = computed<HTableColumn[]>(() => [
     <HkAdminTablePage
       :title="t('common.users.title')"
       :subtitle="t('common.status.total', { count: total })"
+      :count-readout="false"
       :icon="UsersIcon"
       :rows="users"
       :columns="columns"

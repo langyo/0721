@@ -138,6 +138,7 @@ async function doRevoke() {
     <HkAdminTablePage
       :title="t('common.keys.title')"
       :subtitle="t('common.status.total', { count: keys.length })"
+      :count-readout="false"
       :icon="KeyRound"
       :rows="keys"
       :columns="columns"
@@ -203,6 +204,5 @@ async function doRevoke() {
 .copy-failed { color: rgb(220 38 38); font-size: 0.8rem; margin: 0; }
 .key-text { font-size: 0.9rem; padding: 0.5rem; border-radius: 0.4rem; background: color-mix(in srgb, currentColor 6%, transparent); word-break: break-all; }
 .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.revoke:hover { opacity: 1; color: rgb(220 38 38); }
 .dialog-body { display: flex; flex-direction: column; gap: 0.75rem; }
 </style>

@@ -60,6 +60,7 @@ async function revoke(token: string) {
     <HkAdminTablePage
       :title="t('common.files.myShares')"
       :subtitle="t('common.status.total', { count: shares.length })"
+      :count-readout="false"
       :icon="Link2"
       :rows="shares"
       :columns="columns"
