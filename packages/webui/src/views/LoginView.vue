@@ -15,6 +15,7 @@ import { ApiError } from "@/api/client";
 import ConnectionStatusTag from "@/components/ConnectionStatusTag.vue";
 import { useAuthStore } from "@/stores/auth";
 import type { LoginMethods } from "@/types";
+import { makeErrorText } from "@/composables/errorText";
 
 /**
  * The sign-in face, driven by `GET /api/v1/auth/login-methods`.
@@ -38,6 +39,8 @@ import type { LoginMethods } from "@/types";
  */
 
 const { t } = useI18n();
+
+const errorText = makeErrorText(t);
 const router = useRouter();
 const route = useRoute();
 const auth = useAuthStore();
@@ -138,9 +141,7 @@ async function onAccountSubmit(_channel: string, username: string, password: str
         ? t("common.auth.passwordDisabled")
         : err instanceof ApiError && err.status === 401
           ? t("common.auth.failed")
-          : err instanceof Error
-            ? err.message
-            : t("common.status.error");
+          : errorText(err);
   } finally {
     loading.value = false;
   }

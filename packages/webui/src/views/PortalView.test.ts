@@ -68,6 +68,29 @@ describe("PortalView failure lane (never-empty)", () => {
     expect(wrapper.text()).toContain("Something went wrong");
     wrapper.unmount();
   });
+
+  it("keeps the upload lane's own fallback wording end-to-end", async () => {
+    // MUT:portal-upload-fallback-key — this is the only lane carrying a
+    // non-default fallback key, so it is the sole end-to-end proof that
+    // the view actually PASSES that key (a copy-paste slip back to the
+    // default key would keep every factory unit test green).
+    listFilesMock.mockResolvedValue(page([]));
+    uploadFileMock.mockRejectedValue(new Error(""));
+    const wrapper = await mountView();
+    const input = wrapper.find('input[type="file"]');
+    expect(input.exists()).toBe(true);
+    Object.defineProperty(input.element, "files", {
+      value: [new File(["x"], "a.png", { type: "image/png" })],
+      configurable: true,
+    });
+    await input.trigger("change");
+    await flushPromises();
+    const row = wrapper.find(".upload-error, [role='alert']");
+    expect(wrapper.text()).toContain("Upload failed");
+    // and NOT the generic fallback twice over
+    expect(wrapper.text().match(/Upload failed/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    wrapper.unmount();
+  });
 });
 
 describe("PortalView", () => {

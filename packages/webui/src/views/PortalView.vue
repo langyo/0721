@@ -282,7 +282,7 @@ function formatSize(bytes: number): string {
         <HkProgressRing :value="entry.progress" :size="20" :stroke-width="3" />
         <span class="upload-name" :title="entry.name">{{ entry.name }}</span>
         <span v-if="entry.error" class="upload-error" role="alert">
-          {{ t("common.portal.uploadFailed") }} — {{ entry.error }}
+          {{ entry.error }}
         </span>
       </div>
     </div>

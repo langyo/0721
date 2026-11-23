@@ -13,7 +13,9 @@ import type { Composer } from "vue-i18n";
  * own errors always carry a message, but test doubles, partial
  * failures and future lanes must not be able to reintroduce the hole.
  *
- * Shape coverage (each pinned somewhere in the suite):
+ * Shape coverage (each row pinned by the factory's own unit test;
+ * wiring pins exist per-view as each view's wave lands — the rosters'
+ * lanes and the portal load/upload lanes today, see issue #31):
  *  - `Error` with a non-empty message → the message;
  *  - `Error("")` → the localized fallback (NOT an empty string);
  *  - a non-empty bare string (a JSON-RPC lane's common rejection) → the
