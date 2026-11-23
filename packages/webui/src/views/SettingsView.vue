@@ -1,11 +1,5 @@
 <script setup lang="ts">
-import {
-  HkButton,
-  HkEmptyState,
-  HkInput,
-  HkSectionCard,
-  HkSwitch,
-} from "@celestia-island/hikari";
+import { HkButton, HkEmptyState, HkInput, HkSectionCard, HkSelect, HkSwitch } from "@celestia-island/hikari";
 import { Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -27,6 +21,10 @@ import { makeErrorText } from "@/composables/errorText";
  */
 
 const { t } = useI18n();
+
+/** The family select takes {value,label}; the language roster is plain
+ * codes today, so the label is the code. */
+const languageOptions = computed(() => LANGUAGES.map((code) => ({ value: code, label: code })));
 
 const errorText = makeErrorText(t);
 const saveErrorText = makeErrorText(t, "common.settings.saveFailed");
@@ -217,9 +215,12 @@ async function save() {
           </label>
           <label class="field">
             <span>{{ t("common.settings.language") }}</span>
-            <select v-model="form.language" class="native-select" data-testid="settings-language">
-              <option v-for="lang in LANGUAGES" :key="lang" :value="lang">{{ lang }}</option>
-            </select>
+            <HkSelect
+              v-model="form.language"
+              :options="languageOptions"
+              :panel-title="t('common.settings.language')"
+              data-testid="settings-language"
+            />
           </label>
           <label class="field narrow">
             <span>{{ t("common.settings.timezone") }}</span>
@@ -436,14 +437,6 @@ async function save() {
     background: color-mix(in srgb, rgb(220 38 38) 16%, transparent);
     color: rgb(220 38 38);
   }
-}
-
-.native-select {
-  padding: 0.45rem 0.6rem;
-  border-radius: 0.5rem;
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  background: transparent;
-  color: inherit;
 }
 
 .save-row {

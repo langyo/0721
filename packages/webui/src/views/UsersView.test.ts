@@ -231,6 +231,26 @@ describe("UsersView (family table roster)", () => {
     expect(wrapper.findAll("tbody tr").length).toBe(2);
   });
 
+  it("keeps the role picker a NAMED radiogroup (a11y contract)", async () => {
+    listUsersMock.mockResolvedValue({ items: [user("me", "me", "admin")], total: 1 });
+    wrapper = mountView();
+    await flushPromises();
+    const create = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => (b.getAttribute("aria-label") ?? "").length > 0 && b.className.includes("hk-icon-button"),
+    );
+    expect(create).toBeTruthy();
+    create!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    // The family radio ships no group role/name of its own, so the host
+    // wraps it — dropping that wrapper loses the name the old markup had.
+    const group = document.querySelector<HTMLElement>('[role="radiogroup"]');
+    expect(group, "the role picker must be a radiogroup").toBeTruthy();
+    expect(group!.getAttribute("aria-label")).toBe(i18n.global.t("common.users.role"));
+    // And it carries real radio inputs (not the old role="radio" buttons).
+    expect(group!.querySelectorAll('input[type="radio"]').length).toBe(2);
+  });
+
   it("renders the scaffold's empty state when the roster is empty", async () => {
     listUsersMock.mockResolvedValue({ items: [], total: 0 });
     wrapper = mountView();

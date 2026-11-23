@@ -1,13 +1,5 @@
 <script setup lang="ts">
-import {
-  HkAdaptiveDialog,
-  HkAdminTablePage,
-  HkBadge,
-  HkDateTag,
-  HkIconButton,
-  HkInput,
-  type HTableColumn,
-} from "@celestia-island/hikari";
+import { HkAdaptiveDialog, HkAdminTablePage, HkBadge, HkDateTag, HkIconButton, HkInput, HkRadio, type HTableColumn } from "@celestia-island/hikari";
 import { ShieldCheck, Trash2, Users as UsersIcon } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -71,6 +63,12 @@ const createOpen = ref(false);
 const createBusy = ref(false);
 const createError = ref<string | null>(null);
 const form = ref({ username: "", password: "", displayName: "", role: "member" as Role });
+
+/** The two account roles, as the family radio's {value,label} rows. */
+const roleOptions = computed<{ value: Role; label: string }[]>(() => [
+  { value: "member", label: t("common.status.member") },
+  { value: "admin", label: t("common.status.admin") },
+]);
 
 const createActions = computed(() => [
   {
@@ -261,19 +259,8 @@ const columns = computed<HTableColumn[]>(() => [
         </label>
         <div class="field">
           <span>{{ t("common.users.role") }}</span>
-          <div class="role-picker" role="radiogroup" :aria-label="t('common.users.role')">
-            <button
-              v-for="role in (['member', 'admin'] as Role[])"
-              :key="role"
-              type="button"
-              role="radio"
-              :aria-checked="form.role === role"
-              class="role-option"
-              :class="{ active: form.role === role }"
-              @click="form.role = role"
-            >
-              {{ role === "admin" ? t("common.status.admin") : t("common.status.member") }}
-            </button>
+          <div role="radiogroup" :aria-label="t('common.users.role')">
+            <HkRadio v-model="form.role" :options="roleOptions" size="sm" />
           </div>
         </div>
         <p v-if="createError" class="dialog-error" role="alert">{{ createError }}</p>
@@ -332,26 +319,6 @@ const columns = computed<HTableColumn[]>(() => [
   flex-direction: column;
   gap: 0.3rem;
   font-size: 0.85rem;
-}
-
-.role-picker {
-  display: inline-flex;
-  gap: 0.4rem;
-}
-
-.role-option {
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  background: transparent;
-  color: inherit;
-  padding: 0.35rem 1rem;
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: 0.82rem;
-
-  &.active {
-    background: color-mix(in srgb, rgb(13 148 136) 20%, transparent);
-    border-color: rgb(13 148 136);
-  }
 }
 
 .dialog-error {
