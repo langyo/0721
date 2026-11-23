@@ -784,10 +784,68 @@ async fn pg_find_share_by_file_is_owner_scoped() {
     cleanup_user(&store, other.id).await;
 }
 
-/// The api_keys scopes column is JSONB. The write path parses the
-/// record's JSON text and the read path serializes the value back, so
-/// the pair must be a true inverse for EVERY shape — array, object and
-/// a JSON *string* payload (a String special case on the read side
+/// The affected-count side of the API key lane: `revoke` and `touch`
+/// answer through `Reply::Affected`, so a `returning: true` site would
+/// turn every call into an error.
+#[tokio::test]
+async fn pg_api_key_lifecycle_reads_affected_counts() {
+    // R2 S3 finding: revoke/touch carry `returning: false` — they read the
+    // affected count, which only exists on the Affected reply path. Before
+    // 0.2 the driver always answered Rows, so revoke's `let Reply::Affected`
+    // never matched and every call errored. Pin both the success and the
+    // second-call (0 rows) verdict.
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let record = i0721_proto::ApiKeyRecord {
+        id: uuid::Uuid::new_v4(),
+        user_id: user.id,
+        name: "lifecycle".to_owned(),
+        key_prefix: "i0721-lc".to_owned(),
+        key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
+        scopes: "[]".to_owned(),
+        last_used_at: None,
+        revoked_at: None,
+        created_at: jiff::Timestamp::now(),
+    };
+    store.create_api_key(&record).await.expect("insert");
+
+    // touch: fire-and-forget, must not error and must set last_used_at.
+    store.touch_api_key(record.id).await.expect("touch");
+    let touched = store
+        .list_api_keys(user.id)
+        .await
+        .expect("list")
+        .into_iter()
+        .find(|r| r.id == record.id)
+        .expect("row listed");
+    assert!(touched.last_used_at.is_some(), "touch stamped last_used_at");
+
+    // revoke: first call marks the row, the guarded second call marks none.
+    assert!(
+        store.revoke_api_key(record.id).await.expect("revoke"),
+        "the first revoke reports an affected row"
+    );
+    assert!(
+        !store
+            .revoke_api_key(record.id)
+            .await
+            .expect("second revoke"),
+        "the guarded update reports 0 affected rows"
+    );
+    // A revoked key no longer resolves by hash (the filter excludes it).
+    assert!(
+        store
+            .find_api_key_by_hash(&record.key_hash)
+            .await
+            .expect("lookup")
+            .is_none(),
+        "revoked keys drop out of the hash lookup"
+    );
+
+    cleanup_user(&store, user.id).await;
+}
+
+/// A JSON *string* payload (a String special case on the read side
 /// would strip its quotes), and an unparseable payload must be REJECTED
 /// at the write (a permissions column may not silently become the
 /// fail-open "empty = full" set).

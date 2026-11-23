@@ -42,7 +42,9 @@ tower-http = { version = "^0.7", features = ["compression-gzip", "fs", "limit"] 
 tracing = "^0.1"
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 
-# data access (family ORM; timestamps are jiff — chrono is absent by design).
+# data access (family ORM; this crate's timestamps are jiff — chrono only
+# arrives transitively through lacrymira-pg 0.2, which uses it for the
+# NaiveTimestamp bind path and never surfaces in this crate's API).
 # Registry line: 0.2 resolves a coherent published pair (the 0.1.0 pair was
 # mutually incompatible, which is why the git pin existed).
 lacrymira = "^0.2"
