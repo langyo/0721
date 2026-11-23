@@ -18,6 +18,7 @@ import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import { useAuthStore } from "@/stores/auth";
 import type { Role, UserDto } from "@/types";
+import { makeErrorText } from "@/composables/errorText";
 
 /**
  * The admin user roster: list / create / delete. The create action is the
@@ -36,15 +37,9 @@ const loading = ref(false);
 const loadError = ref<string | null>(null);
 const hasMore = computed(() => users.value.length < total.value);
 
-/** Failure text for the roster banner: never empty. A JSON-RPC/WS lane
- * commonly rejects with a bare string, and an empty message renders no
- * alert at all (the scaffold's message is falsy-checked), which would
- * show a silent "no rows yet" over a real failure. */
-function errorText(e: unknown): string {
-  if (e instanceof Error && e.message) return e.message;
-  if (typeof e === "string" && e.length > 0) return e;
-  return t("common.status.error");
-}
+// The never-empty failure text (shared factory; the contract and
+// its pins live in composables/errorText).
+const errorText = makeErrorText(t);
 
 async function load(reset: boolean) {
   // Re-entrancy guard: the paging offset below is read from the live

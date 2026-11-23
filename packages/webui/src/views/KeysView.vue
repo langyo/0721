@@ -15,6 +15,7 @@ import * as api from "@/api";
 import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { ApiKeyCreated, ApiKeyPublic } from "@/api";
+import { makeErrorText } from "@/composables/errorText";
 
 const { t } = useI18n();
 const keys = ref<ApiKeyPublic[]>([]);
@@ -42,15 +43,9 @@ const columns = computed<HTableColumn[]>(() => [
   { key: "actions", title: "", align: "right", width: "3.5rem", copyable: false },
 ]);
 
-/** Failure text for the roster banner: never empty. A JSON-RPC/WS lane
- * commonly rejects with a bare string, and an empty message renders no
- * alert at all (the scaffold's message is falsy-checked), which would
- * show a silent "no rows yet" over a real failure. */
-function errorText(e: unknown): string {
-  if (e instanceof Error && e.message) return e.message;
-  if (typeof e === "string" && e.length > 0) return e;
-  return t("common.status.error");
-}
+// The never-empty failure text (shared factory; the contract and
+// its pins live in composables/errorText).
+const errorText = makeErrorText(t);
 
 async function load() {
   error.value = null;

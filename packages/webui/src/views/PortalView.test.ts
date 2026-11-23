@@ -51,6 +51,25 @@ afterEach(() => {
   localStorage.clear();
 });
 
+describe("PortalView failure lane (never-empty)", () => {
+  it("carries a bare-string rejection instead of an empty description", async () => {
+    // MUT:portal-errortext-lane — reverting this lane to the inline
+    // narrowing ternary reddens here (a bare string used to yield an
+    // empty description, which HkEmptyState drops entirely).
+    listFilesMock.mockRejectedValue("rpc timeout");
+    const wrapper = await mountView();
+    expect(wrapper.text()).toContain("rpc timeout");
+    wrapper.unmount();
+  });
+
+  it("falls back for an empty-message Error", async () => {
+    listFilesMock.mockRejectedValue(new Error(""));
+    const wrapper = await mountView();
+    expect(wrapper.text()).toContain("Something went wrong");
+    wrapper.unmount();
+  });
+});
+
 describe("PortalView", () => {
   it("renders the timeline grid from the list call", async () => {
     listFilesMock.mockResolvedValue(page([png("aa", "cat.webp"), png("bb", "dog.webp")]));
