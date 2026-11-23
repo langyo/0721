@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HkAdaptiveDialog, HkEmptyState, HkIconButton, HkMasterDetail, HkProgressRing } from "@celestia-island/hikari";
+import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkMasterDetail, HkProgressRing } from "@celestia-island/hikari";
 import { ExternalLink, Copy, FileArchive, FileAudio, FileText, FileVideo, Folder, Images, Trash2 } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -263,9 +263,9 @@ function iconFor(file: FileDto) {
         </li>
       </ul>
       <div v-if="hasMore" class="portal-more">
-        <button type="button" class="portal-more-btn" :disabled="loading" @click="load(false)">
+        <HkButton variant="ghost" :disabled="loading" @click="load(false)">
           {{ t("common.actions.loadMore") }}
-        </button>
+        </HkButton>
       </div>
         </template>
 
@@ -429,24 +429,6 @@ function iconFor(file: FileDto) {
 .portal-more {
   display: flex;
   justify-content: center;
-}
-
-.portal-more-btn {
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  background: transparent;
-  color: inherit;
-  padding: 0.45rem 1.4rem;
-  border-radius: 999px;
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    background: color-mix(in srgb, currentColor 8%, transparent);
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
 }
 
 .upload-lane {

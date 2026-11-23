@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { HkButton, HkEmptyState } from "@celestia-island/hikari";
-import { Download, FileX } from "lucide-vue-next";
+import { Download } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";

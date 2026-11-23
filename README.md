@@ -1,29 +1,29 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/celestia-island/celestia-island.github.io/main/res/logos/0721.webp" alt="0721" width="180" />
+<img src="https://raw.githubusercontent.com/celestia-island/celestia-island.github.io/main/res/logos/0721.webp" alt="0721" width="180" />
 </div>
 
 <h1 align="center">0721</h1>
 
 <div align="center">
-  <strong>A simple engine for image hosting, netdisk and galleries, written in Rust.</strong>
+<strong>A simple engine for image hosting, netdisk and galleries, written in Rust.</strong>
 </div>
 
 <div align="center">
-  Ciallo～(∠・ω< )⌒★
+Ciallo～(∠・ω< )⌒★
 </div>
 
 <br />
 
 <div align="center">
-  <a href="https://github.com/langyo/0721/actions/workflows/ci.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/langyo/0721/ci.yml?label=CI" alt="CI" />
-  </a>
-  <a href="https://github.com/langyo/0721/blob/master/LICENSE">
-    <img src="https://img.shields.io/github/license/langyo/0721" alt="License: Apache-2.0" />
-  </a>
-  <a href="https://github.com/langyo/0721/tags">
-    <img src="https://img.shields.io/github/v/tag/langyo/0721" alt="Tag" />
-  </a>
+<a href="https://github.com/langyo/0721/actions/workflows/ci.yml">
+<img src="https://img.shields.io/github/actions/workflow/status/langyo/0721/ci.yml?label=CI" alt="CI" />
+</a>
+<a href="https://github.com/langyo/0721/blob/master/LICENSE">
+<img src="https://img.shields.io/github/license/langyo/0721" alt="License: Apache-2.0" />
+</a>
+<a href="https://github.com/langyo/0721/tags">
+<img src="https://img.shields.io/github/v/tag/langyo/0721" alt="Tag" />
+</a>
 </div>
 
 Rebuilt on axum, lacrymira and hikari; OAuth sign-in, S3/IPFS storage
@@ -57,12 +57,13 @@ backend. Multi-backend coexistence and per-file overrides are a future
 wave — this is a deployment-shape choice.
 
 | Backend | Env | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `local` (default) | `I0721_MEDIA_ROOT` (default `data`) | Two directories: `media/` + `media-cache/` |
 | `s3` | `I0721_S3_ENDPOINT` `I0721_S3_BUCKET` `I0721_S3_REGION` `I0721_S3_ACCESS_KEY` `I0721_S3_SECRET_KEY` | Works with AWS S3, MinIO, R2. Endpoint present = path-style; absent = AWS. Keys: `media/{sha}` and `cache/{sha}.webp` |
 | `ipfs` | `I0721_IPFS_API` (e.g. `http://127.0.0.1:5001`) | kubo RPC. put = `/api/v0/add?pin=true` + MFS link; get = MFS read; delete = MFS rm + best-effort unpin |
 
 Semantic differences:
+
 - **S3** has no local cache — every read is a network round-trip. For
   single-node deployments with a local MinIO this is still fast.
 - **IPFS** deletion is content-addressed: `delete` unpins the CID, but
@@ -116,7 +117,7 @@ docker compose up -d --build
 The service listens on `127.0.0.1:8080` (override with
 `I0721_PUBLISH=127.0.0.1:9090`). `GET /api/health` reports status and
 where the site configuration came from; both containers carry
-healthchecks (pg_isready + /api/health with start periods).
+healthchecks (`pg_isready` + /api/health with start periods).
 
 > **Production note**: the compose env form (secrets as environment
 > variables) is for development and single-host trials. A production
@@ -149,7 +150,7 @@ Process configuration is environment-only (fail-fast — an unset
 required variable or an unparseable value refuses to start):
 
 | Variable | Default | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `I0721_DATABASE_URL` | required | PostgreSQL URL |
 | `JWT_SECRET` (container-side; compose sets it from `I0721_JWT_SECRET`) | required | HS256 secret for the transition-era tokens |
 | `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
@@ -222,7 +223,7 @@ The service offers two login modes, driven by configuration:
    first login mints a local account (`{provider}_{subject[0..8]}`,
    no password) bound through the `oauth_identities` table — the same
    (provider, subject) always signs into the same account.
-2. **Password login** (optional): on unless turned off. The switch
+1. **Password login** (optional): on unless turned off. The switch
    lives in the admin settings ("Allow password login") or the
    settings row `auth_password_login`; the env pin
    `I0721_PASSWORD_LOGIN=true|false` sits between the row and the
@@ -295,7 +296,7 @@ SSE transport, authenticated with an API key instead of a browser
 session.
 
 | Lane | Shape |
-|---|---|
+| --- | --- |
 | `GET /api/mcp/sse` | the stream; `Authorization: Bearer i0721-…`. The first frame is `event: endpoint`, carrying `/api/mcp/message?sessionId=…` |
 | `POST /api/mcp/message?sessionId=…` | one JSON-RPC frame; answers 202 and pushes the response back through the stream |
 
@@ -310,7 +311,7 @@ cannot read at all answers an HTTP 400 whose body carries the prescribed
 stream, and is dropped the moment its key is revoked.
 
 | Tool | Arguments (`*` required) | Result |
-|---|---|---|
+| --- | --- | --- |
 | `list_files` | `folder_id`, `offset` (default 0), `limit` (default and cap 100) | one folder of the caller's tree, newest first |
 | `file_info` | `id`* | one file's metadata |
 | `upload_file` | `content_base64`*, `name`*, `folder_id` | the created file — the SAME chain as the REST upload lane (quota, folder ownership, WebP pipeline, configured storage backend) |

@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 موارد"
-  },
   "nav": {
     "portal": "البوابة",
     "settings": "الإعدادات",
@@ -31,8 +28,7 @@
     "empty": "لا يوجد شيء هنا بعد",
     "admin": "مدير",
     "member": "مستخدم",
-    "total": "{count} في المجموع",
-    "version": "الإصدار {version}"
+    "total": "{count} في المجموع"
   },
   "auth": {
     "title": "تسجيل الدخول",
@@ -94,8 +90,7 @@
     "settings": "الإعدادات",
     "theme": "المظهر",
     "language": "اللغة",
-    "about": "حول",
-    "signOut": "تسجيل الخروج"
+    "about": "حول"
   },
   "providers": {
     "title": "مزوّدو تسجيل الدخول",
@@ -107,7 +102,6 @@
     "clientId": "معرّف العميل",
     "clientSecret": "سرّ العميل",
     "secretHint": "اتركه فارغًا للإبقاء على السرّ المحفوظ",
-    "secretSet": "السرّ مُعد",
     "noSecret": "لا سرّ",
     "baseUrl": "العنوان الأساسي (ERP)",
     "issuerUrl": "عنوان المُصدر (OIDC)",

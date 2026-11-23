@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 リソース"
-  },
   "nav": {
     "portal": "ポータル",
     "settings": "設定",
@@ -31,8 +28,7 @@
     "empty": "まだ何もありません",
     "admin": "管理者",
     "member": "ユーザー",
-    "total": "全 {count} 件",
-    "version": "バージョン {version}"
+    "total": "全 {count} 件"
   },
   "auth": {
     "title": "ログイン",
@@ -94,8 +90,7 @@
     "settings": "設定",
     "theme": "テーマ",
     "language": "言語",
-    "about": "このアプリについて",
-    "signOut": "ログアウト"
+    "about": "このアプリについて"
   },
   "providers": {
     "title": "ログインプロバイダー",
@@ -107,7 +102,6 @@
     "clientId": "クライアント ID",
     "clientSecret": "クライアントシークレット",
     "secretHint": "空欄なら保存済みシークレットを維持",
-    "secretSet": "シークレット設定済み",
     "noSecret": "シークレットなし",
     "baseUrl": "ベース URL（ERP）",
     "issuerUrl": "発行者 URL（OIDC）",

@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 资源站"
-  },
   "nav": {
     "portal": "门户",
     "settings": "配置",
@@ -31,8 +28,7 @@
     "empty": "这里还什么都没有",
     "admin": "管理员",
     "member": "用户",
-    "total": "共 {count} 项",
-    "version": "版本 {version}"
+    "total": "共 {count} 项"
   },
   "auth": {
     "title": "登录",
@@ -94,8 +90,7 @@
     "settings": "设置",
     "theme": "主题",
     "language": "语言",
-    "about": "关于",
-    "signOut": "退出登录"
+    "about": "关于"
   },
   "providers": {
     "title": "登录提供方",
@@ -107,7 +102,6 @@
     "clientId": "客户端 ID",
     "clientSecret": "客户端密钥",
     "secretHint": "留空表示保留已存密钥",
-    "secretSet": "已设密钥",
     "noSecret": "未设密钥",
     "baseUrl": "基础 URL（ERP）",
     "issuerUrl": "签发方 URL（OIDC）",

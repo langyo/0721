@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 資源站"
-  },
   "nav": {
     "portal": "門戶",
     "settings": "配置",
@@ -31,8 +28,7 @@
     "empty": "這裡還沒有內容",
     "admin": "管理員",
     "member": "用戶",
-    "total": "共 {count} 項",
-    "version": "版本 {version}"
+    "total": "共 {count} 項"
   },
   "auth": {
     "title": "登入",
@@ -94,8 +90,7 @@
     "settings": "設定",
     "theme": "主題",
     "language": "語言",
-    "about": "關於",
-    "signOut": "登出"
+    "about": "關於"
   },
   "providers": {
     "title": "登入提供者",
@@ -107,7 +102,6 @@
     "clientId": "用戶端 ID",
     "clientSecret": "用戶端密鑰",
     "secretHint": "留空表示保留已存密鑰",
-    "secretSet": "已設密鑰",
     "noSecret": "未設密鑰",
     "baseUrl": "基礎 URL（ERP）",
     "issuerUrl": "簽發方 URL（OIDC）",

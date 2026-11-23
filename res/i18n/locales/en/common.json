@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 Resource"
-  },
   "nav": {
     "portal": "Portal",
     "settings": "Settings",
@@ -31,8 +28,7 @@
     "empty": "Nothing here yet",
     "admin": "Admin",
     "member": "Member",
-    "total": "{count} in total",
-    "version": "Version {version}"
+    "total": "{count} in total"
   },
   "auth": {
     "title": "Sign in",
@@ -94,8 +90,7 @@
     "settings": "Settings",
     "theme": "Theme",
     "language": "Language",
-    "about": "About",
-    "signOut": "Sign out"
+    "about": "About"
   },
   "providers": {
     "title": "Login providers",
@@ -107,7 +102,6 @@
     "clientId": "Client ID",
     "clientSecret": "Client secret",
     "secretHint": "Leave empty to keep the stored secret",
-    "secretSet": "Secret set",
     "noSecret": "No secret",
     "baseUrl": "Base URL (ERP)",
     "issuerUrl": "Issuer URL (OIDC)",

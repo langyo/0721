@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 Recursos"
-  },
   "nav": {
     "portal": "Portal",
     "settings": "Configurações",
@@ -31,8 +28,7 @@
     "empty": "Nada por aqui ainda",
     "admin": "Administrador",
     "member": "Usuário",
-    "total": "{count} no total",
-    "version": "Versão {version}"
+    "total": "{count} no total"
   },
   "auth": {
     "title": "Entrar",
@@ -94,8 +90,7 @@
     "settings": "Ajustes",
     "theme": "Tema",
     "language": "Idioma",
-    "about": "Sobre",
-    "signOut": "Sair"
+    "about": "Sobre"
   },
   "providers": {
     "title": "Provedores de login",
@@ -107,7 +102,6 @@
     "clientId": "ID do cliente",
     "clientSecret": "Segredo do cliente",
     "secretHint": "Vazio = manter o segredo salvo",
-    "secretSet": "Segredo definido",
     "noSecret": "Sem segredo",
     "baseUrl": "URL base (ERP)",
     "issuerUrl": "URL do emissor (OIDC)",
