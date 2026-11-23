@@ -105,19 +105,24 @@ const channels = computed<HkLoginChannel[]>(() => {
     });
   } else {
     // No password lane: every provider must be reachable on its own, so
-    // each is a whole-flow channel. Their tabs stay panel copy (the type
-    // label), and the provider's own name rides the row.
-    for (const provider of others) {
+    // each is a whole-flow channel. Their tabs stay panel copy — never the
+    // server's display_name — but a tab that repeats is a dead switch, so
+    // when the same type appears more than once the panel disambiguates
+    // with its own ordinal ("Single sign-on · 1"), not with remote text.
+    const repeated = others.length > 1;
+    others.forEach((provider, index) => {
       list.push({
         key: provider.id,
         mode: "sso" as const,
-        label: t("common.auth.ssoChannel"),
+        label: repeated
+          ? `${t("common.auth.ssoChannel")} · ${index + 1}`
+          : t("common.auth.ssoChannel"),
         title: t("common.auth.title"),
         subtitle: t("common.auth.subtitle"),
         icon: providerIcon(),
         buttonLabel: provider.display_name,
       });
-    }
+    });
   }
 
   if (peer) {

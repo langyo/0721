@@ -306,6 +306,32 @@ describe("LoginView dual-mode (family login panel)", () => {
     expect(channels[0]!.buttonLabel).toBe("Mystery IdP"); // the row names it
   });
 
+  it("keeps every segment label distinct when a type repeats", async () => {
+    // Two OIDC providers are a real deployment (multi-IdP). The rows name
+    // the destinations, but the TABS must still be tellable apart — the
+    // family's copy rule forbids borrowing the server's name for that, so
+    // the panel disambiguates with its own ordinal.
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [
+        { id: "o1", display_name: "Keycloak", type: "builtin:oidc", icon: null },
+        { id: "o2", display_name: "Auth0", type: "builtin:oidc", icon: null },
+      ],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
+    expect(labels.length).toBe(2);
+    // MUT:duplicate-tab-labels — a single shared label reddens the
+    // uniqueness assertion below (the tabs would read the same).
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.every((label) => label.startsWith("Single sign-on"))).toBe(true);
+    // Still panel copy: neither server name leaks into a tab.
+    expect(labels.join(" ")).not.toContain("Keycloak");
+    expect(labels.join(" ")).not.toContain("Auth0");
+  });
+
   it("grows the segment group only once a second channel exists", async () => {
     // One lane alone stays a segment-less card (hikari's rule: a lone
     // dead segment reads as a broken switch); the account lane plus a
