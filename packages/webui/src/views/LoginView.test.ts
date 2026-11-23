@@ -57,8 +57,13 @@ async function mountView(query: Record<string, string> = {}) {
     ],
   });
   await router.push({ path: "/login", query });
+  // attachTo keeps the tree in the live document — teleported panels and
+  // document-scoped queries reach it (a detached mount hides them).
+  const host = document.createElement("div");
+  document.body.appendChild(host);
   const wrapper = mount(LoginView, {
     global: { plugins: [i18n, router, createPinia()] },
+    attachTo: host,
   });
   // The login-methods descriptor resolves async — the card mounts after.
   await flushPromises();
@@ -147,7 +152,7 @@ describe("LoginView status strip (family footer)", () => {
     // The strip is this face's own footer: standalone must stay OFF, or
     // the bar renders its own fixed <footer> and nests inside ours.
     expect(bar.props("standalone")).toBe(false);
-    expect(document.querySelectorAll("footer.s-status-bar").length).toBe(0);
+    expect(w.findAll("footer.s-status-bar").length).toBe(0);
     vi.unstubAllGlobals();
   });
 });
