@@ -46,11 +46,18 @@ const columns = computed<HTableColumn[]>(() => [
 
 const revoked = ref(false);
 async function revoke(token: string) {
+  // Each attempt starts from a clean slate: a stale "revoked" note over
+  // a failed revoke claims a success that did not happen.
+  revoked.value = false;
   try {
     await files.shareDelete(token);
     revoked.value = true;
     void load();
-  } catch { /* inline */ }
+  } catch (e) {
+    // The roster's banner is the failure lane — a silent catch leaves
+    // the row on screen with no explanation and no retry.
+    error.value = errorText(e);
+  }
 }
 </script>
 

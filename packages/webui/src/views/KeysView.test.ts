@@ -215,6 +215,5 @@ describe("KeysView error surface (family scaffold)", () => {
     expect(wrapper.find(".hk-alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("rpc timeout");
     wrapper.unmount();
-    wrapper.unmount();
   });
 });
