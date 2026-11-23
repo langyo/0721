@@ -147,7 +147,12 @@
     "fileNotAvailable": "Este arquivo não está mais disponível",
     "breadcrumbRoot": "Meus arquivos",
     "fileName": "Arquivo",
-    "size": "Tamanho"
+    "size": "Tamanho",
+    "uploaded": "Enviado",
+    "kind": "Tipo",
+    "kindFolder": "Pasta",
+    "details": "Detalhes",
+    "pickHint": "Selecione um item para inspecioná-lo"
   },
   "keys": {
     "title": "Chaves de API",

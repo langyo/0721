@@ -147,7 +147,12 @@
     "fileNotAvailable": "Diese Datei ist nicht mehr verfügbar",
     "breadcrumbRoot": "Meine Dateien",
     "fileName": "Dateiname",
-    "size": "Größe"
+    "size": "Größe",
+    "uploaded": "Hochgeladen",
+    "kind": "Art",
+    "kindFolder": "Ordner",
+    "details": "Details",
+    "pickHint": "Wähle ein Element, um es anzusehen"
   },
   "keys": {
     "title": "API-Schlüssel",

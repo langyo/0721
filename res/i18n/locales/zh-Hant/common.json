@@ -147,7 +147,12 @@
     "fileNotAvailable": "該檔案不再可用",
     "breadcrumbRoot": "我的檔案",
     "fileName": "檔案",
-    "size": "大小"
+    "size": "大小",
+    "uploaded": "上傳於",
+    "kind": "類型",
+    "kindFolder": "資料夾",
+    "details": "詳情",
+    "pickHint": "選擇一項以查看詳情"
   },
   "keys": {
     "title": "API 密鑰",

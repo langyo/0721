@@ -147,7 +147,12 @@
     "fileNotAvailable": "このファイルは利用できません",
     "breadcrumbRoot": "マイファイル",
     "fileName": "ファイル",
-    "size": "サイズ"
+    "size": "サイズ",
+    "uploaded": "アップロード",
+    "kind": "種類",
+    "kindFolder": "フォルダー",
+    "details": "詳細",
+    "pickHint": "項目を選択して詳細を表示"
   },
   "keys": {
     "title": "API キー",

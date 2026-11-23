@@ -1,19 +1,6 @@
 <script setup lang="ts">
-import {
-  HkAdaptiveDialog,
-  HkEmptyState,
-  HkProgressRing,
-} from "@celestia-island/hikari";
-import {
-  Copy,
-  FileArchive,
-  FileAudio,
-  FileText,
-  FileVideo,
-  Folder,
-  Images,
-  Trash2,
-} from "lucide-vue-next";
+import { HkAdaptiveDialog, HkEmptyState, HkIconButton, HkMasterDetail, HkProgressRing } from "@celestia-island/hikari";
+import { ExternalLink, Copy, FileArchive, FileAudio, FileText, FileVideo, Folder, Images, Trash2 } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -34,6 +21,13 @@ import { makeErrorText } from "@/composables/errorText";
  */
 
 const { t } = useI18n();
+
+/** The pane's selection — this page's state, never the component's. */
+const selected = ref<FileDto | null>(null);
+
+function openExternal(url: string): void {
+  window.open(url, "_blank", "noopener");
+}
 
 const errorText = makeErrorText(t);
 const uploadErrorText = makeErrorText(t, "common.portal.uploadFailed");
@@ -140,6 +134,8 @@ async function confirmDelete() {
   deleteError.value = null;
   try {
     await api.deleteFile(target.id);
+    // The pane must not keep showing the row that just vanished.
+    if (selected.value?.id === target.id) selected.value = null;
     files.value = files.value.filter((f) => f.id !== target.id);
     total.value = Math.max(0, total.value - 1);
     pendingDelete.value = null;
@@ -217,14 +213,23 @@ function formatSize(bytes: number): string {
 
     <template v-else>
       <p class="portal-count">{{ t("common.status.total", { count: total }) }}</p>
+      <HkMasterDetail
+        :detail-open="selected !== null"
+        :detail-title="selected?.original_name || selected?.name || ''"
+        :empty-title="t('common.files.details')"
+        :empty-description="t('common.files.pickHint')"
+        :close-label="t('common.actions.cancel')"
+        @close="selected = null"
+      >
+        <template #list>
       <ul class="portal-grid">
         <li v-for="file in files" :key="file.id" class="portal-tile">
-          <a
+          <button
+            type="button"
             class="tile-media"
-            :href="file.url"
-            target="_blank"
-            rel="noopener"
-            :title="t('common.portal.openOriginal')"
+            :class="{ picked: selected?.id === file.id }"
+            :aria-label="file.original_name || file.name"
+            @click="selected = file"
           >
             <img
               v-if="file.kind === 'image'"
@@ -233,7 +238,7 @@ function formatSize(bytes: number): string {
               loading="lazy"
             />
             <component :is="iconFor(file)" v-else :size="32" class="tile-icon" />
-          </a>
+          </button>
           <div class="tile-meta">
             <span class="tile-name" :title="file.original_name || file.name">
               {{ file.original_name || file.name }}
@@ -268,6 +273,24 @@ function formatSize(bytes: number): string {
           {{ t("common.actions.loadMore") }}
         </button>
       </div>
+        </template>
+
+        <template #detail>
+          <FileDetailView v-if="selected" :file="selected" />
+        </template>
+
+        <template v-if="selected" #actions>
+          <HkIconButton
+            :size="28"
+            variant="ghost"
+            :aria-label="t('common.portal.openOriginal')"
+            :title="t('common.portal.openOriginal')"
+            @click="openExternal(selected.url)"
+          >
+            <template #icon><ExternalLink :size="16" /></template>
+          </HkIconButton>
+        </template>
+      </HkMasterDetail>
     </template>
 
     <!-- The upload lane: one row per in-flight file with its progress. -->
@@ -331,6 +354,10 @@ function formatSize(bytes: number): string {
   background: color-mix(in srgb, currentColor 4%, transparent);
 }
 
+.tile-media.picked {
+  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+  outline-offset: -2px;
+}
 .tile-media {
   display: flex;
   align-items: center;

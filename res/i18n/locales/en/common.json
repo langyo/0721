@@ -147,7 +147,12 @@
     "fileNotAvailable": "This file is no longer available",
     "breadcrumbRoot": "My files",
     "fileName": "File",
-    "size": "Size"
+    "size": "Size",
+    "uploaded": "Uploaded",
+    "kind": "Kind",
+    "kindFolder": "Folder",
+    "details": "Details",
+    "pickHint": "Select an item to inspect it"
   },
   "keys": {
     "title": "API Keys",

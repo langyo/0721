@@ -1,13 +1,5 @@
 <script setup lang="ts">
-import {
-  HkAdaptiveDialog,
-  HkButton,
-  HkEmptyState,
-  HkIconButton,
-  HkInput,
-  HkSwitch,
-  useChromeActionSize,
-} from "@celestia-island/hikari";
+import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkInput, HkMasterDetail, HkSwitch, useChromeActionSize } from "@celestia-island/hikari";
 import {
   Copy,
   FileArchive,
@@ -95,9 +87,14 @@ const crumbs = computed(() => {
   return trail;
 });
 
+/** The pane's selection — this page's state, never the component's. */
+const selected = ref<FileDto | null>(null);
+
 function openFolder(f: FileDto) {
   if (f.kind === "folder") {
     void router.push(`/files/${f.id}`);
+  } else {
+    selected.value = f;
   }
 }
 
@@ -252,6 +249,8 @@ async function doDelete() {
   if (!deleteTarget.value || deleteBusy.value) return;
   deleteBusy.value = true;
   try {
+    // The pane must not keep showing the row that just vanished.
+    if (selected.value?.id === deleteTarget.value.id) selected.value = null;
     await files.deleteFile(deleteTarget.value.id);
     deleteTarget.value = null;
     void load();
@@ -319,8 +318,17 @@ bar.setActions(() => {
     <HkEmptyState v-if="loading && items.length === 0" loading boxed :title="t('common.status.loading')" />
     <HkEmptyState v-else-if="items.length === 0" boxed :icon="Folder" :title="t('common.files.empty')" />
 
-    <ul v-else class="file-grid">
-      <li v-for="f in items" :key="f.id" class="file-tile" :class="{ folder: f.kind === 'folder' }">
+    <HkMasterDetail v-else
+      :detail-open="selected !== null"
+      :detail-title="selected?.original_name || selected?.name || ''"
+      :empty-title="t('common.files.details')"
+      :empty-description="t('common.files.pickHint')"
+      :close-label="t('common.actions.cancel')"
+      @close="selected = null"
+    >
+      <template #list>
+    <ul class="file-grid">
+      <li v-for="f in items" :key="f.id" class="file-tile" :class="{ folder: f.kind === 'folder', picked: selected?.id === f.id }">
         <button type="button" class="tile-body" @click="openFolder(f)" @dblclick="openFolder(f)">
           <component :is="iconFor(f)" v-if="f.kind !== 'image'" :size="32" class="tile-icon" />
           <img v-else :src="`${f.url}?thumbnail=true`" :alt="f.original_name || f.name" loading="lazy" />
@@ -345,6 +353,12 @@ bar.setActions(() => {
         </div>
       </li>
     </ul>
+      </template>
+
+      <template #detail>
+        <FileDetailView v-if="selected" :file="selected" />
+      </template>
+    </HkMasterDetail>
 
     <!-- Upload progress overlay -->
     <div v-if="uploadProgress.size > 0" class="upload-overlay" role="status">
@@ -449,6 +463,10 @@ bar.setActions(() => {
 .quota-text { font-size: 0.78rem; opacity: 0.7; white-space: nowrap; }
 .error { color: rgb(220 38 38); font-size: 0.85rem; margin: 0; }
 .file-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: 0.75rem; }
+.file-tile.picked .tile-body {
+  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+  outline-offset: -2px;
+}
 .file-tile { display: flex; flex-direction: column; border: 1px solid color-mix(in srgb, currentColor 16%, transparent); border-radius: 0.75rem; overflow: hidden; background: color-mix(in srgb, currentColor 4%, transparent); }
 .tile-body { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; width: 100%; border: none; background: transparent; cursor: pointer; color: inherit; padding: 0;
   img { width: 100%; height: 100%; object-fit: cover; } }

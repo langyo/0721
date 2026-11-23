@@ -147,7 +147,12 @@
     "fileNotAvailable": "이 파일은 더 이상 사용할 수 없습니다",
     "breadcrumbRoot": "내 파일",
     "fileName": "파일",
-    "size": "크기"
+    "size": "크기",
+    "uploaded": "업로드됨",
+    "kind": "종류",
+    "kindFolder": "폴더",
+    "details": "세부 정보",
+    "pickHint": "항목을 선택하여 자세히 보기"
   },
   "keys": {
     "title": "API 키",
