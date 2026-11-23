@@ -85,10 +85,12 @@ describe("PortalView failure lane (never-empty)", () => {
     });
     await input.trigger("change");
     await flushPromises();
-    const row = wrapper.find(".upload-error, [role='alert']");
     expect(wrapper.text()).toContain("Upload failed");
-    // and NOT the generic fallback twice over
-    expect(wrapper.text().match(/Upload failed/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    // and the fallback wording exactly once — the row renders the
+    // factory's message alone, so a double print (label + message)
+    // fails here. MUT:portal-upload-dedupe — restoring the old
+    // "<label> — <message>" row reddens this count.
+    expect(wrapper.text().match(/Upload failed/g)?.length ?? 0).toBe(1);
     wrapper.unmount();
   });
 });
