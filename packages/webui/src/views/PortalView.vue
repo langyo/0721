@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HkAdaptiveDialog, HkEmptyState, HkIconButton, HkMasterDetail, HkProgressRing } from "@celestia-island/hikari";
+import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkMasterDetail, HkProgressRing } from "@celestia-island/hikari";
 import { ExternalLink, Copy, FileArchive, FileAudio, FileText, FileVideo, Folder, Images, Trash2 } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -263,9 +263,9 @@ function iconFor(file: FileDto) {
         </li>
       </ul>
       <div v-if="hasMore" class="portal-more">
-        <button type="button" class="portal-more-btn" :disabled="loading" @click="load(false)">
+        <HkButton variant="ghost" :disabled="loading" @click="load(false)">
           {{ t("common.actions.loadMore") }}
-        </button>
+        </HkButton>
       </div>
         </template>
 

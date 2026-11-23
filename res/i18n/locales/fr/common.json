@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 Ressources"
-  },
   "nav": {
     "portal": "Portail",
     "settings": "Configuration",
@@ -31,8 +28,7 @@
     "empty": "Rien ici pour l'instant",
     "admin": "Admin",
     "member": "Utilisateur",
-    "total": "{count} au total",
-    "version": "Version {version}"
+    "total": "{count} au total"
   },
   "auth": {
     "title": "Connexion",
@@ -94,8 +90,7 @@
     "settings": "Paramètres",
     "theme": "Thème",
     "language": "Langue",
-    "about": "À propos",
-    "signOut": "Se déconnecter"
+    "about": "À propos"
   },
   "providers": {
     "title": "Fournisseurs de connexion",
@@ -107,7 +102,6 @@
     "clientId": "ID client",
     "clientSecret": "Secret client",
     "secretHint": "Laisser vide pour conserver le secret",
-    "secretSet": "Secret défini",
     "noSecret": "Aucun secret",
     "baseUrl": "URL de base (ERP)",
     "issuerUrl": "URL de l'émetteur (OIDC)",

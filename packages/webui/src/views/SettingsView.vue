@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HkButton, HkEmptyState, HkInput, HkSectionCard, HkSelect, HkSwitch } from "@celestia-island/hikari";
+import { HkButton, HkEmptyState, HkIconButton, HkInput, HkLocalePicker, HkSectionCard, HkSelect, HkSwitch } from "@celestia-island/hikari";
 import { Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -247,14 +247,15 @@ async function save() {
                 :name="`banner-url-${index}`"
                 :placeholder="t('common.settings.bannerUrl')"
               />
-              <button
-                type="button"
-                class="row-remove"
+              <HkIconButton
+                :size="24"
+                variant="ghost"
                 :aria-label="t('common.actions.remove')"
+                :title="t('common.actions.remove')"
                 @click="form.footerBanner.splice(index, 1)"
               >
-                <Trash2 :size="14" />
-              </button>
+                <template #icon><Trash2 :size="14" /></template>
+              </HkIconButton>
             </li>
           </ul>
           <HkButton variant="ghost" @click="form.footerBanner.push({ text: '', url: '' })">
@@ -280,14 +281,15 @@ async function save() {
           <ul class="banner-list">
             <li v-for="(host, index) in form.limitReferrerHost" :key="index" class="banner-row">
               <HkInput v-model="form.limitReferrerHost[index]!" :name="`referrer-host-${index}`" />
-              <button
-                type="button"
-                class="row-remove"
+              <HkIconButton
+                :size="24"
+                variant="ghost"
                 :aria-label="t('common.actions.remove')"
+                :title="t('common.actions.remove')"
                 @click="form.limitReferrerHost.splice(index, 1)"
               >
-                <Trash2 :size="14" />
-              </button>
+                <template #icon><Trash2 :size="14" /></template>
+              </HkIconButton>
             </li>
           </ul>
           <HkButton variant="ghost" @click="form.limitReferrerHost.push('')">
@@ -420,23 +422,6 @@ async function save() {
   display: flex;
   gap: 0.5rem;
   align-items: center;
-}
-
-.row-remove {
-  border: none;
-  background: transparent;
-  color: inherit;
-  opacity: 0.6;
-  cursor: pointer;
-  padding: 0.35rem;
-  border-radius: 0.4rem;
-  display: inline-flex;
-
-  &:hover {
-    opacity: 1;
-    background: color-mix(in srgb, rgb(220 38 38) 16%, transparent);
-    color: rgb(220 38 38);
-  }
 }
 
 .save-row {

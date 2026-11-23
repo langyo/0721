@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 리소스"
-  },
   "nav": {
     "portal": "포털",
     "settings": "설정",
@@ -31,8 +28,7 @@
     "empty": "아직 아무것도 없습니다",
     "admin": "관리자",
     "member": "사용자",
-    "total": "총 {count}개",
-    "version": "버전 {version}"
+    "total": "총 {count}개"
   },
   "auth": {
     "title": "로그인",
@@ -94,8 +90,7 @@
     "settings": "설정",
     "theme": "테마",
     "language": "언어",
-    "about": "정보",
-    "signOut": "로그아웃"
+    "about": "정보"
   },
   "providers": {
     "title": "로그인 제공자",
@@ -107,7 +102,6 @@
     "clientId": "클라이언트 ID",
     "clientSecret": "클라이언트 시크릿",
     "secretHint": "비워 두면 저장된 시크릿 유지",
-    "secretSet": "시크릿 설정됨",
     "noSecret": "시크릿 없음",
     "baseUrl": "기본 URL(ERP)",
     "issuerUrl": "발급자 URL(OIDC)",

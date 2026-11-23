@@ -19,7 +19,14 @@
 - **数据模型**：users（quota_bytes）/ oauth_identities / files（folder + parent_id + 同层唯一索引 +
   软删 + 级联回收）/ shares / api_keys / settings 六表。
 - **存储**：`I0721_STORAGE_BACKEND` = local | s3（object_store ^0.12）| ipfs（kubo RPC + MFS）。
-- **webui**：hikari Vue/TS（chest 复刻壳 + 主题设定 + 连接状态灯 + 12 语种 i18n + ts-rs 单向类型）。
+- **webui**：hikari Vue/TS，**家族范式对齐**（2026-11-23 webui 波次；参照 ayane 的迭代）：
+  `HkAdminShell` 四槽壳（header/sidebar/content/footer）+ 分组侧边栏（内容/接入/管理，管理组 admin 专属）
+  + `HkAdminHeader` 身份面（头像账户窗/语言级联/登出）+ `HkStatusBar` 页脚（面板版本+引擎身份+传输探针）
+  + `HkLoginFlow` 登录面（账密通道 + provider sso 通道，单通道无段组）+ `HkAdminTablePage`+`HTable`
+  四张名册 + `HkMasterDetail` 三面主从（Files/Portal/Timeline）+ `HkSelect`/`HkRadio`/`HkSwitch` 表单族
+  + `HkAboutBody` 关于页 + `HkToast` 根挂载 + 12 语种 i18n（零未用键）+ ts-rs 单向类型。
+  **共享工厂**（勿再逐视图拷贝）：`composables/errorText.ts`（never-empty 失败文案）、
+  `composables/formatSize.ts`（二进制单位尺寸）。
 - **会话**：httpOnly cookie（SameSite=Lax + Secure 按请求 X-Forwarded-Proto 判定 + 
   `I0721_COOKIE_SECURE=auto|always|never` 钉）；WebSocket 用一次性 ticket；MCP 用 API key。
 

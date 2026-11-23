@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 Ресурсы"
-  },
   "nav": {
     "portal": "Портал",
     "settings": "Конфигурация",
@@ -31,8 +28,7 @@
     "empty": "Здесь пока ничего нет",
     "admin": "Админ",
     "member": "Пользователь",
-    "total": "Всего: {count}",
-    "version": "Версия {version}"
+    "total": "Всего: {count}"
   },
   "auth": {
     "title": "Вход",
@@ -94,8 +90,7 @@
     "settings": "Настройки",
     "theme": "Тема",
     "language": "Язык",
-    "about": "О программе",
-    "signOut": "Выйти"
+    "about": "О программе"
   },
   "providers": {
     "title": "Провайдеры входа",
@@ -107,7 +102,6 @@
     "clientId": "ID клиента",
     "clientSecret": "Секрет клиента",
     "secretHint": "Пусто = сохранить текущий секрет",
-    "secretSet": "Секрет задан",
     "noSecret": "Нет секрета",
     "baseUrl": "Базовый URL (ERP)",
     "issuerUrl": "URL эмитента (OIDC)",

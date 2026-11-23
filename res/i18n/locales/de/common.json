@@ -1,7 +1,4 @@
 {
-  "app": {
-    "name": "0721 Ressourcen"
-  },
   "nav": {
     "portal": "Portal",
     "settings": "Konfiguration",
@@ -31,8 +28,7 @@
     "empty": "Noch nichts hier",
     "admin": "Admin",
     "member": "Benutzer",
-    "total": "{count} insgesamt",
-    "version": "Version {version}"
+    "total": "{count} insgesamt"
   },
   "auth": {
     "title": "Anmelden",
@@ -94,8 +90,7 @@
     "settings": "Einstellungen",
     "theme": "Design",
     "language": "Sprache",
-    "about": "Über",
-    "signOut": "Abmelden"
+    "about": "Über"
   },
   "providers": {
     "title": "Login-Anbieter",
@@ -107,7 +102,6 @@
     "clientId": "Client-ID",
     "clientSecret": "Client-Secret",
     "secretHint": "Leer lassen = gespeichertes Secret behalten",
-    "secretSet": "Secret gesetzt",
     "noSecret": "Kein Secret",
     "baseUrl": "Basis-URL (ERP)",
     "issuerUrl": "Issuer-URL (OIDC)",
