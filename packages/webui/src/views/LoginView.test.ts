@@ -357,9 +357,12 @@ describe("LoginView dual-mode (family login panel)", () => {
     expect(channels.map((c) => c.buttonLabel)).toEqual(["Celestia ID", "Acme ERP"]);
   });
 
-  it("navigates when a provider ROW under the account card is picked", async () => {
-    // The rows exist again on the password lane; without the method-select
-    // handler they render but do nothing (that regression shipped once).
+  it("navigates when a provider ROW under the account card is clicked", async () => {
+    // The rows exist again on the password lane; without a working
+    // method-select path they render but do nothing — a regression this
+    // branch shipped once. The assertion is at the DOM row, not at the
+    // emit seam, so neutering the handler body reddens it (an emit-level
+    // assertion stays green through that).
     loginMethodsMock.mockResolvedValue({
       password: true,
       providers: [{ id: "gh", display_name: "GitHub", type: "builtin:github", icon: null }],
@@ -368,13 +371,22 @@ describe("LoginView dual-mode (family login panel)", () => {
     await flushPromises();
 
     const hrefSetter = vi.fn();
+    const original = Object.getOwnPropertyDescriptor(window, "location");
     Object.defineProperty(window, "location", {
       configurable: true,
       value: { ...window.location, set href(v: string) { hrefSetter(v); }, get href() { return "http://localhost:3000/"; } },
     });
-    wrapper.getComponent(HkLoginFlow).vm.$emit("method-select", "password", "gh");
-    await flushPromises();
-    expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/gh");
+    try {
+      const row = wrapper.find(".hk-auth-channel-row");
+      expect(row.exists(), "the provider must render as a clickable row").toBe(true);
+      await row.trigger("click");
+      await flushPromises();
+      // MUT:row-handler — emptying onMethodSelect's body leaves the row
+      // rendered and clickable but goes nowhere; this assertion catches it.
+      expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/gh");
+    } finally {
+      if (original) Object.defineProperty(window, "location", original);
+    }
   });
 
   it("grows the segment group only once a second channel exists", async () => {

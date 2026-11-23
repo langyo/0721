@@ -118,6 +118,8 @@ const channels = computed<HkLoginChannel[]>(() => {
     // server's display_name — but a tab that repeats is a dead switch, so
     // when the same type appears more than once the panel disambiguates
     // with its own ordinal ("Single sign-on · 1"), not with remote text.
+    // Any second non-peer lane needs disambiguation (mixed types
+    // included: two generic tabs still read identically).
     const repeated = others.length > 1;
     others.forEach((provider, index) => {
       list.push({
