@@ -12,6 +12,14 @@ import { makeErrorText } from "@/composables/errorText";
 import FileDetailView from "@/components/FileDetailView.vue";
 import { formatSize } from "@/composables/formatSize";
 
+/**
+ * The portal face: the newest-first grid of everything on the instance,
+ * with the upload entry riding the header's create slot
+ * (`usePageCreateAction`) and per-tile copy-link / delete.
+ *
+ * Picking a tile opens the shared detail pane beside the grid; the pane's
+ * own action opens the original in a new tab (the tile anchor's old job).
+ */
 
 const { t } = useI18n();
 
