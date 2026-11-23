@@ -189,7 +189,7 @@ describe("LoginView dead state (W4 R2)", () => {
 });
 
 describe("LoginView dual-mode (family login panel)", () => {
-  it("renders one full-width row per provider and navigates to its OAuth entry", async () => {
+  it("makes Celestia ID a peer channel and keeps other providers as rows", async () => {
     loginMethodsMock.mockResolvedValue({
       password: true,
       providers: [
@@ -198,39 +198,31 @@ describe("LoginView dual-mode (family login panel)", () => {
       ],
     });
     const { wrapper } = await mountView();
-    // The password card is the opening channel; the providers ride the
-    // card's methods list as family rows (name in plain sight).
-    const rows = wrapper.findAll(".hk-auth-channel-row");
-    expect(rows.length).toBe(2);
-    expect(rows[0]!.text()).toContain("Celestia ID");
-    expect(rows[1]!.text()).toContain("GitHub");
-    // The rows sit under a labelled divider ("or continue with") — an
-    // unlabelled list of destinations reads as part of the form.
-    expect(wrapper.text()).toContain("or continue with");
+    await flushPromises();
 
-    // Navigation is a FULL page load (the flow plants an httpOnly state
-    // cookie and 302s) — pin the href, not a router push.
-    const original = window.location.href;
+    // MUT:peer-lane — Celestia ID is the peer lane (the family's central
+    // sign-in); every other provider is an alternative ROW under the
+    // account card, which is where hikari puts provider names.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      key: string;
+      mode: string;
+      methods?: Array<{ key: string; label: string }>;
+    }>;
+    expect(channels).toHaveLength(2);
+    expect(channels[0]).toMatchObject({ key: "password", mode: "credentials" });
+    expect(channels[1]).toMatchObject({ key: "erp", mode: "sso" });
+    // GitHub rides the credentials card as a row, not as a segment.
+    expect(channels[0]!.methods).toEqual([{ key: "gh", label: "GitHub", icon: expect.anything() }]);
+
+    // The peer lane's row navigates the whole page to its redirect entry.
     const hrefSetter = vi.fn();
     Object.defineProperty(window, "location", {
-      value: { ...window.location, href: original },
-      writable: false,
+      configurable: true,
+      value: { ...window.location, set href(v: string) { hrefSetter(v); }, get href() { return "http://localhost:3000/"; } },
     });
-    try {
-      Object.defineProperty(window.location, "href", {
-        set: (v: string) => hrefSetter(v),
-        get: () => original,
-        configurable: true,
-      });
-      await rows[0]!.trigger("click");
-      expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
-    } finally {
-      Object.defineProperty(window.location, "href", {
-        value: original,
-        writable: true,
-        configurable: true,
-      });
-    }
+    wrapper.getComponent(HkLoginFlow).vm.$emit("sso-click", "erp");
+    await flushPromises();
+    expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
   });
 
   it("hides the password form and shows the provider row alone when the kill-switch is off", async () => {
@@ -260,19 +252,160 @@ describe("LoginView dual-mode (family login panel)", () => {
     expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
   });
 
-  it("keeps ONE channel when the password lane carries the providers as rows", async () => {
+  it("labels the segments with the PANEL's copy, never the server's provider name", async () => {
+    // hikari's locked copy rule: a server-provided provider name in the
+    // segment read as "log in to ERP" instead of "log in with your
+    // organization". The tab comes from our closed TYPE table; the
+    // provider's own name rides the channel's row.
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [
+        // A deliberately hostile display_name: if it reaches a tab, the
+        // assertion below names it.
+        { id: "erp", display_name: "Acme Corp Internal", type: "builtin:erp", icon: null },
+      ],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const tabs = wrapper.findAll(".hk-tabs-trigger");
+    expect(tabs.length).toBe(2);
+    const labels = tabs.map((tab) => tab.text().trim());
+    expect(labels).toEqual(["Password", "Celestia ID"]);
+    expect(labels.join(" ")).not.toContain("Acme Corp Internal");
+
+    // The row inside the sso card is where the provider name belongs.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      mode: string;
+      buttonLabel?: string;
+    }>;
+    expect(channels[1]).toMatchObject({ mode: "sso", buttonLabel: "Acme Corp Internal" });
+  });
+
+  it("never renders a raw locale key when a provider type is unknown", async () => {
+    // Contract-reachable: the Rust enum is closed at four types today, but
+    // adding a fifth must not put a literal key on a tab. With no password
+    // lane every provider is its own channel — including an unknown one.
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [{ id: "x", display_name: "Mystery IdP", type: "builtin:mystery", icon: null }],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
+    // One channel alone → no segment group, but the card's row still names
+    // the destination; nothing may show "common.auth.*".
+    expect(labels.join(" ")).not.toContain("common.auth.");
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      label?: string;
+      buttonLabel?: string;
+    }>;
+    expect(channels).toHaveLength(1);
+    expect(channels[0]!.label).toBe("Single sign-on");   // panel copy, not a key
+    expect(channels[0]!.buttonLabel).toBe("Mystery IdP"); // the row names it
+  });
+
+  it("numbers repeated tabs and pins the exact panel copy", async () => {
+    // Two OIDC providers are a real deployment (multi-IdP). The rows name
+    // the destinations; the TABS must be tellable apart, and the family's
+    // copy rule forbids borrowing the server's name for that — so the
+    // panel numbers them. The expected strings are spelled out: a mangled
+    // ordinal (missing separator, wrong base, skipped index) is a copy
+    // regression, not a stylistic choice.
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [
+        { id: "o1", display_name: "Keycloak", type: "builtin:oidc", icon: null },
+        { id: "o2", display_name: "Auth0", type: "builtin:oidc", icon: null },
+      ],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
+    // MUT:ordinal-copy — any change to these two strings reddens here.
+    expect(labels).toEqual(["Single sign-on · 1", "Single sign-on · 2"]);
+    // Still panel copy: neither server name leaks into a tab.
+    expect(labels.join(" ")).not.toContain("Keycloak");
+    expect(labels.join(" ")).not.toContain("Auth0");
+  });
+
+  it("treats a duplicated peer type as ordinary lanes, not one winner", async () => {
+    // ProvidersView defaults a new provider to builtin:erp, and the server
+    // accepts any number of them — so two erp providers are reachable. The
+    // peer lane is singular by contract: neither may hijack the
+    // "Celestia ID" tab while the other is demoted to generic copy.
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [
+        { id: "e1", display_name: "Celestia ID", type: "builtin:erp", icon: null },
+        { id: "e2", display_name: "Acme ERP", type: "builtin:erp", icon: null },
+      ],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
+    expect(labels).toEqual(["Single sign-on · 1", "Single sign-on · 2"]);
+    expect(labels).not.toContain("Celestia ID");
+
+    // Both destinations stay reachable, each named on its own row.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      buttonLabel?: string;
+    }>;
+    expect(channels.map((c) => c.buttonLabel)).toEqual(["Celestia ID", "Acme ERP"]);
+  });
+
+  it("navigates when a provider ROW under the account card is clicked", async () => {
+    // The rows exist again on the password lane; without a working
+    // method-select path they render but do nothing — a regression this
+    // branch shipped once. The assertion is at the DOM row, not at the
+    // emit seam, so neutering the handler body reddens it (an emit-level
+    // assertion stays green through that).
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [{ id: "gh", display_name: "GitHub", type: "builtin:github", icon: null }],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const hrefSetter = vi.fn();
+    const original = Object.getOwnPropertyDescriptor(window, "location");
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, set href(v: string) { hrefSetter(v); }, get href() { return "http://localhost:3000/"; } },
+    });
+    try {
+      const row = wrapper.find(".hk-auth-channel-row");
+      expect(row.exists(), "the provider must render as a clickable row").toBe(true);
+      await row.trigger("click");
+      await flushPromises();
+      // MUT:row-handler — emptying onMethodSelect's body leaves the row
+      // rendered and clickable but goes nowhere; this assertion catches it.
+      expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/gh");
+    } finally {
+      if (original) Object.defineProperty(window, "location", original);
+    }
+  });
+
+  it("grows the segment group only once a second channel exists", async () => {
+    // One lane alone stays a segment-less card (hikari's rule: a lone
+    // dead segment reads as a broken switch); the account lane plus a
+    // provider is two peers and therefore a switchable group.
+    loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
+    let ctx = await mountView();
+    await flushPromises();
+    expect(ctx.wrapper.getComponent(HkLoginFlow).props("channels")).toHaveLength(1);
+    ctx.wrapper.unmount();
+
     loginMethodsMock.mockResolvedValue({
       password: true,
       providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
     });
-    const { wrapper } = await mountView();
+    ctx = await mountView();
     await flushPromises();
-    // Providers are alternative ROWS under the form, not channel tabs
-    // (the family copy rule: a provider name in the segment reads as
-    // "log in to ERP" rather than "log in with your organization"), so
-    // the panel stays a single channel with no segment group.
-    expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
-    expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
+    expect(ctx.wrapper.getComponent(HkLoginFlow).props("channels")).toHaveLength(2);
   });
 
   it("declares the credentials channel as a two-field account+password form", async () => {
@@ -306,8 +439,9 @@ describe("LoginView dual-mode (family login panel)", () => {
     });
     const { wrapper } = await mountView();
     await flushPromises();
-    // Two redirect-only identities need a chooser; the provider names are
-    // then the honest labels for that choice.
+    // Two redirect-only identities need a chooser. The TABS carry panel
+    // copy (the peer reads "Celestia ID", the other "Single sign-on"), and
+    // each provider's own name stays on its row — never on a tab.
     expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(2);
     expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
   });
@@ -394,8 +528,11 @@ describe("LoginView password kill-switch (W4 closing)", () => {
     await flushPromises();
     const alert = wrapper.find('[role="alert"]');
     expect(alert.exists()).toBe(true);
-    // The kill-switch copy, NOT the 401 invalid-credentials copy.
-    expect(alert.text()).toBe("Password login is disabled — use a provider below.");
+    // The kill-switch copy, NOT the 401 invalid-credentials copy. The
+    // wording names a channel, not a row "below" the card — providers are
+    // peers in the segment group now, so the old phrasing pointed at
+    // nothing (MUT:disabled-copy — restoring it reddens here).
+    expect(alert.text()).toBe("Password login is disabled — pick another sign-in channel.");
     expect(alert.text()).not.toContain("Invalid username");
   });
 });

@@ -16,7 +16,6 @@
     "save": "Enregistrer",
     "create": "Créer",
     "confirm": "Confirmer",
-    "retry": "Réessayer",
     "loadMore": "Charger plus",
     "logout": "Se déconnecter",
     "add": "Ajouter",
@@ -34,11 +33,13 @@
     "title": "Connexion",
     "subtitle": "Continuer vers 0721",
     "failed": "Nom d'utilisateur ou mot de passe incorrect",
-    "orContinue": "ou continuer avec",
-    "passwordDisabled": "Connexion par mot de passe désactivée — utilisez un fournisseur ci-dessous.",
+    "passwordDisabled": "La connexion par mot de passe est désactivée — choisissez un autre canal.",
     "noMethods": "Aucune méthode de connexion disponible — un administrateur doit activer un fournisseur ou la connexion par mot de passe.",
     "passwordChannel": "Mot de passe",
-    "submit": "Se connecter"
+    "submit": "Se connecter",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Authentification unique",
+    "orContinue": "ou continuer avec"
   },
   "portal": {
     "title": "Images",

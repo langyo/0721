@@ -16,7 +16,6 @@
     "save": "Salva",
     "create": "Crea",
     "confirm": "Conferma",
-    "retry": "Riprova",
     "loadMore": "Carica altro",
     "logout": "Esci",
     "add": "Aggiungi",
@@ -34,11 +33,13 @@
     "title": "Accedi",
     "subtitle": "Continua su 0721",
     "failed": "Nome utente o password non validi",
-    "orContinue": "oppure continua con",
-    "passwordDisabled": "Login con password disattivato: usa un provider qui sotto.",
+    "passwordDisabled": "L'accesso con password è disabilitato — scegli un altro canale.",
     "noMethods": "Nessun metodo di accesso disponibile: un amministratore deve attivare un provider o il login con password.",
     "passwordChannel": "Password",
-    "submit": "Accedi"
+    "submit": "Accedi",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Accesso unico",
+    "orContinue": "oppure continua con"
   },
   "portal": {
     "title": "Immagini",

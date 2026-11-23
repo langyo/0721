@@ -16,7 +16,6 @@
     "save": "Guardar",
     "create": "Crear",
     "confirm": "Confirmar",
-    "retry": "Reintentar",
     "loadMore": "Cargar más",
     "logout": "Cerrar sesión",
     "add": "Añadir",
@@ -34,11 +33,13 @@
     "title": "Iniciar sesión",
     "subtitle": "Continuar a 0721",
     "failed": "Nombre de usuario o contraseña incorrectos",
-    "orContinue": "o continúa con",
-    "passwordDisabled": "El acceso con contraseña está desactivado: usa un proveedor.",
+    "passwordDisabled": "El inicio con contraseña está desactivado: elija otro canal de acceso.",
     "noMethods": "No hay ningún método de acceso disponible: un administrador debe activar un proveedor o el acceso con contraseña.",
     "passwordChannel": "Contraseña",
-    "submit": "Iniciar sesión"
+    "submit": "Iniciar sesión",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Inicio de sesión único",
+    "orContinue": "o continuar con"
   },
   "portal": {
     "title": "Imágenes",

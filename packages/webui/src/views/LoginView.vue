@@ -3,7 +3,6 @@ import {
   HkEmptyState,
   HkLoginFlow,
   HkStatusBar,
-  type HkAuthChannelListEntry,
   type HkLoginChannel,
 } from "@celestia-island/hikari";
 import { KeyRound, Unplug } from "lucide-vue-next";
@@ -22,10 +21,9 @@ import { makeErrorText } from "@/composables/errorText";
  * The sign-in face, driven by `GET /api/v1/auth/login-methods`.
  *
  * It is hikari's `HkLoginFlow` panel, not a hand-built card, so the
- * channel/step semantics (and the copy rules the component spells out in
- * its own docstring — provider names belong on rows, never in the channel
- * segment) come from the upstream component rather than from this file.
- * The descriptor becomes the channel list —
+ * channel/step semantics come from the upstream component rather than
+ * from this file. The descriptor becomes the channel list, and the lanes
+ * are PEERS — not a form with alternatives tucked beneath it:
  *
  *  - the password kill-switch on  → one credentials channel (the
  *    account + password card);
@@ -35,8 +33,10 @@ import { makeErrorText } from "@/composables/errorText";
  *    which a fetch cannot carry through).
  *
  * The segment group renders only for two or more channels (the
- * component's own rule), so a deployment configured for Celestia ID
- * alone shows exactly one panel with no segment at all.
+ * component's own rule — a lone dead segment reads as a broken switch),
+ * so a deployment configured for Celestia ID alone shows exactly one
+ * panel with no segment at all. A deployment with both shows the switch,
+ * and the card body crossfades between the lanes.
  */
 
 const { t } = useI18n();
@@ -53,6 +53,21 @@ const channel = ref("");
 const loading = ref(false);
 const error = ref<string | null>(null);
 
+/** Segment labels are the PANEL's own copy — hikari's locked copy rule
+ * ("segment labels are ALWAYS the panel's own locale keys, never a
+ * server-provided provider name": a leaked provider label read as "log
+ * in to ERP" instead of "log in with your organization"). The key below
+ * is the closed provider-TYPE enum, so this table is our code, not
+ * remote data; the server's `display_name` stays where it belongs — on
+ * the channel's row (`buttonLabel`). */
+/** The provider type that rides its own segment, not a row: the family's
+ * central sign-in (auth.cw's "组织登录" counterpart). It only qualifies
+ * when the descriptor holds EXACTLY one of it — two of them have no
+ * principled winner, so both fall back to the ordinary lanes. Everything
+ * else is an alternative under the account card, which is where hikari
+ * puts provider names — rows, never segments. */
+const PEER_PROVIDER_TYPE = "builtin:erp";
+
 /** Provider marks are loose-typed by the family (a brand SVG or <img>);
  * 0721 ships no brand assets, so every SSO row rides the same neutral
  * key mark and the LABEL names the destination. */
@@ -60,52 +75,81 @@ function providerIcon() {
   return h(KeyRound, { size: 16 });
 }
 
-/** Provider rows for the credentials card's alternative-methods list —
- * the family shape: a provider is a ROW under the form, not a channel
- * tab (a provider name in the channel segment read as "log in to ERP"
- * instead of "log in with your organization"). */
-const providerRows = computed<HkAuthChannelListEntry[]>(() =>
-  (methods.value?.providers ?? []).map((provider) => ({
-    key: provider.id,
-    label: provider.display_name,
-    icon: providerIcon(),
-  })),
-);
-
 const channels = computed<HkLoginChannel[]>(() => {
-  if (methods.value?.password) {
-    // The classic lane: the credential card, with every enabled provider
-    // as an alternative row beneath the form (`method-select`).
-    return [
-      {
-        key: "password",
-        mode: "credentials",
-        label: t("common.auth.passwordChannel"),
+  const providers = methods.value?.providers ?? [];
+  const password = methods.value?.password ?? false;
+  // Celestia ID is the peer lane; every other provider is an alternative
+  // row under the account card (hikari: a provider name in the segment
+  // reads as "log in to ERP" rather than "log in with your organization").
+  // Singular by construction: with TWO erp providers neither owns the
+  // "Celestia ID" tab — a deployment that duplicated the peer type gets
+  // the ordinary lanes instead of one arbitrary winner and one generic
+  // tab (the ordinal disambiguates, the rows name them).
+  const peerCandidates = providers.filter(
+    (provider) => provider.type === PEER_PROVIDER_TYPE,
+  );
+  const peer = peerCandidates.length === 1 ? peerCandidates[0] : undefined;
+  const others = providers.filter((provider) => provider !== peer);
+  const list: HkLoginChannel[] = [];
+
+  if (password) {
+    list.push({
+      key: "password",
+      mode: "credentials",
+      label: t("common.auth.passwordChannel"),
+      title: t("common.auth.title"),
+      subtitle: t("common.auth.subtitle"),
+      usernameType: "text",
+      usernameAutocomplete: "username",
+      passwordField: true,
+      submitLabel: t("common.auth.submit"),
+      // Rows under the card: the family home for provider names.
+      methods: others.map((provider) => ({
+        key: provider.id,
+        label: provider.display_name,
+        icon: providerIcon(),
+      })),
+      methodsDivider:
+        others.length > 0 ? t("common.auth.orContinue") : undefined,
+    });
+  } else {
+    // No password lane: every provider must be reachable on its own, so
+    // each is a whole-flow channel. Their tabs stay panel copy — never the
+    // server's display_name — but a tab that repeats is a dead switch, so
+    // when the same type appears more than once the panel disambiguates
+    // with its own ordinal ("Single sign-on · 1"), not with remote text.
+    // Any second non-peer lane needs disambiguation (mixed types
+    // included: two generic tabs still read identically).
+    const repeated = others.length > 1;
+    others.forEach((provider, index) => {
+      list.push({
+        key: provider.id,
+        mode: "sso" as const,
+        label: repeated
+          ? `${t("common.auth.ssoChannel")} · ${index + 1}`
+          : t("common.auth.ssoChannel"),
         title: t("common.auth.title"),
         subtitle: t("common.auth.subtitle"),
-        usernameType: "text",
-        usernameAutocomplete: "username",
-        passwordField: true,
-        submitLabel: t("common.auth.submit"),
-        methods: providerRows.value,
-        methodsDivider: providerRows.value.length > 0 ? t("common.auth.orContinue") : undefined,
-      },
-    ];
+        icon: providerIcon(),
+        buttonLabel: provider.display_name,
+      });
+    });
   }
-  // Password off: each provider's whole sign-in IS one redirect, so it
-  // rides an sso channel. A single provider therefore renders a lone
-  // full-width row with no segment group at all — the Celestia-ID-only
-  // shape. Only a multi-provider deployment grows the segment group, and
-  // there the provider names are the honest labels for the choice.
-  return (methods.value?.providers ?? []).map((provider) => ({
-    key: provider.id,
-    mode: "sso" as const,
-    label: provider.display_name,
-    title: t("common.auth.title"),
-    subtitle: t("common.auth.subtitle"),
-    icon: providerIcon(),
-    buttonLabel: provider.display_name,
-  }));
+
+  if (peer) {
+    list.push({
+      key: peer.id,
+      mode: "sso" as const,
+      // Panel copy, never the server's display_name (locked copy rule).
+      label: t("common.auth.celestiaChannel"),
+      title: t("common.auth.title"),
+      subtitle: t("common.auth.subtitle"),
+      icon: providerIcon(),
+      buttonLabel: peer.display_name,
+    });
+  }
+
+  return list;
 });
 
 const hasChannels = computed(() => channels.value.length > 0);
@@ -154,8 +198,9 @@ function onSsoClick(channelKey: string): void {
   signInWith(channelKey);
 }
 
-/** An alternative-method row under the credential card: same full-page
- * redirect as an sso channel. */
+/** An alternative-method row under the account card: the same full-page
+ * redirect as a peer channel (the rows exist again now that non-peer
+ * providers ride the card, so this handler must exist with them). */
 function onMethodSelect(_channel: string, providerId: string): void {
   signInWith(providerId);
 }

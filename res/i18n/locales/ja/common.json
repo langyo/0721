@@ -16,7 +16,6 @@
     "save": "保存",
     "create": "作成",
     "confirm": "確認",
-    "retry": "再試行",
     "loadMore": "さらに読み込む",
     "logout": "ログアウト",
     "add": "追加",
@@ -34,11 +33,13 @@
     "title": "ログイン",
     "subtitle": "0721 へ続行",
     "failed": "ユーザー名またはパスワードが違います",
-    "orContinue": "または以下で続行",
-    "passwordDisabled": "パスワードログインは無効です。下のプロバイダーをご利用ください。",
+    "passwordDisabled": "パスワードログインは無効です — 別のログイン方法を選んでください。",
     "noMethods": "利用できるログイン方法がありません——管理者がプロバイダーまたはパスワードログインを有効にする必要があります。",
     "passwordChannel": "パスワード",
-    "submit": "サインイン"
+    "submit": "サインイン",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "シングルサインオン",
+    "orContinue": "または次で続行"
   },
   "portal": {
     "title": "画像",

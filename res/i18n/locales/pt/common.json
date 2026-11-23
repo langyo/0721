@@ -16,7 +16,6 @@
     "save": "Salvar",
     "create": "Criar",
     "confirm": "Confirmar",
-    "retry": "Tentar novamente",
     "loadMore": "Carregar mais",
     "logout": "Sair",
     "add": "Adicionar",
@@ -34,11 +33,13 @@
     "title": "Entrar",
     "subtitle": "Continuar para o 0721",
     "failed": "Nome de usuário ou senha inválidos",
-    "orContinue": "ou continue com",
-    "passwordDisabled": "Login por senha desativado — use um provedor abaixo.",
+    "passwordDisabled": "O login por senha está desativado — escolha outro canal de acesso.",
     "noMethods": "Nenhum método de login disponível — um administrador precisa ativar um provedor ou o login por senha.",
     "passwordChannel": "Senha",
-    "submit": "Entrar"
+    "submit": "Entrar",
+    "celestiaChannel": "Celestia ID",
+    "ssoChannel": "Login único",
+    "orContinue": "ou continuar com"
   },
   "portal": {
     "title": "Imagens",
