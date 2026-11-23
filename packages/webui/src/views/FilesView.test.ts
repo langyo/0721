@@ -205,6 +205,43 @@ describe("FilesView surface (mount pin)", () => {
     expect(w.find(".file-detail").text()).not.toContain("a-original.webp");
   });
 
+  it("offers every folder EXCEPT the one being moved as a destination", async () => {
+    const target = file("fdA", { kind: "folder", mime: "", name: "alpha", original_name: "alpha" });
+    const other = file("fdB", { kind: "folder", mime: "", name: "beta", original_name: "beta" });
+    listFolderMock.mockResolvedValueOnce({
+      total: 3,
+      offset: 0,
+      limit: 30,
+      items: [target, other, file("a")],
+      crumbs: [],
+    });
+    const { wrapper: w } = mountWithRouter(FilesView);
+    wrapper = w;
+    await flushPromises();
+
+    // The folder's OWN move action — clicking its tile body would navigate
+    // into it instead.
+    const moveBtn = w.findAll(".file-tile")[0]!.findAll(".t-action").find(
+      (b) => b.attributes("title") === i18n.global.t("common.files.move"),
+    );
+    expect(moveBtn).toBeTruthy();
+    await moveBtn!.trigger("click");
+    await flushPromises();
+
+    const trigger = document.querySelector<HTMLButtonElement>(".hk-select-trigger");
+    expect(trigger).toBeTruthy();
+    trigger!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    const optionTexts = Array.from(
+      document.querySelectorAll<HTMLElement>("[role='option'], .hk-select-option"),
+    ).map((n) => n.textContent?.trim());
+    // The moving folder is not its own destination (the server rejects a
+    // folder moved into its own subtree); its sibling still is.
+    expect(optionTexts).not.toContain("alpha");
+    expect(optionTexts).toContain("beta");
+  });
+
   it("drops the pane when a reload no longer carries the row", async () => {
     listFolderMock.mockResolvedValueOnce({ total: 1, offset: 0, limit: 30, items: [file("a")], crumbs: [] });
     const { wrapper: w } = mountWithRouter(FilesView);
@@ -291,6 +328,7 @@ describe("FilesView surface (mount pin)", () => {
     const option = Array.from(document.querySelectorAll<HTMLElement>("[role='option'], .hk-select-option")).find(
       (n) => n.textContent?.trim() === "docs",
     );
+
     expect(option, `options: ${document.body.textContent?.slice(0, 120)}`).toBeTruthy();
     option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushPromises();
@@ -315,6 +353,7 @@ describe("FilesView surface (mount pin)", () => {
 });
 
 describe("PortalView pane guards", () => {
+
   it("drops the pane when a reload no longer carries the row", async () => {
     listFilesMock.mockResolvedValueOnce({ total: 1, offset: 0, limit: 30, items: [file("a")] });
     const { wrapper: w } = mountWithRouter(PortalView);

@@ -172,7 +172,7 @@ describe("ProvidersView (family table roster)", () => {
     inputs[2]!.dispatchEvent(new Event("input", { bubbles: true }));
     await flushPromises();
     const save = Array.from(document.querySelectorAll<HTMLButtonElement>("button.hk-btn-primary"))
-      .find((b) => b.textContent?.trim().length);
+      .find((b) => b.textContent?.trim() === i18n.global.t("common.actions.save"));
     expect(save).toBeTruthy();
     save!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushPromises();
@@ -181,6 +181,22 @@ describe("ProvidersView (family table roster)", () => {
     // and the old conditional shape passed anyway.
     expect(upsertProviderMock).toHaveBeenCalledTimes(1);
     expect(upsertProviderMock.mock.calls[0]![0]).toMatchObject({ type: "oidc" });
+  });
+
+  it("keeps the kind picker a NAMED radiogroup (a11y contract)", async () => {
+    listProvidersMock.mockResolvedValue([provider()]);
+    wrapper = mountView();
+    await flushPromises();
+    const create = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => (b.getAttribute("aria-label") ?? "").length > 0 && b.className.includes("hk-icon-button"),
+    );
+    expect(create).toBeTruthy();
+    create!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    const group = document.querySelector<HTMLElement>('[role="radiogroup"]');
+    expect(group, "the kind picker must be a radiogroup").toBeTruthy();
+    expect(group!.getAttribute("aria-label")).toBe(i18n.global.t("common.providers.type"));
+    expect(group!.querySelectorAll('input[type="radio"]').length).toBe(4);
   });
 
   it("wires the enable switch to the toggle call", async () => {
