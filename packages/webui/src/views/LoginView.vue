@@ -53,6 +53,20 @@ const channel = ref("");
 const loading = ref(false);
 const error = ref<string | null>(null);
 
+/** Segment labels are the PANEL's own copy — hikari's locked copy rule
+ * ("segment labels are ALWAYS the panel's own locale keys, never a
+ * server-provided provider name": a leaked provider label read as "log
+ * in to ERP" instead of "log in with your organization"). The key below
+ * is the closed provider-TYPE enum, so this table is our code, not
+ * remote data; the server's `display_name` stays where it belongs — on
+ * the channel's row (`buttonLabel`). */
+const PROVIDER_CHANNEL_LABEL: Record<string, string> = {
+  "builtin:erp": "Celestia ID",
+  "builtin:github": "GitHub",
+  "builtin:feishu": "Feishu",
+  oidc: "OIDC",
+};
+
 /** Provider marks are loose-typed by the family (a brand SVG or <img>);
  * 0721 ships no brand assets, so every SSO row rides the same neutral
  * key mark and the LABEL names the destination. */
@@ -91,7 +105,9 @@ const channels = computed<HkLoginChannel[]>(() => {
     list.push({
       key: provider.id,
       mode: "sso" as const,
-      label: provider.display_name,
+      // Panel-owned tab text; the provider's own name rides the row.
+      label:
+        PROVIDER_CHANNEL_LABEL[provider.type] ?? t("common.auth.ssoChannel"),
       title: t("common.auth.title"),
       subtitle: t("common.auth.subtitle"),
       icon: providerIcon(),

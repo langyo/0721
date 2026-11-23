@@ -255,6 +255,36 @@ describe("LoginView dual-mode (family login panel)", () => {
     expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
   });
 
+  it("labels the segments with the PANEL's copy, never the server's provider name", async () => {
+    // hikari's locked copy rule: a server-provided provider name in the
+    // segment read as "log in to ERP" instead of "log in with your
+    // organization". The tab comes from our closed TYPE table; the
+    // provider's own name rides the channel's row.
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [
+        // A deliberately hostile display_name: if it reaches a tab, the
+        // assertion below names it.
+        { id: "erp", display_name: "Acme Corp Internal", type: "builtin:erp", icon: null },
+      ],
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const tabs = wrapper.findAll(".hk-tabs-trigger");
+    expect(tabs.length).toBe(2);
+    const labels = tabs.map((tab) => tab.text().trim());
+    expect(labels).toEqual(["Password", "Celestia ID"]);
+    expect(labels.join(" ")).not.toContain("Acme Corp Internal");
+
+    // The row inside the sso card is where the provider name belongs.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      mode: string;
+      buttonLabel?: string;
+    }>;
+    expect(channels[1]).toMatchObject({ mode: "sso", buttonLabel: "Acme Corp Internal" });
+  });
+
   it("grows the segment group only once a second channel exists", async () => {
     // One lane alone stays a segment-less card (hikari's rule: a lone
     // dead segment reads as a broken switch); the account lane plus a
