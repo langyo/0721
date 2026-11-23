@@ -149,7 +149,9 @@ describe("UsersView (family table roster)", () => {
 
   it("keeps the rows on a failed refresh and shows the stale banner", async () => {
     // The scaffold's `error` prop replaces the whole body; `staleError`
-    // is the banner for exactly this case — a failed reload must never
+    // is the banner for exactly this case (MUT:stale-error-branch —
+    // binding the hard error unconditionally reddens this case with the
+    // rows gone) — a failed reload must never
     // hide data the user already had.
     listUsersMock.mockResolvedValueOnce({
       items: [user("me", "me", "admin"), user("u2", "alice", "member")],

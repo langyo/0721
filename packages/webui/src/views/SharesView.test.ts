@@ -19,6 +19,7 @@ import type { ShareDto } from "@/types";
  * The share roster's failure lanes: a revoke that fails must SAY so
  * (the row stays — the user can retry or investigate), and the success
  * note must never survive into a later failed attempt claiming a revoke
+ * (MUT:revoke-note-reset — deleting the reset reddens this file's case)
  * that did not happen.
  */
 
@@ -85,6 +86,8 @@ describe("SharesView (family table roster)", () => {
     await revoke.trigger("click");
     await flushPromises();
     // The row survives and the failure is announced — a silent catch
+    // (MUT:revoke-failure-lane — re-silencing the catch reddens it).
+    // — a silent catch
     // leaves a live share on screen with no explanation.
     expect(wrapper.findAll("tbody tr").length).toBe(1);
     expect(wrapper.text()).toContain("share_delete denied");

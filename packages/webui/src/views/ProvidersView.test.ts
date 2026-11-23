@@ -74,6 +74,8 @@ describe("ProvidersView (family table roster)", () => {
     const head = wrapper.find("thead").text();
     expect(head).toContain(i18n.global.t("common.providers.displayName"));
     // The page title is the page header, never a column label.
+    // MUT:provider-column-label — retitling the column with the page
+    // title reddens the assertion above.
     expect(head).not.toContain(i18n.global.t("common.providers.title"));
   });
 
@@ -87,6 +89,8 @@ describe("ProvidersView (family table roster)", () => {
     // Row-scoped on purpose: whole-document contains would pass with the
     // mask/value mapping inverted (both strings present somewhere), and
     // a secret's tail must never appear on the row that has no secret.
+    // MUT:mask-inversion — flipping the badge condition reddens this
+    // test with the tail expected on the wrong row.
     const rows = wrapper.findAll("tbody tr");
     expect(rows[0]!.text()).toContain("••••1234");
     expect(rows[0]!.text()).not.toContain(i18n.global.t("common.providers.noSecret"));
