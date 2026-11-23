@@ -77,8 +77,8 @@ function openExternal(url: string): void {
         <HkIconButton
           :size="28"
           variant="ghost"
-          :aria-label="t('common.files.download')"
-          :title="t('common.files.download')"
+          :aria-label="t('common.portal.openOriginal')"
+          :title="t('common.portal.openOriginal')"
           @click="openExternal(selected.url)"
         >
           <template #icon><ExternalLink :size="16" /></template>

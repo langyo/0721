@@ -9,6 +9,7 @@ import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { FileDto } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
+import FileDetailView from "@/components/FileDetailView.vue";
 
 /**
  * The timeline face: newest-first grid of everything on the instance,
@@ -60,6 +61,10 @@ async function load(reset: boolean) {
     const offset = reset ? 0 : files.value.length;
     const page = await api.listFiles(offset, PAGE_SIZE);
     files.value = reset ? page.items : [...files.value, ...page.items];
+    // A reload can remove the row the pane is showing (deleted elsewhere).
+    if (reset && selected.value && !files.value.some((f) => f.id === selected.value?.id)) {
+      selected.value = null;
+    }
     total.value = page.total;
   } catch (err) {
     loadError.value = errorText(err);
@@ -178,10 +183,14 @@ function iconFor(file: FileDto) {
   }
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
+/** See FilesView's twin: the wire type is a bigint, a JSON-decoded value
+ * is a number, and mixing them in arithmetic throws. */
+function formatSize(bytes: bigint | number): string {
+  const n = typeof bytes === "bigint" ? Number(bytes) : bytes;
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1024) return `${n} B`;
   const units = ["KiB", "MiB", "GiB"];
-  let value = bytes;
+  let value = n;
   let unit = -1;
   do {
     value /= 1024;

@@ -27,6 +27,7 @@ import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { FileDto } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
+import FileDetailView from "@/components/FileDetailView.vue";
 
 const { t } = useI18n();
 
@@ -164,10 +165,16 @@ const renameBusy = ref(false);
 async function doRename() {
   if (!renameTarget.value || !renameName.value.trim()) return;
   renameBusy.value = true;
+  const renamedId = renameTarget.value.id;
   try {
-    await files.renameFile(renameTarget.value.id, renameName.value.trim());
+    await files.renameFile(renamedId, renameName.value.trim());
     renameTarget.value = null;
-    void load();
+    await load();
+    // The pane holds an OBJECT, not an id: a reload replaces the array,
+    // so re-point it or the detail keeps showing the pre-rename row.
+    if (selected.value?.id === renamedId) {
+      selected.value = items.value.find((f) => f.id === renamedId) ?? null;
+    }
   } catch (e) {
     error.value = errorText(e);
   } finally {
@@ -184,7 +191,9 @@ async function doMove() {
   if (!moveTarget.value || moveBusy.value) return;
   moveBusy.value = true;
   try {
-    await files.moveFile(moveTarget.value.id, moveParent.value || null);
+    const movedId = moveTarget.value.id;
+    if (selected.value?.id === movedId) selected.value = null;
+    await files.moveFile(movedId, moveParent.value || null);
     moveTarget.value = null;
     void load();
   } catch (e) {
@@ -261,10 +270,15 @@ async function doDelete() {
   }
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
+/** The wire type is a bigint (ts-rs); a JSON-decoded value arrives as a
+ * number. Both must format without throwing (`Cannot mix BigInt and
+ * other types` is a real crash, surfaced by the surface mount test). */
+function formatSize(bytes: bigint | number): string {
+  const n = typeof bytes === "bigint" ? Number(bytes) : bytes;
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1024) return `${n} B`;
   const units = ["KiB", "MiB", "GiB"];
-  let v = bytes;
+  let v = n;
   let u = -1;
   do { v /= 1024; u++; } while (v >= 1024 && u < units.length - 1);
   return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[u]}`;
