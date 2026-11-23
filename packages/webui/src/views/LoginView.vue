@@ -60,10 +60,12 @@ const error = ref<string | null>(null);
  * is the closed provider-TYPE enum, so this table is our code, not
  * remote data; the server's `display_name` stays where it belongs — on
  * the channel's row (`buttonLabel`). */
-/** The one provider that IS a peer channel, not a row: the family's
- * central sign-in (auth.cw's "组织登录" counterpart). Everything else is
- * an alternative under the account card, which is where hikari puts
- * provider names — rows, never segments. */
+/** The provider type that rides its own segment, not a row: the family's
+ * central sign-in (auth.cw's "组织登录" counterpart). It only qualifies
+ * when the descriptor holds EXACTLY one of it — two of them have no
+ * principled winner, so both fall back to the ordinary lanes. Everything
+ * else is an alternative under the account card, which is where hikari
+ * puts provider names — rows, never segments. */
 const PEER_PROVIDER_TYPE = "builtin:erp";
 
 /** Provider marks are loose-typed by the family (a brand SVG or <img>);
