@@ -2,6 +2,7 @@
 import {
   HkEmptyState,
   HkLoginFlow,
+  HkStatusBar,
   type HkAuthChannelListEntry,
   type HkLoginChannel,
 } from "@celestia-island/hikari";
@@ -12,7 +13,7 @@ import { useRoute, useRouter } from "vue-router";
 
 import * as api from "@/api";
 import { ApiError } from "@/api/client";
-import ConnectionStatusTag from "@/components/ConnectionStatusTag.vue";
+import { useEngineHealth } from "@/composables/useEngineHealth";
 import { useAuthStore } from "@/stores/auth";
 import type { LoginMethods } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
@@ -46,6 +47,8 @@ const route = useRoute();
 const auth = useAuthStore();
 
 const methods = ref<LoginMethods | null>(null);
+const { health } = useEngineHealth();
+const appVersion: string = __APP_VERSION__;
 const channel = ref("");
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -160,6 +163,7 @@ function onMethodSelect(_channel: string, providerId: string): void {
 
 <template>
   <div class="login-face">
+    <div class="login-stage">
     <div class="login-panel">
       <HkLoginFlow
         v-if="hasChannels"
@@ -187,11 +191,18 @@ function onMethodSelect(_channel: string, providerId: string): void {
 
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
     </div>
-    <!-- Sessionless surface: the health probe + the idle (gray) light —
-         a WS probe here would hang red forever (no token yet). -->
-    <div class="login-status">
-      <ConnectionStatusTag source="health" idle />
     </div>
+
+    <!-- The family footer strip: panel + engine identity and the health
+         light. Sessionless, so the connection state stays idle (a WS
+         probe here would hang red forever — no token yet). -->
+    <footer class="login-footer">
+      <HkStatusBar
+        :version="appVersion"
+        :engine-version="health?.engineVersion ?? null"
+        connection-status="idle"
+      />
+    </footer>
   </div>
 </template>
 
@@ -199,15 +210,18 @@ function onMethodSelect(_channel: string, providerId: string): void {
 .login-face {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
+  // The family face surface (auth.cw's plain backdrop) — hikari's theme
+  // variable, so light/dark follows the shell.
+  background: rgb(var(--color-surface));
+}
+
+.login-stage {
+  flex: 1;
+  display: flex;
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background:
-    linear-gradient(
-      color-mix(in srgb, rgb(0 0 0 / 35%), transparent),
-      color-mix(in srgb, rgb(0 0 0 / 35%), transparent)
-    ),
-    url("/bg.webp") center / cover no-repeat fixed;
 }
 
 .login-panel {
@@ -224,10 +238,9 @@ function onMethodSelect(_channel: string, providerId: string): void {
   text-align: center;
 }
 
-.login-status {
-  position: fixed;
-  inset-inline-start: 0.75rem;
-  inset-block-end: 0.75rem;
-  z-index: 20;
+.login-footer {
+  display: flex;
+  align-items: center;
+  padding: 0.375rem 0.75rem;
 }
 </style>
