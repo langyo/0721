@@ -52,6 +52,11 @@ async function load() {
   error.value = null;
   try {
     items.value = (await files.listFolder(folderId.value)).items;
+    // The pane holds an OBJECT: a reload that drops its row (deleted
+    // elsewhere, moved by another tab) must not keep rendering it.
+    if (selected.value && !items.value.some((f) => f.id === selected.value?.id)) {
+      selected.value = null;
+    }
     const q = await files.quotaGet();
     quotaUsed.value = Number(q.used_bytes);
     quotaLimit.value = q.quota_bytes != null ? Number(q.quota_bytes) : null;
@@ -63,7 +68,11 @@ async function load() {
 }
 
 onMounted(() => void load());
-watch(folderId, () => void load());
+watch(folderId, () => {
+  // A new folder is a new roster; the pane must not keep the parent's row.
+  selected.value = null;
+  void load();
+});
 usePageRefresh(() => load(), { loading });
 
 // Breadcrumb: root → … → current, via files.chain (deep-linkable).

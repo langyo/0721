@@ -67,9 +67,13 @@ function harness(View: typeof FilesView | typeof PortalView) {
   return {
     components: { View },
     setup() {
-      provideActionBar();
+      const bar = provideActionBar();
+      return { bar };
     },
-    template: "<div><View /></div>",
+    template:
+      '<div><div class="harness-actions">' +
+      '<component :is="() => bar.actions.value.flatMap((r) => r())" />' +
+      "</div><View /></div>",
   };
 }
 
@@ -113,9 +117,18 @@ describe("FilesView surface (mount pin)", () => {
     // these two assertions are what notice.
     expect(w.find(".file-grid").exists()).toBe(true);
     // The pane's own root: a missing component leaves nothing here.
-    expect(w.find(".hk-master-detail").exists()).toBe(true);
     expect(w.findAll(".file-tile").length).toBe(2);
-    expect(w.find(".hk-master-detail").exists()).toBe(true);
+    // The roster's own formatter must handle the bigint wire value; the
+    // degraded shape is "—", so a numeric size proves the coercion ran on
+    // THIS surface (the pane has a formatter of its own).
+    const tileSize = w.find(".tile-size");
+    expect(tileSize.exists()).toBe(true);
+    expect(tileSize.text()).toMatch(/[0-9.]+\s?(B|KB|KiB|MB|MiB)/);
+    // The detail slot must RESOLVE, not merely exist: open the pane and
+    // demand the component's own root (a closed pane never mounts it).
+    await w.findAll(".tile-body")[1]!.trigger("click");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(true);
   });
 
   it("navigates for a folder and selects for a file", async () => {
@@ -149,6 +162,10 @@ describe("FilesView surface (mount pin)", () => {
     await w.findAll(".tile-body")[0]!.trigger("click");
     await flushPromises();
     expect(w.find(".file-detail").text()).toContain("a-original.webp");
+    // The wire type is a bigint; a truthfully-typed fixture must format
+    // (the degraded shape is "—", so a numeric size here proves the
+    // coercion ran).
+    expect(w.find(".file-detail").text()).toMatch(/[0-9.]+\s?(B|KB|KiB|MB|MiB|GB|GiB)/);
 
     // Rename through the tile's own dialog: the roster reload carries the
     // new name for the same id, and the pane must show THAT object.
@@ -180,6 +197,41 @@ describe("FilesView surface (mount pin)", () => {
     expect(renameFileMock).toHaveBeenCalled();
     expect(w.find(".file-detail").text()).toContain("a-RENAMED.webp");
     expect(w.find(".file-detail").text()).not.toContain("a-original.webp");
+  });
+
+  it("drops the pane when a reload no longer carries the row", async () => {
+    listFolderMock.mockResolvedValueOnce({ total: 1, offset: 0, limit: 30, items: [file("a")], crumbs: [] });
+    const { wrapper: w } = mountWithRouter(FilesView);
+    wrapper = w;
+    await flushPromises();
+    await w.findAll(".tile-body")[0]!.trigger("click");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(true);
+
+    // The row vanished server-side; the next roster no longer holds it.
+    listFolderMock.mockResolvedValue({ total: 1, offset: 0, limit: 30, items: [file("b")], crumbs: [] });
+    // Drive the header's own refresh action (registered by usePageRefresh)
+    // rather than reaching into setup state the harness doesn't expose.
+    const refresh = w.find('.harness-actions button[aria-label="' + i18n.global.t("common.actions.refresh") + '"]');
+    expect(refresh.exists(), "the harness must render the refresh action").toBe(true);
+    await refresh.trigger("click");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(false);
+  });
+
+  it("clears the pane when navigating into another folder", async () => {
+    listFolderMock.mockResolvedValueOnce({ total: 2, offset: 0, limit: 30, items: [folder, file("a")], crumbs: [] });
+    const { wrapper: w, router } = mountWithRouter(FilesView);
+    wrapper = w;
+    await flushPromises();
+    await w.findAll(".tile-body")[1]!.trigger("click");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(true);
+
+    listFolderMock.mockResolvedValue({ total: 0, offset: 0, limit: 30, items: [], crumbs: [] });
+    await router.push("/files/f1");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(false);
   });
 
   it("clears the pane when the selected row moves out of this folder", async () => {
@@ -236,6 +288,9 @@ describe("PortalView surface (mount pin)", () => {
     await flushPromises();
     expect(w.findAll(".portal-tile").length).toBe(2);
     expect(w.find(".hk-master-detail").exists()).toBe(true);
+    await w.findAll(".tile-media")[0]!.trigger("click");
+    await flushPromises();
+    expect(w.find(".file-detail").exists()).toBe(true);
   });
 
   it("opens the pane on a tile click", async () => {
@@ -247,5 +302,9 @@ describe("PortalView surface (mount pin)", () => {
     await flushPromises();
     expect(w.find(".file-detail").exists()).toBe(true);
     expect(w.find(".file-detail").text()).toContain("a-original.webp");
+    // The wire type is a bigint; a truthfully-typed fixture must format
+    // (the degraded shape is "—", so a numeric size here proves the
+    // coercion ran).
+    expect(w.find(".file-detail").text()).toMatch(/[0-9.]+\s?(B|KB|KiB|MB|MiB|GB|GiB)/);
   });
 });
