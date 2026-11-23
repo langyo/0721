@@ -302,7 +302,10 @@ describe("FilesView surface (mount pin)", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(moveFileMock).toHaveBeenCalled();
+    // The destination is the pivot of this wave (native select → family
+    // panel): a view that never writes the picked value back would move
+    // the file to the ROOT instead of the chosen folder.
+    expect(moveFileMock).toHaveBeenCalledWith("a", "f1");
     // The pane is gone (its root unmounts with the selection).
     expect(w.find(".file-detail").exists()).toBe(false);
     release({ total: 1, offset: 0, limit: 30, items: [folder], crumbs: [] });

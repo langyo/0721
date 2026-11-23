@@ -505,4 +505,11 @@ bar.setActions(() => {
 .share-result { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-radius: 0.5rem; background: color-mix(in srgb, currentColor 6%, transparent);
   code { font-size: 0.75rem; word-break: break-all; flex: 1; } }
 .warn-text { color: rgb(217 138 43); font-size: 0.85rem; margin: 0 0 0.5rem; }
+.native-input {
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  background: transparent;
+  color: inherit;
+}
 </style>

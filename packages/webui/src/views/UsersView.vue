@@ -259,7 +259,9 @@ const columns = computed<HTableColumn[]>(() => [
         </label>
         <div class="field">
           <span>{{ t("common.users.role") }}</span>
-          <HkRadio v-model="form.role" :options="roleOptions" size="sm" />
+          <div role="radiogroup" :aria-label="t('common.users.role')">
+            <HkRadio v-model="form.role" :options="roleOptions" size="sm" />
+          </div>
         </div>
         <p v-if="createError" class="dialog-error" role="alert">{{ createError }}</p>
       </form>

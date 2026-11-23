@@ -19,7 +19,6 @@ import { makeErrorText } from "@/composables/errorText";
 
 const { t } = useI18n();
 
-
 const rows = ref<OAuthProviderPublic[]>([]);
 const loading = ref(false);
 const loadError = ref<string | null>(null);
@@ -309,7 +308,9 @@ const columns = computed<HTableColumn[]>(() => [
         </label>
         <div class="field">
           <span>{{ t("common.providers.type") }}</span>
-          <HkRadio v-model="form.provider_type" :options="providerTypeOptions" size="sm" />
+          <div role="radiogroup" :aria-label="t('common.providers.type')">
+            <HkRadio v-model="form.provider_type" :options="providerTypeOptions" size="sm" />
+          </div>
         </div>
         <label class="field">
           <span>{{ t("common.providers.clientId") }}</span>

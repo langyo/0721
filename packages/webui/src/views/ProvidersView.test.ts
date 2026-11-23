@@ -177,9 +177,10 @@ describe("ProvidersView (family table roster)", () => {
     save!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushPromises();
     await flushPromises();
-    if (upsertProviderMock.mock.calls.length > 0) {
-      expect(upsertProviderMock.mock.calls[0]![0]).toMatchObject({ type: "oidc" });
-    }
+    // Unconditional: a save() that returned early would leave zero calls
+    // and the old conditional shape passed anyway.
+    expect(upsertProviderMock).toHaveBeenCalledTimes(1);
+    expect(upsertProviderMock.mock.calls[0]![0]).toMatchObject({ type: "oidc" });
   });
 
   it("wires the enable switch to the toggle call", async () => {
