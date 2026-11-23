@@ -23,9 +23,8 @@ vi.mock("@/api/client", () => ({
   onUnauthorized: vi.fn(),
 }));
 
-import { HkLoginFlow } from "@celestia-island/hikari";
 
-import { HkStatusBar } from "@celestia-island/hikari";
+import { HkLoginFlow, HkStatusBar } from "@celestia-island/hikari";
 
 import LoginView from "./LoginView.vue";
 import { ApiError } from "@/api/client";
@@ -145,6 +144,10 @@ describe("LoginView status strip (family footer)", () => {
     expect(bar.props("engineVersion")).toBe("sentinel-engine-9.9.9");
     expect(bar.props("version")).toBe(__APP_VERSION__);
     expect(bar.props("connectionStatus")).toBe("idle");
+    // The strip is this face's own footer: standalone must stay OFF, or
+    // the bar renders its own fixed <footer> and nests inside ours.
+    expect(bar.props("standalone")).toBe(false);
+    expect(document.querySelectorAll("footer.s-status-bar").length).toBe(0);
     vi.unstubAllGlobals();
   });
 });
