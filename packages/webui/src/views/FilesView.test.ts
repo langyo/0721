@@ -282,11 +282,17 @@ describe("FilesView surface (mount pin)", () => {
     await moveBtn!.trigger("click");
     await flushPromises();
 
-    // The move dialog picks its target from a select of folders.
-    const select = document.querySelector<HTMLSelectElement>("select");
-    expect(select).toBeTruthy();
-    select!.value = "f1";
-    select!.dispatchEvent(new Event("change", { bubbles: true }));
+    // The move dialog picks its target through the family select: open
+    // the trigger, then pick the folder's row in the panel.
+    const trigger = document.querySelector<HTMLButtonElement>(".hk-select-trigger");
+    expect(trigger).toBeTruthy();
+    trigger!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    const option = Array.from(document.querySelectorAll<HTMLElement>("[role='option'], .hk-select-option")).find(
+      (n) => n.textContent?.trim() === "docs",
+    );
+    expect(option, `options: ${document.body.textContent?.slice(0, 120)}`).toBeTruthy();
+    option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushPromises();
     const submit = Array.from(document.querySelectorAll("button")).find(
       (b) => b.textContent?.trim() === i18n.global.t("common.actions.confirm"),

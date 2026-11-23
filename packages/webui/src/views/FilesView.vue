@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkInput, HkMasterDetail, HkSwitch, useChromeActionSize } from "@celestia-island/hikari";
+import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkInput, HkMasterDetail, HkSelect, HkSwitch, useChromeActionSize } from "@celestia-island/hikari";
 import {
   Copy,
   FileArchive,
@@ -260,6 +260,15 @@ async function doShare() {
 }
 
 // ── delete ──
+/** Move targets: the folder roster minus the row being moved (a folder
+ * cannot move into itself), with the root first. */
+const moveTargetOptions = computed(() => [
+  { value: "", label: t("common.files.breadcrumbRoot") },
+  ...items.value
+    .filter((f) => f.kind === "folder" && f.id !== moveTarget.value?.id)
+    .map((f) => ({ value: f.id, label: f.name })),
+]);
+
 const deleteTarget = ref<FileDto | null>(null);
 const deleteBusy = ref(false);
 
@@ -406,12 +415,11 @@ bar.setActions(() => {
       <div class="dialog-body">
         <label class="field-label">
           <span>{{ t("common.files.moveTarget") }}</span>
-          <select v-model="moveParent" class="native-select">
-            <option value="">{{ t("common.files.breadcrumbRoot") }}</option>
-            <option v-for="f in items.filter((i) => i.kind === 'folder' && i.id !== moveTarget?.id)" :key="f.id" :value="f.id">
-              {{ f.name }}
-            </option>
-          </select>
+          <HkSelect
+            v-model="moveParent"
+            :options="moveTargetOptions"
+            :panel-title="t('common.files.moveTarget')"
+          />
         </label>
         <HkButton variant="primary" :disabled="moveBusy" @click="doMove">
           {{ t("common.actions.confirm") }}
@@ -494,7 +502,6 @@ bar.setActions(() => {
 .dialog-body { display: flex; flex-direction: column; gap: 0.75rem; }
 .field-label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; }
-.native-select, .native-input { padding: 0.45rem 0.6rem; border-radius: 0.5rem; border: 1px solid color-mix(in srgb, currentColor 22%, transparent); background: transparent; color: inherit; }
 .share-result { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-radius: 0.5rem; background: color-mix(in srgb, currentColor 6%, transparent);
   code { font-size: 0.75rem; word-break: break-all; flex: 1; } }
 .warn-text { color: rgb(217 138 43); font-size: 0.85rem; margin: 0 0 0.5rem; }

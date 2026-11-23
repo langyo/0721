@@ -1,13 +1,5 @@
 <script setup lang="ts">
-import {
-  HkAdaptiveDialog,
-  HkAdminTablePage,
-  HkBadge,
-  HkIconButton,
-  HkInput,
-  HkSwitch,
-  type HTableColumn,
-} from "@celestia-island/hikari";
+import { HkAdaptiveDialog, HkAdminTablePage, HkBadge, HkIconButton, HkInput, HkRadio, HkSwitch, type HTableColumn } from "@celestia-island/hikari";
 import { Pencil, Plus, Trash2, Unplug } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -27,6 +19,7 @@ import { makeErrorText } from "@/composables/errorText";
 
 const { t } = useI18n();
 
+
 const rows = ref<OAuthProviderPublic[]>([]);
 const loading = ref(false);
 const loadError = ref<string | null>(null);
@@ -35,6 +28,12 @@ const loadError = ref<string | null>(null);
 const toggleError = ref<string | null>(null);
 
 const PROVIDER_TYPES = ["builtin:github", "builtin:feishu", "builtin:erp", "oidc"] as const;
+
+/** The family radio takes {value,label}; the provider kinds are already
+ * plain tokens, so each label is its own code. */
+const providerTypeOptions = computed(() =>
+  PROVIDER_TYPES.map((kind) => ({ value: kind, label: kind })),
+);
 
 // The never-empty failure text (shared factory; the contract and
 // its pins live in composables/errorText).
@@ -310,20 +309,7 @@ const columns = computed<HTableColumn[]>(() => [
         </label>
         <div class="field">
           <span>{{ t("common.providers.type") }}</span>
-          <div class="type-picker" role="radiogroup">
-            <button
-              v-for="kind in PROVIDER_TYPES"
-              :key="kind"
-              type="button"
-              role="radio"
-              :aria-checked="form.provider_type === kind"
-              class="type-option"
-              :class="{ active: form.provider_type === kind }"
-              @click="form.provider_type = kind"
-            >
-              {{ kind }}
-            </button>
-          </div>
+          <HkRadio v-model="form.provider_type" :options="providerTypeOptions" size="sm" />
         </div>
         <label class="field">
           <span>{{ t("common.providers.clientId") }}</span>
@@ -403,27 +389,6 @@ const columns = computed<HTableColumn[]>(() => [
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-}
-
-.type-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.type-option {
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  background: transparent;
-  color: inherit;
-  padding: 0.3rem 0.7rem;
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: 0.75rem;
-
-  &.active {
-    background: color-mix(in srgb, rgb(13 148 136) 20%, transparent);
-    border-color: rgb(13 148 136);
-  }
 }
 
 .dialog-error,

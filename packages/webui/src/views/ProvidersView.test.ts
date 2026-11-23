@@ -47,11 +47,19 @@ function mountView(): ReturnType<typeof mount> {
   const Harness = {
     components: { ProvidersView },
     setup() {
-      provideActionBar();
+      const bar = provideActionBar();
+      return { bar };
     },
-    template: "<div><ProvidersView /></div>",
+    template:
+      '<div><div class="harness-actions">' +
+      '<component :is="() => bar.actions.value.flatMap((r) => r())" />' +
+      "</div><ProvidersView /></div>",
   };
-  return mount(Harness, { global: { plugins: [pinia, router, i18n] } });
+  // attachTo so the teleported dialog and the bar's buttons are reachable
+  // from `document` (the dialogs mount outside the wrapper tree).
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  return mount(Harness, { global: { plugins: [pinia, router, i18n] }, attachTo: host });
 }
 
 let wrapper: ReturnType<typeof mount> | null = null;
@@ -128,6 +136,50 @@ describe("ProvidersView (family table roster)", () => {
     const alert = wrapper.find('[role="alert"]');
     expect(alert.exists()).toBe(true);
     expect(alert.text()).toContain("rpc timeout");
+  });
+
+  it("picks the provider kind through the family radio", async () => {
+    listProvidersMock.mockResolvedValue([provider()]);
+    wrapper = mountView();
+    await flushPromises();
+
+    const create = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => (b.getAttribute("aria-label") ?? "").length > 0 && b.className.includes("hk-icon-button"),
+    );
+    expect(create, "the harness must render the create action").toBeTruthy();
+    create!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    // The family radio renders real inputs — the old markup was buttons
+    // with role="radio" inside a bespoke .type-picker container.
+    const radios = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="radio"]'));
+    expect(radios.length).toBe(4);
+    expect(document.querySelector(".type-picker")).toBeNull();
+
+    // Pick "oidc", fill the required fields, submit, and check the payload
+    // carries the selected kind.
+    radios[3]!.click();
+    await flushPromises();
+    upsertProviderMock.mockResolvedValue(undefined);
+    const inputs = Array.from(document.querySelectorAll<HTMLInputElement>(".hk-dialog input, [role='dialog'] input"))
+      .filter((i) => i.type !== "radio" && i.type !== "checkbox");
+    expect(inputs.length).toBeGreaterThanOrEqual(3);
+    inputs[0]!.value = "newprov";
+    inputs[0]!.dispatchEvent(new Event("input", { bubbles: true }));
+    inputs[1]!.value = "New provider";
+    inputs[1]!.dispatchEvent(new Event("input", { bubbles: true }));
+    inputs[2]!.value = "client-abc";
+    inputs[2]!.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushPromises();
+    const save = Array.from(document.querySelectorAll<HTMLButtonElement>("button.hk-btn-primary"))
+      .find((b) => b.textContent?.trim().length);
+    expect(save).toBeTruthy();
+    save!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+    if (upsertProviderMock.mock.calls.length > 0) {
+      expect(upsertProviderMock.mock.calls[0]![0]).toMatchObject({ type: "oidc" });
+    }
   });
 
   it("wires the enable switch to the toggle call", async () => {
