@@ -18,7 +18,7 @@ import { formatSize } from "@/composables/formatSize";
  * (`usePageCreateAction`) and per-tile copy-link / delete.
  *
  * Picking a tile opens the shared detail pane beside the grid; the pane's
- * own action opens the original in a new tab (the tile anchor's old job).
+ * own action opens the original in a new tab.
  */
 
 const { t } = useI18n();
