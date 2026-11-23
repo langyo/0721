@@ -189,7 +189,7 @@ describe("LoginView dead state (W4 R2)", () => {
 });
 
 describe("LoginView dual-mode (family login panel)", () => {
-  it("renders one full-width row per provider and navigates to its OAuth entry", async () => {
+  it("offers every provider as its own channel and navigates on sso-click", async () => {
     loginMethodsMock.mockResolvedValue({
       password: true,
       providers: [
@@ -198,39 +198,34 @@ describe("LoginView dual-mode (family login panel)", () => {
       ],
     });
     const { wrapper } = await mountView();
-    // The password card is the opening channel; the providers ride the
-    // card's methods list as family rows (name in plain sight).
-    const rows = wrapper.findAll(".hk-auth-channel-row");
-    expect(rows.length).toBe(2);
-    expect(rows[0]!.text()).toContain("Celestia ID");
-    expect(rows[1]!.text()).toContain("GitHub");
-    // The rows sit under a labelled divider ("or continue with") — an
-    // unlabelled list of destinations reads as part of the form.
-    expect(wrapper.text()).toContain("or continue with");
+    await flushPromises();
 
-    // Navigation is a FULL page load (the flow plants an httpOnly state
-    // cookie and 302s) — pin the href, not a router push.
-    const original = window.location.href;
+    // MUT:channel-peers — the account lane and each provider are PEERS in
+    // the segment group, so the group renders once a second choice exists
+    // (hikari hides a lone segment). Demoting them back to form rows
+    // reddens both the channel count and the group assertion.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      key: string;
+      mode: string;
+      label?: string;
+      methods?: unknown[];
+    }>;
+    expect(channels.length).toBe(3);
+    expect(channels[0]).toMatchObject({ key: "password", mode: "credentials" });
+    expect(channels.slice(1).map((c) => c.mode)).toEqual(["sso", "sso"]);
+    // No channel carries the other lane as a form row any more.
+    expect(channels.every((c) => (c.methods ?? []).length === 0)).toBe(true);
+
+    // Navigation is a FULL page load (an httpOnly state cookie is planted
+    // and the server 302s) — pin the destination, not a router push.
     const hrefSetter = vi.fn();
     Object.defineProperty(window, "location", {
-      value: { ...window.location, href: original },
-      writable: false,
+      configurable: true,
+      value: { ...window.location, set href(v: string) { hrefSetter(v); }, get href() { return "http://localhost:3000/"; } },
     });
-    try {
-      Object.defineProperty(window.location, "href", {
-        set: (v: string) => hrefSetter(v),
-        get: () => original,
-        configurable: true,
-      });
-      await rows[0]!.trigger("click");
-      expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
-    } finally {
-      Object.defineProperty(window.location, "href", {
-        value: original,
-        writable: true,
-        configurable: true,
-      });
-    }
+    wrapper.getComponent(HkLoginFlow).vm.$emit("sso-click", "erp");
+    await flushPromises();
+    expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
   });
 
   it("hides the password form and shows the provider row alone when the kill-switch is off", async () => {
@@ -260,19 +255,23 @@ describe("LoginView dual-mode (family login panel)", () => {
     expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
   });
 
-  it("keeps ONE channel when the password lane carries the providers as rows", async () => {
+  it("grows the segment group only once a second channel exists", async () => {
+    // One lane alone stays a segment-less card (hikari's rule: a lone
+    // dead segment reads as a broken switch); the account lane plus a
+    // provider is two peers and therefore a switchable group.
+    loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
+    let ctx = await mountView();
+    await flushPromises();
+    expect(ctx.wrapper.getComponent(HkLoginFlow).props("channels")).toHaveLength(1);
+    ctx.wrapper.unmount();
+
     loginMethodsMock.mockResolvedValue({
       password: true,
       providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
     });
-    const { wrapper } = await mountView();
+    ctx = await mountView();
     await flushPromises();
-    // Providers are alternative ROWS under the form, not channel tabs
-    // (the family copy rule: a provider name in the segment reads as
-    // "log in to ERP" rather than "log in with your organization"), so
-    // the panel stays a single channel with no segment group.
-    expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
-    expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
+    expect(ctx.wrapper.getComponent(HkLoginFlow).props("channels")).toHaveLength(2);
   });
 
   it("declares the credentials channel as a two-field account+password form", async () => {

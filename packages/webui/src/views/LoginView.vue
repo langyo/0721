@@ -73,39 +73,45 @@ const providerRows = computed<HkAuthChannelListEntry[]>(() =>
 );
 
 const channels = computed<HkLoginChannel[]>(() => {
+  const providers = methods.value?.providers ?? [];
+  const list: HkLoginChannel[] = [];
+
+  // Channel one: the account card. Celestia ID is NOT a row beneath it —
+  // the family shape is a segment group over one card per channel (the
+  // caller switches, the body crossfades), so a deployment offering both
+  // renders two peers rather than a form with an alternative buried in
+  // the footer.
   if (methods.value?.password) {
-    // The classic lane: the credential card, with every enabled provider
-    // as an alternative row beneath the form (`method-select`).
-    return [
-      {
-        key: "password",
-        mode: "credentials",
-        label: t("common.auth.passwordChannel"),
-        title: t("common.auth.title"),
-        subtitle: t("common.auth.subtitle"),
-        usernameType: "text",
-        usernameAutocomplete: "username",
-        passwordField: true,
-        submitLabel: t("common.auth.submit"),
-        methods: providerRows.value,
-        methodsDivider: providerRows.value.length > 0 ? t("common.auth.orContinue") : undefined,
-      },
-    ];
+    list.push({
+      key: "password",
+      mode: "credentials",
+      label: t("common.auth.passwordChannel"),
+      title: t("common.auth.title"),
+      subtitle: t("common.auth.subtitle"),
+      usernameType: "text",
+      usernameAutocomplete: "username",
+      passwordField: true,
+      submitLabel: t("common.auth.submit"),
+    });
   }
-  // Password off: each provider's whole sign-in IS one redirect, so it
-  // rides an sso channel. A single provider therefore renders a lone
-  // full-width row with no segment group at all — the Celestia-ID-only
-  // shape. Only a multi-provider deployment grows the segment group, and
-  // there the provider names are the honest labels for the choice.
-  return (methods.value?.providers ?? []).map((provider) => ({
-    key: provider.id,
-    mode: "sso" as const,
-    label: provider.display_name,
-    title: t("common.auth.title"),
-    subtitle: t("common.auth.subtitle"),
-    icon: providerIcon(),
-    buttonLabel: provider.display_name,
-  }));
+
+  // Channel two+: each provider's whole sign-in is one redirect, so every
+  // one of them is its own sso channel (its own segment) — the segment
+  // group appears as soon as a second choice exists, which is exactly
+  // hikari's rule ("a lone dead segment reads as a broken switch").
+  for (const provider of providers) {
+    list.push({
+      key: provider.id,
+      mode: "sso" as const,
+      label: provider.display_name,
+      title: t("common.auth.title"),
+      subtitle: t("common.auth.subtitle"),
+      icon: providerIcon(),
+      buttonLabel: provider.display_name,
+    });
+  }
+
+  return list;
 });
 
 const hasChannels = computed(() => channels.value.length > 0);
