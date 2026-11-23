@@ -431,24 +431,6 @@ function iconFor(file: FileDto) {
   justify-content: center;
 }
 
-.portal-more-btn {
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  background: transparent;
-  color: inherit;
-  padding: 0.45rem 1.4rem;
-  border-radius: 999px;
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    background: color-mix(in srgb, currentColor 8%, transparent);
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-}
-
 .upload-lane {
   position: fixed;
   inset-inline-end: 1rem;

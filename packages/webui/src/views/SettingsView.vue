@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HkButton, HkEmptyState, HkIconButton, HkInput, HkLocalePicker, HkSectionCard, HkSelect, HkSwitch } from "@celestia-island/hikari";
+import { HkButton, HkEmptyState, HkIconButton, HkInput, HkSectionCard, HkSelect, HkSwitch } from "@celestia-island/hikari";
 import { Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -279,7 +279,7 @@ async function save() {
         <div class="field">
           <span>{{ t("common.settings.limitReferrerHost") }}</span>
           <ul class="banner-list">
-            <li v-for="(host, index) in form.limitReferrerHost" :key="index" class="banner-row">
+            <li v-for="(_host, index) in form.limitReferrerHost" :key="index" class="banner-row">
               <HkInput v-model="form.limitReferrerHost[index]!" :name="`referrer-host-${index}`" />
               <HkIconButton
                 :size="24"

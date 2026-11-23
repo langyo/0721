@@ -16,9 +16,9 @@
 - **通信面**：WS JSON-RPC（plana-rpc-server @ `/api/rpc`，一次性 WS ticket + httpOnly cookie）+
   REST 白名单（health / auth bootstrap / refresh / logout / ws-ticket / upload / media / share / MCP SSE+message）+
   MCP（SSE transport + 5 agent 工具 + API key `i0721-<32hex>` 哈希存储 + copy-once）。
-- **数据模型**：users（quota_bytes）/ oauth_identities / files（folder + parent_id + 同层唯一索引 +
-  软删 + 级联回收）/ shares / api_keys / settings 六表。
-- **存储**：`I0721_STORAGE_BACKEND` = local | s3（object_store ^0.12）| ipfs（kubo RPC + MFS）。
+- **数据模型**：users（`quota_bytes`）/ `oauth_identities` / files（folder + `parent_id` + 同层唯一索引 +
+  软删 + 级联回收）/ shares / `api_keys` / settings 六表。
+- **存储**：`I0721_STORAGE_BACKEND` = local | s3（`object_store` ^0.12）| ipfs（kubo RPC + MFS）。
 - **webui**：hikari Vue/TS，**家族范式对齐**（2026-11-23 webui 波次；参照 ayane 的迭代）：
   `HkAdminShell` 四槽壳（header/sidebar/content/footer）+ 分组侧边栏（内容/接入/管理，管理组 admin 专属）
   + `HkAdminHeader` 身份面（头像账户窗/语言级联/登出）+ `HkStatusBar` 页脚（面板版本+引擎身份+传输探针）
@@ -27,7 +27,7 @@
   + `HkAboutBody` 关于页 + `HkToast` 根挂载 + 12 语种 i18n（零未用键）+ ts-rs 单向类型。
   **共享工厂**（勿再逐视图拷贝）：`composables/errorText.ts`（never-empty 失败文案）、
   `composables/formatSize.ts`（二进制单位尺寸）。
-- **会话**：httpOnly cookie（SameSite=Lax + Secure 按请求 X-Forwarded-Proto 判定 + 
+- **会话**：httpOnly cookie（SameSite=Lax + Secure 按请求 X-Forwarded-Proto 判定 +
   `I0721_COOKIE_SECURE=auto|always|never` 钉）；WebSocket 用一次性 ticket；MCP 用 API key。
 
 ## 开发纪律
@@ -54,6 +54,6 @@
 
 ## 遗留（后续波次）
 
-- scopes 执行与 key expires_at；DashMap 替代 Mutex 注册表；Range/流式读取；
+- scopes 执行与 key `expires_at`；DashMap 替代 Mutex 注册表；Range/流式读取；
   per-file 存储放置；MFS 多节点映射入库；text 预览大小帽；上传取消/拖拽。
 - `cred_scan` 测试夹具豁免已登记 `_ledger/tool-exemptions.md`。
