@@ -85,11 +85,13 @@ function walk(dir: string): string[] {
  *    identifier, a digit, `)` or `]` it is division. Regexes honour `\`
  *    escapes and `[...]` classes, and cannot span lines.
  *
- * The failure mode of an imperfect heuristic is bounded: misreading
- * division as a regex can only over-KEEP code (the regex body is copied,
- * not deleted), never over-DELETE it — so a violation can still be hidden
- * by a mis-scanned comment, but a legitimate scan can never be emptied by
- * one.
+ * The failure mode of an imperfect heuristic is asymmetric, and it fails
+ * safe for this rule's purpose: comments are detected FIRST (the `//` and
+ * `/*` checks run before the regex branch), so a real comment always
+ * opens a comment state; the residual risk of the division heuristic is
+ * copying extra text INTO the corpus (e.g. `a++ / 2; // note` reads the
+ * `/` as a regex start and leaks the note), which can only cause a false
+ * positive — it can never hide a violation.
  */
 function stripComments(source: string): string {
   const regexAfter = /[=(,:\[!&|?{};+\-*%<>~^~]/;
