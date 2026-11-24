@@ -398,6 +398,11 @@ fn userinfo_endpoint(provider: &OAuthProvider) -> Option<String> {
         // res.celestia.world report). Both token and userinfo URLs are
         // derived from `base_url` here — the provider row carries no
         // per-endpoint fields.
+        //
+        // MUT:erp-userinfo-prefix — reverting to the bare `/oauth/userinfo`
+        // makes both end-to-end OAuth cases fail against the `/api`-mounted
+        // stub (`routes.rs`, `oauth_end_to_end_against_a_local_stub_provider`
+        // and `oauth_second_login_is_idempotent`).
         "builtin:erp" => Some(format!(
             "{}/api/oauth/userinfo",
             absolute_base(provider.base_url.as_deref()?)?
