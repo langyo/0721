@@ -536,6 +536,15 @@ pub struct Endpoints {
     /// The issuer an identity carries when the provider's own answer names
     /// none.
     pub issuer: Option<String>,
+    /// The key a provider wraps its token answer in, when it answers in its
+    /// own transport envelope instead of the flat RFC 6749 object.
+    ///
+    /// `None` (GitHub, the ERP, `oidc`): the token fields are read at the
+    /// answer's top level. `Some("data")` (feishu v2): the token fields —
+    /// `access_token` among them — live one level down, next to the
+    /// vendor's business result, so the core drills into that key first and
+    /// reads nothing else there.
+    pub token_response_envelope: Option<&'static str>,
 }
 
 /// GitHub's token endpoint (the vendor's documented route).
@@ -559,18 +568,34 @@ fn builtin_endpoints(provider: &OAuthProvider) -> Option<Endpoints> {
             token_body: TokenBody::Form,
             default_scopes: Some(&["read:user"]),
             issuer: Some("https://github.com".to_owned()),
+            // The flat RFC 6749 object: `access_token` at the top level.
+            token_response_envelope: None,
         }),
         "builtin:feishu" => Some(Endpoints {
             authorize: "https://accounts.feishu.cn/open-apis/authen/v1/authorize".to_owned(),
             token: TOKEN_ENDPOINT_FEISHU.to_owned(),
-            // Feishu v2's token answer itself carries the user identity
-            // (`data.open_id` behind the `data` envelope, unwrapped by the
-            // transport adapter). There is no separate UserInfo leg, so the
-            // core reads the profile it already holds.
+            // Feishu v2's token answer is not the flat RFC 6749 object: the
+            // token fields sit one level down, in `data`, next to the
+            // vendor's business result (`{"code": 0, "msg": "ok", "data":
+            // {"access_token": …, "token_type": "Bearer", …}}`). The core
+            // drills into that key — see `token_response_envelope` below.
+            //
+            // Feishu's v2 answer has NO separate UserInfo leg, and the token
+            // answer is NOT itself the profile: `data` carries the token
+            // fields and nothing the core reads as an identity. So this type
+            // owes an identity leg it does not have: the core refuses the
+            // callback with `no identity source: no userinfo endpoint and no
+            // ID token`, after the envelope above has already been read.
+            // Solving that is a change of shape (a host-side identity read),
+            // not a metadata flag — see the feishu cases in `tests/routes.rs`.
             userinfo: None,
             token_body: TokenBody::Form,
             default_scopes: None,
             issuer: Some("https://open.feishu.cn".to_owned()),
+            // MUT:feishu-envelope — without this the answer is read at the
+            // top level, finds no `access_token` there, and every feishu
+            // login dies as an unreadable token answer.
+            token_response_envelope: Some("data"),
         }),
         "builtin:erp" => {
             let base = absolute_base(provider.base_url.as_deref()?)?;
@@ -598,6 +623,8 @@ fn builtin_endpoints(provider: &OAuthProvider) -> Option<Endpoints> {
                 // The ERP is the family's own service: its issuer is the
                 // deployment's own origin, not a third-party hostname.
                 issuer: Some(base.to_owned()),
+                // The flat RFC 6749 object, like every other family provider.
+                token_response_envelope: None,
             })
         }
         _ => None,
@@ -883,6 +910,11 @@ pub async fn resolve_route(
             token_body: TokenBody::Form,
             default_scopes: Some(&["openid", "profile"]),
             issuer: Some(document.issuer.unwrap_or(issuer)),
+            // OIDC's token answer is the standard flat object (RFC 6749):
+            // whatever a discovery document says about its endpoints, it
+            // says nothing about a transport envelope, and the standard
+            // does not have one.
+            token_response_envelope: None,
         }
     } else {
         builtin_endpoints(provider).ok_or_else(|| {
@@ -929,6 +961,7 @@ pub async fn resolve_route(
             userinfo_url: userinfo,
             token_body: endpoints.token_body,
             scopes,
+            token_response_envelope: endpoints.token_response_envelope,
         },
         client,
     })
