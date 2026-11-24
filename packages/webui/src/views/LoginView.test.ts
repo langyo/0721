@@ -26,7 +26,8 @@ vi.mock("@/api/client", () => ({
 
 import { HkLoginFlow, HkStatusBar } from "@celestia-island/hikari";
 
-import LoginView from "./LoginView.vue";
+import LoginView from "./LoginView";
+import { HkToast, useToast } from "@celestia-island/hikari";
 import { ApiError } from "@/api/client";
 import { createAppI18n } from "@/i18n";
 
@@ -65,11 +66,19 @@ async function mountView(query: Record<string, string> = {}) {
     global: { plugins: [i18n, router, createPinia()] },
     attachTo: host,
   });
+  // The family toast outlet renders the toasts this view raises; the
+  // inline error banner is GONE (the user's hard rule), so the assertions
+  // below read the toast surface, not a role=alert paragraph.
+  outlets.push(mount(HkToast, { attachTo: document.body, props: { teleport: false } }));
   // The login-methods descriptor resolves async — the card mounts after.
   await flushPromises();
   await flushPromises();
   return { wrapper, router };
 }
+
+/** Every mounted toast outlet — cleanup owns their lifetime (the view's
+ *  own wrapper is returned to the caller; the outlet is harness state). */
+const outlets: Array<{ unmount: () => void }> = [];
 
 beforeEach(() => {
   loginMock.mockReset();
@@ -79,6 +88,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  outlets.splice(0).forEach((o) => o.unmount());
+  // The toast store is module-level (hikari state) — clear it so the
+  // next case's outlet renders only ITS OWN messages.
+  const toast = useToast();
+  for (const slot of toast.toasts.slice()) toast.remove(slot.id);
   localStorage.clear();
 });
 
@@ -111,10 +125,14 @@ describe("LoginView", () => {
     await flushPromises();
     (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
     await flushPromises();
-    const alert = wrapper.find('[role="alert"]');
-    expect(alert.exists()).toBe(true);
+    const toastText = await vi.waitFor(() => {
+      const el = document.querySelector(".hk-toast-message");
+      expect(el).toBeTruthy();
+      return el!.textContent ?? "";
+    });
     // en baseline wording (the test i18n detects "en").
-    expect(alert.text()).toBe("Invalid username or password");
+    expect(toastText).toBe("Invalid username or password");
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
   it("keeps the raw message for non-401 failures", async () => {
@@ -126,7 +144,10 @@ describe("LoginView", () => {
     await flushPromises();
     (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
     await flushPromises();
-    expect(wrapper.find('[role="alert"]').text()).toBe("network unreachable");
+    await vi.waitFor(() => {
+      expect(document.querySelector(".hk-toast-message")?.textContent).toBe("network unreachable");
+    });
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 });
 
@@ -170,9 +191,13 @@ describe("LoginView dead state (W4 R2)", () => {
     await flushPromises();
     (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
     await flushPromises();
-    const alert = wrapper.find('[role="alert"]');
-    expect(alert.exists()).toBe(true);
-    expect(alert.text()).toBe("Something went wrong");
+    const toastText = await vi.waitFor(() => {
+      const el = document.querySelector(".hk-toast-message");
+      expect(el).toBeTruthy();
+      return el!.textContent ?? "";
+    });
+    expect(toastText).toBe("Something went wrong");
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
   it("carries a bare-string rejection", async () => {
@@ -184,7 +209,10 @@ describe("LoginView dead state (W4 R2)", () => {
     await flushPromises();
     (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
     await flushPromises();
-    expect(wrapper.find('[role="alert"]').text()).toBe("rpc timeout");
+    await vi.waitFor(() => {
+      expect(document.querySelector(".hk-toast-message")?.textContent).toBe("rpc timeout");
+    });
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 });
 
@@ -526,13 +554,19 @@ describe("LoginView password kill-switch (W4 closing)", () => {
     await flushPromises();
     (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
     await flushPromises();
-    const alert = wrapper.find('[role="alert"]');
-    expect(alert.exists()).toBe(true);
+    const toastText = await vi.waitFor(() => {
+      const el = document.querySelector(".hk-toast-message");
+      expect(el).toBeTruthy();
+      return el!.textContent ?? "";
+    });
     // The kill-switch copy, NOT the 401 invalid-credentials copy. The
     // wording names a channel, not a row "below" the card — providers are
     // peers in the segment group now, so the old phrasing pointed at
     // nothing (MUT:disabled-copy — restoring it reddens here).
-    expect(alert.text()).toBe("Password login is disabled — pick another sign-in channel.");
-    expect(alert.text()).not.toContain("Invalid username");
+    expect(toastText).toBe("Password login is disabled — pick another sign-in channel.");
+    // And it is NOT the 401 copy: no second toast carries it.
+    const all = [...document.querySelectorAll(".hk-toast-message")].map((el) => el.textContent ?? "");
+    expect(all.join("\n")).not.toContain("Invalid username");
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 });

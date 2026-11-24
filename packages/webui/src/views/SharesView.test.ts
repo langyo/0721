@@ -10,20 +10,27 @@ vi.mock("@/api/files", () => ({
   shareDelete: (...args: unknown[]) => shareDeleteMock(...args),
 }));
 
-import SharesView from "./SharesView.vue";
+import SharesView from "./SharesView";
+import { HkToast, useToast } from "@celestia-island/hikari";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import type { ShareDto } from "@/types";
 
 /**
- * The share roster's failure lanes: a revoke that fails must SAY so
- * (the row stays — the user can retry or investigate), and the success
- * note must never survive into a later failed attempt claiming a revoke
- * (MUT:revoke-note-reset — deleting the reset reddens this file's case)
- * that did not happen.
+ * The share roster's outcome lanes: a revoke that fails must SAY so
+ * (the row stays — the user can retry or investigate), a revoke that
+ * succeeds must say so too, and neither may leave a note sitting over
+ * the other (MUT:revoke-note-reset — hoisting the success toast out of
+ * its own lane reddens this file's stale-note case).
+ *
+ * Both lanes are TOASTS (the family feedback contract): the page's own
+ * DOM carries no `role="alert"` / `role="status"` paragraph at all.
  */
 
 const i18n = createAppI18n();
+
+/** Every mounted toast outlet — cleanup owns their lifetime. */
+const outlets: Array<{ unmount: () => void }> = [];
 
 function share(token: string): ShareDto {
   return {
@@ -51,7 +58,22 @@ function mountView(): ReturnType<typeof mount> {
     },
     template: "<div><SharesView /></div>",
   };
-  return mount(Harness, { global: { plugins: [pinia, router, i18n] } });
+  const wrapper = mount(Harness, { global: { plugins: [pinia, router, i18n] } });
+  // The family toast outlet renders what this view raises (the app
+  // mounts one at the root; a test mounts its own).
+  outlets.push(mount(HkToast, { attachTo: document.body, props: { teleport: false } }));
+  return wrapper;
+}
+
+/** The toast slot of a type, or undefined — read off the module store
+ *  (the outlet renders it; the store is the assertion surface). */
+function toastOf(type: "error" | "success") {
+  return useToast().toasts.find((slot) => slot.type === type);
+}
+
+/** Every message currently on the toast surface. */
+function toastTexts(): string[] {
+  return [...document.querySelectorAll(".hk-toast-message")].map((el) => el.textContent ?? "");
 }
 
 let wrapper: ReturnType<typeof mount> | null = null;
@@ -64,6 +86,11 @@ beforeEach(() => {
 
 afterEach(() => {
   wrapper?.unmount();
+  outlets.splice(0).forEach((o) => o.unmount());
+  // The toast store is module-level (hikari state) — clear it so the
+  // next case's outlet renders only ITS OWN messages.
+  const toast = useToast();
+  for (const slot of toast.toasts.slice()) toast.remove(slot.id);
 });
 
 describe("SharesView (family table roster)", () => {
@@ -76,7 +103,7 @@ describe("SharesView (family table roster)", () => {
     expect(wrapper.text()).toContain("/s/tok_abcdefgh…");
   });
 
-  it("surfaces a failed revoke and keeps the row", async () => {
+  it("surfaces a failed revoke as a toast and keeps the row", async () => {
     shareListMock.mockResolvedValue([share("tok_abcdefgh1234")]);
     shareDeleteMock.mockRejectedValue(new Error("share_delete denied"));
     wrapper = mountView();
@@ -86,12 +113,16 @@ describe("SharesView (family table roster)", () => {
     await revoke.trigger("click");
     await flushPromises();
     // The row survives and the failure is announced — a silent catch
-    // (MUT:revoke-failure-lane — re-silencing the catch reddens it).
-    // — a silent catch
+    // (MUT:revoke-failure-lane — re-silencing the catch reddens it)
     // leaves a live share on screen with no explanation.
     expect(wrapper.findAll("tbody tr").length).toBe(1);
-    expect(wrapper.text()).toContain("share_delete denied");
-    expect(wrapper.text()).not.toContain(i18n.global.t("common.files.revoked"));
+    await vi.waitFor(() => {
+      expect(document.querySelector(".hk-toast-message")?.textContent).toBe("share_delete denied");
+    });
+    expect(toastOf("success")).toBeUndefined();
+    // The failure is NOT a paragraph beside the roster.
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("share_delete denied");
   });
 
   it("does not let a stale success note claim a revoke that failed", async () => {
@@ -100,17 +131,25 @@ describe("SharesView (family table roster)", () => {
     wrapper = mountView();
     await flushPromises();
     const buttons = wrapper.findAll(`button[aria-label="${i18n.global.t("common.files.revoke")}"]`);
-    // First revoke succeeds: the note appears.
+    // First revoke succeeds: the success toast appears.
     await buttons[0]!.trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain(i18n.global.t("common.files.revoked"));
-    // Second revoke fails: the note must be GONE, not sitting over the
-    // failure.
+    await vi.waitFor(() => {
+      expect(toastTexts()).toContain(i18n.global.t("common.files.revoked"));
+    });
+    // Second revoke fails: the stale success must be GONE, not sitting
+    // over the failure — the success lane is dismissed on a failure (and
+    // the failure itself lands on the error lane, so nothing paints the
+    // old note back).
     const after = wrapper.findAll(`button[aria-label="${i18n.global.t("common.files.revoke")}"]`);
     await after[0]!.trigger("click");
     await flushPromises();
+    await vi.waitFor(() => {
+      expect(toastTexts()).toContain("nope");
+    });
+    expect(toastOf("success")).toBeUndefined();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     expect(wrapper.text()).not.toContain(i18n.global.t("common.files.revoked"));
-    expect(wrapper.text()).toContain("nope");
   });
 
   it("carries a bare-string rejection instead of an empty banner", async () => {
@@ -119,6 +158,8 @@ describe("SharesView (family table roster)", () => {
     shareListMock.mockRejectedValue("rpc timeout");
     wrapper = mountView();
     await flushPromises();
+    // The ROSTER fetch's failure stays the scaffold's own lane (it is the
+    // table's state, not an operation's transient result).
     expect(wrapper.find(".hk-alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("rpc timeout");
   });
@@ -134,6 +175,11 @@ describe("SharesView (family table roster)", () => {
     await flushPromises();
     await flushPromises();
     expect(wrapper.findAll("tbody tr").length).toBe(1);
-    expect(wrapper.text()).toContain(i18n.global.t("common.files.revoked"));
+    await vi.waitFor(() => {
+      expect(document.querySelector(".hk-toast-message")?.textContent).toBe(
+        i18n.global.t("common.files.revoked"),
+      );
+    });
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 });

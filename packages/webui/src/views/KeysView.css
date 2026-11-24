@@ -1,0 +1,11 @@
+/* KeysView — the key roster and the copy-once card (view-scoped
+ * `key`/`keys`/`copy-` prefixes). The `.copy-failed` paragraph is GONE:
+ * a rejected clipboard write is a toast. */
+.key-name-cell { display: inline-flex; align-items: center; gap: 0.4rem; }
+.key-prefix { font-family: var(--hk-font-mono, ui-monospace, monospace); opacity: 0.8; }
+.keys-page { display: flex; flex-direction: column; gap: 1rem; }
+.copy-once { padding: 1rem; border: 2px solid rgb(217 138 43); border-radius: 0.75rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.warning { color: rgb(217 138 43); font-size: 0.85rem; margin: 0; }
+.key-text { font-size: 0.9rem; padding: 0.5rem; border-radius: 0.4rem; background: color-mix(in srgb, currentColor 6%, transparent); word-break: break-all; }
+.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.dialog-body { display: flex; flex-direction: column; gap: 0.75rem; }
