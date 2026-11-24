@@ -1,0 +1,233 @@
+// FilesView — the folder roster. Everything that lives INSIDE the page
+// nests under the page's root class (`.files-page`), preserving the old
+// `<style scoped>` isolation. Two exceptions stay flat because their
+// elements render inside the TELEPORTED HkAdaptiveDialog overlay root,
+// outside `.files-page`'s DOM: `.dialog-body` (the dialogs' content
+// wrapper; identical declaration also shipped by KeysView's sheet) and
+// `.warn-text` (the delete-confirm warning, a direct dialog child).
+// Both names are unique across the app (audit rides the receipt).
+
+.files-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+
+  .breadcrumb {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+  }
+
+  .crumb {
+    color: inherit;
+    text-decoration: none;
+    opacity: 0.7;
+
+    &:hover {
+      opacity: 1;
+    }
+  }
+
+  .quota-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .quota-track {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    overflow: hidden;
+  }
+
+  .quota-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: rgb(13 148 136);
+    transition: width 0.3s;
+  }
+
+  .quota-text {
+    font-size: 0.78rem;
+    opacity: 0.7;
+    white-space: nowrap;
+  }
+
+  .error {
+    color: rgb(220 38 38);
+    font-size: 0.85rem;
+    margin: 0;
+  }
+
+  .file-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+    gap: 0.75rem;
+  }
+
+  .file-tile.picked .tile-body {
+    outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+    outline-offset: -2px;
+  }
+
+  .file-tile {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+  }
+
+  .tile-body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1;
+    width: 100%;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: inherit;
+    padding: 0;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+
+  .tile-icon {
+    opacity: 0.5;
+  }
+
+  .tile-meta {
+    padding: 0.35rem 0.55rem;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .tile-name {
+    font-size: 0.78rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tile-size {
+    font-size: 0.7rem;
+    opacity: 0.6;
+  }
+
+  .tile-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.15rem;
+    padding: 0 0.3rem 0.3rem;
+  }
+
+  .t-action {
+    display: inline-flex;
+    border: none;
+    background: transparent;
+    color: inherit;
+    opacity: 0.55;
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 0.35rem;
+
+    &:hover {
+      opacity: 1;
+      background: color-mix(in srgb, currentColor 10%, transparent);
+    }
+
+    &.danger:hover {
+      background: color-mix(in srgb, rgb(220 38 38) 16%, transparent);
+      color: rgb(220 38 38);
+    }
+  }
+
+  .upload-overlay {
+    position: fixed;
+    inset-inline-end: 1rem;
+    inset-block-end: 4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.6rem;
+    background: color-mix(in srgb, rgb(0 0 0 / 80%) 100%, transparent);
+    color: white;
+    font-size: 0.78rem;
+    min-width: 14rem;
+  }
+
+  .upload-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+
+    progress {
+      width: 6rem;
+    }
+  }
+}
+
+// ── Teleported dialog content (HkAdaptiveDialog → overlay root) ────────
+
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+
+  .field-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.85rem;
+  }
+
+  .switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.85rem;
+  }
+
+  .share-result {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+
+    code {
+      font-size: 0.75rem;
+      word-break: break-all;
+      flex: 1;
+    }
+  }
+
+  .native-input {
+    padding: 0.45rem 0.6rem;
+    border-radius: 0.5rem;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    background: transparent;
+    color: inherit;
+  }
+}
+
+.warn-text {
+  color: rgb(217 138 43);
+  font-size: 0.85rem;
+  margin: 0 0 0.5rem;
+}

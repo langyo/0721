@@ -41,8 +41,8 @@ vi.mock("@/api/files", () => ({
   listQuota: vi.fn(),
 }));
 
-import FilesView from "./FilesView.vue";
-import PortalView from "./PortalView.vue";
+import FilesView from "./FilesView";
+import PortalView from "./PortalView";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import type { FileDto } from "@/types";

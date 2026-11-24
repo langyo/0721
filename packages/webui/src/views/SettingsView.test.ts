@@ -16,7 +16,7 @@ vi.mock("@/api", () => ({
   putPasswordLogin: (...a: unknown[]) => putPasswordLoginMock(...a),
 }));
 
-import SettingsView from "./SettingsView.vue";
+import SettingsView from "./SettingsView";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 

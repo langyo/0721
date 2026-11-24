@@ -14,7 +14,7 @@ vi.mock("@/api", () => ({
   createUser: vi.fn(),
 }));
 
-import UsersView from "./UsersView.vue";
+import UsersView from "./UsersView";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import { useAuthStore } from "@/stores/auth";

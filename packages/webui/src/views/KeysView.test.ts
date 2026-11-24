@@ -11,7 +11,7 @@ vi.mock("@/api", () => ({
   revokeKey: (...args: unknown[]) => revokeKeyMock(...args),
 }));
 
-import KeysView from "./KeysView.vue";
+import KeysView from "./KeysView";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 

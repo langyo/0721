@@ -13,7 +13,7 @@ vi.mock("@/api", () => ({ health: vi.fn().mockRejectedValue(new Error("no net"))
 
 import { HkMenu, HkStatusBar } from "@celestia-island/hikari";
 
-import AppShell from "./AppShell.vue";
+import AppShell from "./AppShell";
 import { useAuthStore } from "@/stores/auth";
 import { createAppI18n } from "@/i18n";
 import type { UserDto } from "@/types";

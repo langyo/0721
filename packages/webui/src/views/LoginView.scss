@@ -1,0 +1,41 @@
+// LoginView — the sign-in face. Everything nests under the face's root
+// class (`.login-face`), preserving the old `<style scoped>` isolation:
+// no selector leaks past the face (HkLoginFlow / HkEmptyState /
+// HkStatusBar internals are untouched).
+
+.login-face {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  // The family face surface (auth.cw's plain backdrop) — hikari's theme
+  // variable, so light/dark follows the shell.
+  background: rgb(var(--color-surface));
+
+  .login-stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+  }
+
+  .login-panel {
+    width: min(24rem, 100%);
+  }
+
+  .login-error {
+    margin: 0.75rem 0 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, rgb(220 38 38) 14%, transparent);
+    color: rgb(220 38 38);
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  .login-footer {
+    display: flex;
+    align-items: center;
+    padding: 0.375rem 0.75rem;
+  }
+}

@@ -26,7 +26,7 @@ vi.mock("@/api/client", () => ({
 
 import { HkLoginFlow, HkStatusBar } from "@celestia-island/hikari";
 
-import LoginView from "./LoginView.vue";
+import LoginView from "./LoginView";
 import { ApiError } from "@/api/client";
 import { createAppI18n } from "@/i18n";
 

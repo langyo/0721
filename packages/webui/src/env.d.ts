@@ -7,9 +7,3 @@ declare const __APP_VERSION__: string;
 
 // hikari's stylesheet entry (a .scss side-effect export).
 declare module "@celestia-island/hikari/styles";
-
-declare module "*.vue" {
-  import type { DefineComponent } from "vue";
-  const component: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>;
-  export default component;
-}
