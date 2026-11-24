@@ -17,6 +17,7 @@ import * as api from "@/api";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { SiteConfig, SiteConfigStrict } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
+import { nativeTitle } from "@/utils/nativeTitle";
 
 import "./SettingsView.css";
 
@@ -237,10 +238,11 @@ export default defineComponent({
       bannerDraft.value = { text: "", url: "" };
     }
 
-    /** A FUNCTION, not a computed object: the array is dereferenced inside
-     *  the render function, where `draft()` re-reads the live value. A
-     *  computed's `.value` cached a snapshot taken at its FIRST read, so the
-     *  confirm button's `disabled` never followed the draft. */
+    /** A function so the array is rebuilt at every render, where the
+     *  dialog's `draft` is read afresh — the confirm button's `disabled`
+     *  must follow the draft keystroke by keystroke. (A `computed` would
+     *  work too: Vue invalidates it on its reactive dependency. The
+     *  function is simply the smaller thing to read here.) */
     const bannerActions = () => [
       {
         label: t("common.actions.cancel"),
@@ -360,7 +362,7 @@ export default defineComponent({
                         size={24}
                         variant="ghost"
                         aria-label={t("common.actions.remove")}
-                        {...{ title: t("common.actions.remove") }}
+                        {...nativeTitle(t("common.actions.remove"))}
                         onClick={() => { form.footerBanner.splice(index, 1); }}
                       >
                         {{ icon: () => <Trash2 size={14} /> }}
@@ -401,7 +403,7 @@ export default defineComponent({
                         size={24}
                         variant="ghost"
                         aria-label={t("common.actions.remove")}
-                        {...{ title: t("common.actions.remove") }}
+                        {...nativeTitle(t("common.actions.remove"))}
                         onClick={() => { form.limitReferrerHost.splice(index, 1); }}
                       >
                         {{ icon: () => <Trash2 size={14} /> }}

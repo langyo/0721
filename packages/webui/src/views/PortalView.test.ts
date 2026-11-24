@@ -161,7 +161,7 @@ describe("PortalView", () => {
     expect(wrapper.findAll(".upload-row").length).toBe(0);
   });
 
-  it("toasts a failed upload once and leaves its row error-free", async () => {
+  it("drops a failed upload's row and names the file in the toast", async () => {
     listFilesMock.mockResolvedValue(page([]));
     uploadFileMock.mockRejectedValue(new Error("undecodable image: not an image"));
     const wrapper = await mountView();
@@ -172,16 +172,17 @@ describe("PortalView", () => {
     await input.trigger("change");
     await flushPromises();
 
-    // The row stays in the lane (the user can read which file failed)…
-    expect(wrapper.findAll(".upload-row").length).toBe(1);
-    expect(wrapper.find(".upload-name").text()).toBe("broken.png");
-    // …but carries no error of its own: the message is a toast, raised
-    // once (MUT:portal-upload-toast — a leak into the row reddens below).
+    // The row is GONE: a frozen ring with no message is a dead end, so a
+    // failed upload leaves nothing behind in the lane
+    // (MUT:portal-upload-row-drop — keeping the row reddens below).
+    expect(wrapper.findAll(".upload-row").length).toBe(0);
+    // The toast is the whole report, and it NAMES the file — the only place
+    // that association survives the toast's auto-dismiss
+    // (MUT:portal-upload-name — dropping the prefix reddens this).
     await vi.waitFor(() => {
-      expect(toastText()).toBe("undecodable image: not an image");
+      expect(toastText()).toBe("broken.png: undecodable image: not an image");
     });
     expect(document.querySelectorAll(".hk-toast-message").length).toBe(1);
-    expect(wrapper.find(".upload-row").text()).not.toContain("undecodable image");
     expect(wrapper.find(".upload-error").exists()).toBe(false);
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });

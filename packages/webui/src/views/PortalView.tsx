@@ -18,6 +18,7 @@ import type { FileDto } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
 import FileDetailView from "@/components/FileDetailView";
 import { formatSize } from "@/composables/formatSize";
+import { nativeTitle } from "@/utils/nativeTitle";
 
 import "./PortalView.css";
 
@@ -40,7 +41,6 @@ interface UploadEntry {
   id: number;
   name: string;
   progress: number;
-  error: string | null;
 }
 
 export default defineComponent({
@@ -108,7 +108,7 @@ export default defineComponent({
       const picked = Array.from(input.files ?? []);
       input.value = "";
       for (const file of picked) {
-        const entry: UploadEntry = { id: uploadSeq++, name: file.name, progress: 0, error: null };
+        const entry: UploadEntry = { id: uploadSeq++, name: file.name, progress: 0 };
         uploads.value = [...uploads.value, entry];
         void api
           .uploadFile(file, (fraction) => {
@@ -120,11 +120,12 @@ export default defineComponent({
             void load(true);
           })
           .catch((err: unknown) => {
-            // The item's failure is a TOAST, raised once here; the row that
-            // stays in the lane carries its name and ring and nothing else.
-            entry.error = uploadErrorText(err);
-            toast.error(entry.error);
-            uploads.value = [...uploads.value];
+            // A failed upload leaves NO row behind: a frozen ring with no
+            // message is a dead end the visitor cannot dismiss. The toast
+            // is the whole report, and it names the file — the only place
+            // that association survives the toast's auto-dismiss.
+            uploads.value = uploads.value.filter((u) => u.id !== entry.id);
+            toast.error(`${file.name}: ${uploadErrorText(err)}`);
           });
       }
     }
@@ -323,7 +324,7 @@ export default defineComponent({
                               size: 28 as const,
                               variant: "ghost" as const,
                               "aria-label": openLabel,
-                              title: openLabel,
+                              ...nativeTitle(openLabel),
                               onClick: () => openExternal(selected.value!.url),
                             };
                             return (

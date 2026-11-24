@@ -26,6 +26,10 @@ import "./SharesView.css";
  * the scaffold's ROSTER state (the fetch that feeds the table), not the
  * per-row action's result.
  */
+/** This view's success slot. Keyed so the revoked note can be dismissed
+ *  without touching any other surface's success toast. */
+const REVOKED_TOAST_KEY = "shares-revoked";
+
 export default defineComponent({
   name: "SharesView",
   setup() {
@@ -61,8 +65,11 @@ export default defineComponent({
       try {
         await files.shareDelete(token);
         // Success is announced on the toast surface only (never a note
-        // beside the roster).
-        toast.success(t("common.files.revoked"));
+        // beside the roster), under THIS view's own slot key: an unkeyed
+        // success push shares the one global success slot, so clearing it
+        // would wipe an unrelated view's confirmation (e.g. the settings
+        // page's "saved") out of the corner stack.
+        toast.show(t("common.files.revoked"), { type: "success", key: REVOKED_TOAST_KEY });
         void load();
       } catch (e) {
         // Each attempt starts from a clean slate: a stale "revoked"
@@ -75,10 +82,11 @@ export default defineComponent({
       }
     }
 
-    /** Dismiss whatever the success lane is showing (unkeyed pushes share
-     *  one slot per type, so this is THE revoked note). */
+    /** Dismiss THIS view's revoked note — never the shared success slot. */
     function clearSuccessLane() {
-      const stale = toast.toasts.find((slot) => slot.type === "success");
+      const stale = toast.toasts.find(
+        (slot) => slot.type === "success" && slot.key === REVOKED_TOAST_KEY,
+      );
       if (stale) toast.remove(stale.id);
     }
 

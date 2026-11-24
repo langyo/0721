@@ -18,6 +18,7 @@ import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { OAuthProviderPublic } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
+import { nativeTitle } from "@/utils/nativeTitle";
 
 import "./ProvidersView.css";
 
@@ -257,7 +258,7 @@ export default defineComponent({
      *  same accessible name and tooltip (HkIconButton takes `title` as a
      *  fall-through attribute, so the object rides through a spread). */
     function iconButtonProps(label: string, onClick: () => void) {
-      return { size: 24 as const, variant: "ghost" as const, "aria-label": label, title: label, onClick };
+      return { size: 24 as const, variant: "ghost" as const, "aria-label": label, ...nativeTitle(label), onClick };
     }
 
     /** The dialog's write-once text fields — one reader so the JSX below

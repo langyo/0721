@@ -125,6 +125,30 @@ describe("SharesView (family table roster)", () => {
     expect(wrapper.text()).not.toContain("share_delete denied");
   });
 
+  it("dismisses only its own success note, never another view's", async () => {
+    // MUT:shares-success-key — the revoked note used to be cleared by
+    // removing the first SUCCESS slot, which is the same unkeyed slot
+    // every surface shares: a failed revoke would wipe an unrelated
+    // view's confirmation (e.g. the settings page's "saved") off screen.
+    const toast = useToast();
+    // A different surface's confirmation, sitting in the shared slot.
+    toast.success("Settings saved");
+    shareListMock.mockResolvedValue([share("tok_abcdefgh1234")]);
+    shareDeleteMock.mockRejectedValue(new Error("nope"));
+    wrapper = mountView();
+    await flushPromises();
+
+    const revoke = wrapper.find(`button[aria-label="${i18n.global.t("common.files.revoke")}"]`);
+    await revoke.trigger("click");
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(toastTexts()).toContain("nope");
+    });
+    // The foreign success survived the failure's lane-clearing.
+    expect(toastTexts()).toContain("Settings saved");
+  });
+
   it("does not let a stale success note claim a revoke that failed", async () => {
     shareListMock.mockResolvedValue([share("tok_abcdefgh1234"), share("tok_second99999")]);
     shareDeleteMock.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("nope"));

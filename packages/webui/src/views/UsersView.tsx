@@ -20,6 +20,7 @@ import { usePageRefresh } from "@/composables/usePageRefresh";
 import { useAuthStore } from "@/stores/auth";
 import type { Role, UserDto } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
+import { nativeTitle } from "@/utils/nativeTitle";
 
 import "./UsersView.css";
 
@@ -246,7 +247,7 @@ export default defineComponent({
                   size={24}
                   variant="ghost"
                   aria-label={t("common.actions.delete")}
-                  {...{ title: t("common.actions.delete") }}
+                  {...nativeTitle(t("common.actions.delete"))}
                   onClick={() => {
                     clearErrorToast("users-delete-error");
                     pendingDelete.value = row;
@@ -265,7 +266,7 @@ export default defineComponent({
               variant="ghost"
               disabled={loading.value}
               aria-label={t("common.actions.loadMore")}
-              {...{ title: t("common.actions.loadMore") }}
+              {...nativeTitle(t("common.actions.loadMore"))}
               onClick={() => { void load(false); }}
             >
               {{ icon: () => <UsersIcon size={16} /> }}
