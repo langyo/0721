@@ -80,10 +80,10 @@ function walk(dir: string): string[] {
  *  - line and block comments are removed (block comments keep their
  *    newlines so line-based reasoning survives);
  *  - strings and template literals are copied verbatim (escapes honoured);
- *  - `/` is treated as a regex start only when the previous significant
- *    character says so (operators, openers, statement starts); after an
- *    identifier, a digit, `)` or `]` it is division. Regexes honour `\`
- *    escapes and `[...]` classes, and cannot span lines.
+ *  - a `/` whose previous significant character sits in the operator or
+ *    opener set enters regex state; after an identifier, a digit, `)` or
+ *    `]` the slash is division. Regex bodies honour backslash escapes and
+ *    character classes, and the scan stops at a newline.
  *
  * The failure mode of an imperfect heuristic is asymmetric, and it fails
  * safe for this rule's purpose: comments are detected FIRST (the `//` and
@@ -91,7 +91,7 @@ function walk(dir: string): string[] {
  * opens a comment state; the residual risk of the division heuristic is
  * copying extra text INTO the corpus (e.g. `a++ / 2; // note` reads the
  * `/` as a regex start and leaks the note), which can only cause a false
- * positive — it can never hide a violation.
+ * positive — a violation stays visible to the scans.
  */
 function stripComments(source: string): string {
   const regexAfter = /[=(,:\[!&|?{};+\-*%<>~^~]/;

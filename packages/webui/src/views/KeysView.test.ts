@@ -25,7 +25,9 @@ import { defineComponent, h } from "vue";
  * instead of dying silently (the pattern the share dialog set).
  *
  * The failure half is a TOAST (the family feedback contract): the
- * copy-once card never grows a `role="alert"` paragraph beside its
+ * copy-once card: the page-level variant carried a `role="alert"`
+ * paragraph beside it (removed in the sweep; the invariant suite at
+ * `src/__invariants__/inlineNotices.test.ts` holds that removal), and
  * buttons. The card itself is the create window's SECOND step — the
  * minted key appears inside the dialog where the action happened, never
  * as a block grown at the top of the page after the dialog closed.
