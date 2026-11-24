@@ -106,6 +106,29 @@ describe("ProvidersView (family table roster)", () => {
     expect(rows[1]!.text()).not.toContain("1234");
   });
 
+  it("draws the row action glyphs through the #icon slot (not the fallback circle)", async () => {
+    // The action buttons hand lucide glyphs to HkIconButton via the
+    // `icon` slot. If that slot key ever drifts (say `iconx`), the
+    // button silently falls back to HkIconButton's dotted-circle
+    // placeholder — layout intact, glyph gone, and nothing else in the
+    // suite looks at it. Lucide stamps `lucide-<name>` on the svg, which
+    // is the observable difference between the slot rendering and the
+    // placeholder.
+    listProvidersMock.mockResolvedValue([provider()]);
+    wrapper = mountView();
+    await flushPromises();
+
+    const editButton = wrapper
+      .findAll("tbody tr")[0]!
+      .findAll("button")
+      .find((button) => button.find("svg.lucide-pencil").exists());
+    expect(editButton, "the row's edit action lost its lucide-pencil glyph").toBeTruthy();
+    expect(
+      wrapper.find("svg.lucide-trash-2").exists(),
+      "the revoke/delete action lost its lucide-trash-2 glyph",
+    ).toBe(true);
+  });
+
   it("reports a non-Error rejection instead of a silent empty roster", async () => {
     listProvidersMock.mockRejectedValue(undefined);
     wrapper = mountView();
