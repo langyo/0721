@@ -6,6 +6,8 @@ import { useI18n } from "vue-i18n";
 import type { FileDto } from "@/types";
 import { formatSize } from "@/composables/formatSize";
 
+import "./FileDetailView.scss";
+
 /**
  * The embedded file detail — the pane every list surface (files, portal,
  * timeline) shows beside its roster when a row is picked. Render-only:

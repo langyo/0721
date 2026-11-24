@@ -47,8 +47,12 @@
     font-size: 0.85rem;
   }
 
-  .dialog-error {
-    color: rgb(220 38 38);
-    font-size: 0.85rem;
-  }
+}
+
+// Same teleport reason as ProvidersView: the CREATE form's own error sits
+// inside `.create-form`, but the DELETE confirmation's error renders in a
+// separate teleported dialog root — a single flat rule covers both.
+.dialog-error {
+  color: rgb(220 38 38);
+  font-size: 0.85rem;
 }

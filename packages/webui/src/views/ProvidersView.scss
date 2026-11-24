@@ -72,8 +72,13 @@
     justify-content: space-between;
   }
 
-  .dialog-error {
-    color: rgb(220 38 38);
-    font-size: 0.85rem;
-  }
+}
+
+// `.dialog-error` stays FLAT, outside `.providers`: the delete confirmation
+// renders in a TELEPORTED dialog root, so it is not a descendant of the
+// page element that carries the scope. Nesting it would have dropped the
+// red face for the one error a user is most likely to hit.
+.dialog-error {
+  color: rgb(220 38 38);
+  font-size: 0.85rem;
 }
