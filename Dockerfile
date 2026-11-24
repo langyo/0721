@@ -31,6 +31,7 @@ RUN pnpm install --frozen-lockfile
 # The locale JSONs feed the webui's import.meta.glob; the committed
 # ts-rs bindings (packages/webui/src/types) ship in the tree.
 COPY res res
+COPY scripts scripts
 COPY packages/webui packages/webui
 RUN pnpm --filter @celestia-island/i0721-webui build
 
