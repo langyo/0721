@@ -149,6 +149,41 @@ describe("SharesView (family table roster)", () => {
     expect(toastTexts()).toContain("Settings saved");
   });
 
+  it("grows no page-body block on a revoke, success or failure", async () => {
+    // MUT:shares-page-body-frozen — the review round's variant: a
+    // success-grown note (or any click-grown block) inside the page's own
+    // section under a neutral name. The toast is the whole report; the
+    // section's element count must be frozen through both lanes.
+    shareListMock.mockResolvedValue([share("tok_abcdefgh1234")]);
+    shareDeleteMock.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("nope"));
+    wrapper = mountView();
+    await flushPromises();
+
+    const section = wrapper.element.querySelector("section")!;
+    const frozen = section.querySelectorAll("*").length;
+    const buttons = wrapper.findAll(
+      `button[aria-label="${i18n.global.t("common.files.revoke")}"]`,
+    );
+
+    await buttons[0]!.trigger("click");
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(toastTexts()).toContain(i18n.global.t("common.files.revoked"));
+    });
+    expect(section.querySelectorAll("*").length).toBe(frozen);
+
+    const again = wrapper.findAll(
+      `button[aria-label="${i18n.global.t("common.files.revoke")}"]`,
+    );
+    await again[0]!.trigger("click");
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(toastTexts()).toContain("nope");
+    });
+    expect(section.querySelectorAll("*").length).toBe(frozen);
+    wrapper.unmount();
+  });
+
   it("does not let a stale success note claim a revoke that failed", async () => {
     shareListMock.mockResolvedValue([share("tok_abcdefgh1234"), share("tok_second99999")]);
     shareDeleteMock.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("nope"));

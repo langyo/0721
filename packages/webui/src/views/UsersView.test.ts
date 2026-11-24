@@ -294,6 +294,29 @@ describe("UsersView (family table roster)", () => {
     );
   });
 
+  it("grows no page-body block when the create window opens", async () => {
+    // MUT:users-page-body-frozen — the review round's exact mutant: a
+    // click-grown block INSIDE `section.users`, gated on the window's
+    // open state, under a neutral class and role. Every lexical pin
+    // misses it; this structural one cannot. While the create window is
+    // open, the page section's own element count must be FROZEN (the
+    // window itself lives in the teleported overlay, outside the
+    // section).
+    listUsersMock.mockResolvedValue({ items: [user("me", "me", "admin")], total: 1 });
+    wrapper = mountView();
+    await flushPromises();
+
+    const section = document.querySelector("section.users")!;
+    const frozen = section.querySelectorAll("*").length;
+
+    const create = createButton()!;
+    create.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    expect(document.querySelector("[data-testid='create-username']")).toBeTruthy();
+    expect(section.querySelectorAll("*").length).toBe(frozen);
+    wrapper.unmount();
+  });
+
   it("raises a failed create as a toast with the 409 copy, keeping the form filled", async () => {
     listUsersMock.mockResolvedValue({ items: [user("me", "me", "admin")], total: 1 });
     createUserMock.mockRejectedValue(new ApiError(409, "taken"));

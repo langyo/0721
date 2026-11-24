@@ -381,15 +381,23 @@ describe("SettingsView referrer-host allow-list (dialog, never an inline row)", 
     // per click. It must now stay put — through both lists.
     wrapper = mountView();
     await flushPromises();
-    const before = document.querySelectorAll(".site-settings input").length;
+    // Count only the PAGE BODY's inputs: dialog fields teleport outside
+    // `.site-settings`' modal subtree into `#hk-overlay-root`, so a naive
+    // document-wide count would count the dialog's own field and could
+    // pass while the page behind it grew an editable row.
+    const pageInputs = () =>
+      [...document.querySelectorAll(".site-settings input")].filter(
+        (el) => !el.closest(".hk-modal-content, [role='dialog']"),
+      ).length;
+    const before = pageInputs();
 
     buttonByText(i18n.global.t("common.actions.add"))!.dispatchEvent(
       new MouseEvent("click", { bubbles: true }),
     );
     await flushPromises();
-    // While the dialog is open, the page body's input count is unchanged
-    // (the dialog's field lives in the teleported overlay).
-    expect(document.querySelectorAll(".site-settings input").length).toBe(before);
+    // While the dialog is open, the page body's editable count is
+    // unchanged (the dialog's field lives in the teleported overlay).
+    expect(pageInputs()).toBe(before);
 
     await typeIntoTestId("host-dialog-input", "cdn.example.org");
     dialogAction(i18n.global.t("common.actions.add"))!.dispatchEvent(
@@ -400,7 +408,7 @@ describe("SettingsView referrer-host allow-list (dialog, never an inline row)", 
     // After the confirm the list grew by exactly one READ-ONLY row: still
     // zero new inputs in the page body.
     expect(document.querySelectorAll(".site-settings .banner-row").length).toBe(1);
-    expect(document.querySelectorAll(".site-settings input").length).toBe(before);
+    expect(pageInputs()).toBe(before);
 
     // The banner list behaves the same way (its dialog's TWO fields are
     // both in the overlay).
@@ -408,13 +416,13 @@ describe("SettingsView referrer-host allow-list (dialog, never an inline row)", 
       new MouseEvent("click", { bubbles: true }),
     );
     await flushPromises();
-    expect(document.querySelectorAll(".site-settings input").length).toBe(before);
+    expect(pageInputs()).toBe(before);
     await typeIntoTestId("banner-dialog-text", "Banner");
     dialogAction(i18n.global.t("common.actions.add"))!.dispatchEvent(
       new MouseEvent("click", { bubbles: true }),
     );
     await flushPromises();
     expect(document.querySelectorAll(".site-settings .banner-row").length).toBe(2);
-    expect(document.querySelectorAll(".site-settings input").length).toBe(before);
+    expect(pageInputs()).toBe(before);
   });
 });
