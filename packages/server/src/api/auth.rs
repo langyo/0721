@@ -191,27 +191,16 @@ pub(crate) async fn password_login_enabled(state: &AppState) -> bool {
 }
 
 /// `GET /api/v1/auth/login-methods` — the public login-page descriptor:
-/// the password kill-switch's state plus the enabled provider summary
-/// (NO secret material anywhere in the payload).
+/// the password kill-switch's state, the enabled provider summary, and the
+/// family login-policy document (`kirino::auth::mode::LoginPolicy`,
+/// validated before it is served). NO secret material anywhere in the
+/// payload.
 pub async fn login_methods(
     State(state): State<AppState>,
 ) -> axum::response::Json<crate::oauth::LoginMethods> {
     let password = password_login_enabled(&state).await;
-    let providers = crate::oauth::load_providers(&state)
-        .await
-        .into_iter()
-        .filter(|provider| provider.enabled)
-        .map(|provider| crate::oauth::LoginMethodProvider {
-            id: provider.id,
-            display_name: provider.display_name,
-            provider_type: provider.provider_type,
-            icon: provider.icon,
-        })
-        .collect();
-    axum::response::Json(crate::oauth::LoginMethods {
-        password,
-        providers,
-    })
+    let providers = crate::oauth::load_providers(&state).await;
+    axum::response::Json(crate::oauth::login_methods_document(password, &providers))
 }
 
 /// `POST /api/v1/auth/login` — mints the session and plants it as an

@@ -170,7 +170,19 @@ export default defineComponent({
         .catch(() => {
           // The descriptor is unreachable: render the classic password lane
           // rather than a dead page (the server still enforces the switch).
-          methods.value = { password: true, providers: [] };
+          // The family policy is a local fallback document, not a published
+          // one — the same shape the server would send for a password-only
+          // deployment.
+          methods.value = {
+            password: true,
+            providers: [],
+            policy: {
+              version: 1,
+              mode: "local",
+              password: true,
+              methods: [],
+            },
+          };
           channel.value = "password";
         });
     });

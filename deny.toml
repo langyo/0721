@@ -3,6 +3,32 @@ db-path = "~/.cargo/advisory-db"
 unmaintained = "workspace"
 unsound = "workspace"
 yanked = "warn"
+ignore = [
+    # RUSTSEC-2023-0071 (Marvin Attack, RSA timing sidechannel; no patched
+    # release): `rsa` arrives only transitively, via jsonwebtoken (kirino's
+    # ID-token verification — RS256 verification with a decoded public key,
+    # never the attacked private-key decryption path). The family's OAuth
+    # transport pulls kirino, so this advisory came in with it. Revisit when
+    # the advisory gains a patched release (chest's precedent).
+    { id = "RUSTSEC-2023-0071", reason = "no patched rsa release; transitive-only verification path exposes no RSA decryption oracle" },
+    # RUSTSEC-2026-0543 (chrono unmaintained, issued 2026-11-17): kirino's
+    # relying-party core declares its attempt deadlines as
+    # `chrono::DateTime<Utc>`, so a host implementing `LoginAttemptStore` must
+    # speak chrono. That is the ONLY reason chrono is a direct dependency
+    # here (every other timestamp in this service is jiff); drop this ignore
+    # when kirino's contract moves to jiff. EXPIRY: 2027-01-31.
+    { id = "RUSTSEC-2026-0543", reason = "kirino's LoginAttemptStore contract is chrono-typed; remove when kirino moves to jiff. Expiry 2027-01-31." },
+    # RUSTSEC-2026-0387 (constant-time operations in crypto-bigint 0.5.5):
+    # crypto-bigint reaches us only through elliptic-curve 0.13 < p256/p384 <
+    # jsonwebtoken < kirino, all of it pulled by the OAuth core's ID-token
+    # verification. There is no in-tree fix: jsonwebtoken 11.1.0 (latest)
+    # still requires p256 ^0.13, so raising it cannot reach elliptic-curve
+    # 0.14 / crypto-bigint 0.7. This service's identity comes from UserInfo
+    # responses and its own HS256 session signer, so the affected ECC
+    # operations are never exercised. Revisit when jsonwebtoken moves to
+    # elliptic-curve 0.14 (the same entry the family's arona carries).
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint comes only via jsonwebtoken < kirino; no in-tree fix, and no affected ECC operation is performed here. Expiry 2027-01-31." },
+]
 
 [licenses]
 # Permissive only. AGPL, GPL and LGPL are deliberately absent: the service
@@ -61,6 +87,28 @@ license-files = [{ path = "LICENSE", hash = 0xda2b7c13 }]
 name = "plana-rpc-server"
 expression = "LicenseRef-SySL-1.0"
 license-files = [{ path = "LICENSE", hash = 0xda2b7c13 }]
+
+# The family's auth platform (crates.io): kirino and its derive crate carry
+# the same SySL 1.0 text via license-file, byte-identical to plana's (hash
+# pinned below). Allowed as a first-party family license — same publisher as
+# the workspace's own crates, not a third-party copyleft risk (the
+# AGPL/GPL/LGPL exclusion targets external runtime deps).
+[[licenses.clarify]]
+name = "kirino"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "LICENSE", hash = 0x629cea03 }]
+
+[[licenses.clarify]]
+name = "kirino-macro"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "LICENSE", hash = 0x629cea03 }]
+
+# plana's HTTP transport for kirino's OAuth core (git master): same SySL 1.0
+# text as the plana/plana-rpc-server rows above, hence the same hash.
+[[licenses.clarify]]
+name = "plana-identity-relay"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "../../LICENSE", hash = 0xda2b7c13 }]
 
 [[licenses.clarify]]
 name = "ring"

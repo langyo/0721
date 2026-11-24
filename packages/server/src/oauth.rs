@@ -1,56 +1,93 @@
-//! The OAuth dual-mode authentication lane (W4): a provider registry in
-//! the `settings` table, a browser authorization-code flow with PKCE
-//! S256, and `find_or_create_user` over the `oauth_identities` table.
+//! The OAuth dual-mode authentication lane: a provider registry in the
+//! `settings` table, the relying-party browser flow, `find_or_create_user`
+//! over the `oauth_identities` table, and the family login-policy document
+//! the login page renders.
+//!
+//! ## What this module owns and what kirino owns
+//!
+//! The **protocol** — PKCE S256, the one-time `state`, the browser binding,
+//! the code-for-token exchange, the UserInfo read, the ID-token check — is
+//! `kirino::auth::passport::oauth`, the family's relying-party core. No code
+//! here writes a PKCE pair, mints or compares a `state`, or builds a token
+//! request by hand.
+//!
+//! This module keeps the three things a host must keep:
+//!
+//! * the **catalog** — the settings row, mapped per provider type onto
+//!   kirino's [`ProviderMetadata`] (endpoints, token-body encoding, scopes,
+//!   issuer) and [`ClientAuth`];
+//! * the **claim reading** — the vendor payload shapes this service has
+//!   always understood (a GitHub numeric `id`, a Feishu `open_id`, a
+//!   Feishu-wrapped `data` envelope) map onto the local account key;
+//! * the **session** — `find_or_create_user` and the ordinary session
+//!   cookie, unchanged by this wave.
+//!
+//! The one network seam is [`plana_identity_relay::ReqwestFetcher`] (no
+//! redirects, a bounded timeout, errors that carry no URL and no body).
 //!
 //! ## Provider registry
 //!
-//! One settings row (`oauth_providers`) holds the whole catalog as a
-//! JSON array. Each row: `id` / `display_name` / `type`
+//! One settings row (`oauth_providers`) holds the whole catalog as a JSON
+//! array. Each row: `id` / `display_name` / `type`
 //! (`builtin:github` | `builtin:feishu` | `builtin:erp` | `oidc`) /
 //! `client_id` / `client_secret` (server-held) / `base_url` (erp) or
 //! `issuer_url` (oidc) / `scopes` / `enabled` / `icon`. The
 //! `client_secret` NEVER leaves the server: every public shape
-//! (login-methods, the admin list) carries only `has_secret` + the
-//! last four characters.
+//! (login-methods, the admin list) carries only `has_secret` + the last four
+//! characters.
 //!
 //! ## Flow
 //!
-//! `GET /api/v1/auth/oauth/{provider}` mints a random `state` + a PKCE
-//! S256 `verifier`, plants them in one HttpOnly cookie (600 s), and
-//! 302s to the provider's authorize endpoint with
-//! `code_challenge = BASE64URL(SHA256(verifier))`,
-//! `code_challenge_method=S256`. The callback strictly compares the
-//! state cookie with the provider's echo, exchanges `code` + the
-//! verifier for an access token (form-encoded, RFC 6749 §4.1.3 —
-//! except GitHub's JSON body), fetches userinfo, resolves the subject
-//! (`sub` | `id` | `open_id`), and `find_or_create_user`s before
-//! planting the ordinary session cookie and 302ing to `/`.
-//!
-//! No domain restriction in this first version (the admin surface for
-//! it arrives with the identity wave); the `state` cookie + PKCE are
-//! the CSRF/interception defenses.
+//! `GET /api/v1/auth/oauth/{provider}` parks an attempt (kirino mints the
+//! one-time `state`, the PKCE verifier and the OIDC `nonce`; this service
+//! adds a per-attempt browser binding), plants the binding in an HttpOnly
+//! cookie scoped to `/api/v1/auth/oauth` (600 s), and 302s to the provider's
+//! authorize endpoint. The callback presents the binding back to kirino's
+//! `finish`, which spends the `state` exactly once, refuses an attempt from
+//! another browser or minted for another provider, exchanges the code with
+//! the verifier, reads the identity, and hands back a `RelayLogin`. The
+//! subject then goes through `find_or_create_user` and the ordinary session
+//! cookie is planted.
 //!
 //! ## OIDC discovery
 //!
 //! `oidc`-typed providers resolve their endpoints from
-//! `{issuer_url}/.well-known/openid-configuration`, cached in-process
-//! for 10 minutes with a 30 s negative cache (the redirect endpoint is
-//! unauthenticated — without a negative cache any visitor could force
-//! an outbound request per hit on a broken issuer).
+//! `{issuer_url}/.well-known/openid-configuration`, cached in-process for 10
+//! minutes with a 30 s negative cache (the redirect endpoint is
+//! unauthenticated — without a negative cache any visitor could force an
+//! outbound request per hit on a broken issuer).
+//!
+//! ## Login policy
+//!
+//! `GET /api/v1/auth/login-methods` publishes the family's
+//! [`kirino::auth::mode::LoginPolicy`] beside the legacy `password` /
+//! `providers[]` fields. The mode is derived (`federated` when the catalog
+//! offers at least one usable provider, `local` otherwise) and the document
+//! is validated before it is served.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use base64::Engine;
+use chrono::{Duration, Utc};
+use kirino::auth::mode::{
+    AuthMode as KirinoAuthMode, LoginMethodDescriptor as KirinoMethodDescriptor,
+    LoginPolicy as KirinoLoginPolicy, LoginPolicyViolation, LOGIN_POLICY_VERSION,
+};
+use kirino::auth::passport::oauth::{
+    authorize_url as kirino_authorize_url, begin_with_binding as kirino_begin_with_binding,
+    finish as kirino_finish, Callback as KirinoCallback, CallbackProblem,
+    CallbackQuery as KirinoCallbackQuery, ClientAuth, LoginAttempt,
+    LoginAttemptStore as KirinoAttemptStore, ProviderIdentity, ProviderMetadata, RelayLogin,
+    TokenBody,
+};
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 use uuid::Uuid;
 
-use i0721_proto::{NewUser, Role};
+use i0721_proto::Role;
 
 use crate::api::auth::AuthSession;
 use crate::auth::TOKEN_TTL_DAYS;
@@ -64,14 +101,36 @@ pub const PROVIDERS_SETTINGS_KEY: &str = "oauth_providers";
 /// (`{provider}_{subject8}`, VARCHAR must fit).
 const PROVIDER_ID_MAX_LEN: usize = 48;
 
-/// The state/PKCE cookie's name and lifetime.
-const OAUTH_STATE_COOKIE: &str = "i0721-oauth-state";
+/// The browser-binding cookie: the login-CSRF half of the flow.
+///
+/// The name and the path are the ones this service has always used (a
+/// deployment's cookies are not this wave's to rename): the cookie is
+/// re-purposed from "state + verifier" to "the value that proves the callback
+/// came back from the browser that started the attempt". The `state` itself
+/// no longer rides it — kirino keeps it server-side, one-time.
+const OAUTH_BINDING_COOKIE: &str = "i0721-oauth-state";
+
+/// The path both OAuth routes live under; the binding cookie is scoped to it.
+const OAUTH_PATH_PREFIX: &str = "/api/v1/auth/oauth";
+
+/// How long an in-flight attempt — and the binding cookie that unlocks it —
+/// stays usable. A ceiling for the provider's own login screen.
+const OAUTH_ATTEMPT_TTL_SECS: i64 = 600;
+
+/// The cookie's `Max-Age`, in the same unit (seconds).
 const OAUTH_STATE_MAX_AGE_SECS: u64 = 600;
 
+/// Upper bound on concurrently parked attempts: the start route is
+/// unauthenticated, so the store must not be an unbounded memory tap.
+const OAUTH_ATTEMPT_CAP: usize = 1024;
+
+/// Where a finished sign-in lands (the SPA root, as it always has).
+const OAUTH_LANDING: &str = "/";
+
 /// Discovery caches.
-const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
-const DISCOVERY_TTL: Duration = Duration::from_secs(600);
-const DISCOVERY_FAILURE_TTL: Duration = Duration::from_secs(30);
+const DISCOVERY_TIMEOUT: StdDuration = StdDuration::from_secs(10);
+const DISCOVERY_TTL: StdDuration = StdDuration::from_secs(600);
+const DISCOVERY_FAILURE_TTL: StdDuration = StdDuration::from_secs(30);
 const DISCOVERY_CACHE_MAX: usize = 32;
 
 // ── the registry rows ──────────────────────────────────────────────────
@@ -175,6 +234,165 @@ pub struct OAuthProviderPublic {
     pub secret_tail: String,
 }
 
+/// The family login-policy document this service publishes.
+///
+/// The SHAPE is `kirino::auth::mode::LoginPolicy` — the family contract, not
+/// a local invention — restated here only because this crate is what exports
+/// TypeScript bindings: kirino declares these with a `ts` feature this build
+/// leaves off, and enabling it would write kirino's files into this
+/// repository on kirino's own path. The contract is pinned by
+/// [`policy_to_wire`], which converts kirino's validated document into this
+/// one field for field, and by the tests that compare the two.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+pub struct LoginPolicy {
+    /// The wire version (currently `1`).
+    pub version: u8,
+    /// The mode — the summary of everything below.
+    pub mode: AuthMode,
+    /// Whether the local password card is offered.
+    pub password: bool,
+    /// Every entrance other than the password card, in display order.
+    pub methods: Vec<LoginMethodDescriptor>,
+    /// Present if and only if `mode` is `relay` (absent here: this service
+    /// has no relay directive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<RelayDirective>,
+}
+
+/// The authentication mode — the policy's one-word summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMode {
+    /// A self-contained deployment (the password card, maybe no provider).
+    Local,
+    /// A deployment that signs in through at least one external provider.
+    Federated,
+    /// A deployment entered through a designated central login site.
+    Relay,
+}
+
+/// One entrance the login page offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum LoginMethodDescriptor {
+    /// A third-party provider the browser is sent to.
+    Oauth {
+        /// Stable id, unique within the policy.
+        id: String,
+        /// Display label.
+        label: String,
+        /// Where the browser starts the method: a same-origin absolute path.
+        href: String,
+        /// The host's provider id.
+        provider: String,
+        /// Optional icon reference.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+    },
+    /// WebAuthn / passkey sign-in (not offered by this service).
+    Passkey {
+        id: String,
+        label: String,
+        href: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+    },
+    /// A host-specific entrance (a cross-realm jump row).
+    Custom {
+        id: String,
+        label: String,
+        href: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+    },
+}
+
+impl LoginMethodDescriptor {
+    /// The stable id, whatever the kind.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Oauth { id, .. } | Self::Passkey { id, .. } | Self::Custom { id, .. } => id,
+        }
+    }
+}
+
+/// How a relay-mode service is entered (unused here; the contract carries it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+pub struct RelayDirective {
+    /// The service's own same-origin entry route.
+    pub entry: String,
+    /// The query parameter carrying the post-login return address.
+    pub return_param: String,
+}
+
+/// Convert kirino's validated document into this crate's wire shape.
+///
+/// Field for field, so the published document cannot mean anything other
+/// than what the family contract validated (the test
+/// `published_policy_round_trips_through_kirinos_contract` compares the two
+/// serialisations).
+fn policy_to_wire(policy: &KirinoLoginPolicy) -> LoginPolicy {
+    LoginPolicy {
+        version: policy.version,
+        mode: match policy.mode {
+            KirinoAuthMode::Local => AuthMode::Local,
+            KirinoAuthMode::Federated => AuthMode::Federated,
+            KirinoAuthMode::Relay => AuthMode::Relay,
+        },
+        password: policy.password,
+        methods: policy
+            .methods
+            .iter()
+            .map(|method| match method {
+                KirinoMethodDescriptor::Oauth {
+                    id,
+                    label,
+                    href,
+                    provider,
+                    icon,
+                } => LoginMethodDescriptor::Oauth {
+                    id: id.clone(),
+                    label: label.clone(),
+                    href: href.clone(),
+                    provider: provider.clone(),
+                    icon: icon.clone(),
+                },
+                KirinoMethodDescriptor::Passkey {
+                    id,
+                    label,
+                    href,
+                    icon,
+                } => LoginMethodDescriptor::Passkey {
+                    id: id.clone(),
+                    label: label.clone(),
+                    href: href.clone(),
+                    icon: icon.clone(),
+                },
+                KirinoMethodDescriptor::Custom {
+                    id,
+                    label,
+                    href,
+                    icon,
+                } => LoginMethodDescriptor::Custom {
+                    id: id.clone(),
+                    label: label.clone(),
+                    href: href.clone(),
+                    icon: icon.clone(),
+                },
+            })
+            .collect(),
+        relay: policy.relay.as_ref().map(|directive| RelayDirective {
+            entry: directive.entry.clone(),
+            return_param: directive.return_param.clone(),
+        }),
+    }
+}
+
 /// The login-methods payload (public — no secret anywhere).
 #[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[ts(export, export_to = "../../webui/src/types/")]
@@ -183,6 +401,10 @@ pub struct LoginMethods {
     pub password: bool,
     /// Enabled OAuth providers, login-button order.
     pub providers: Vec<LoginMethodProvider>,
+    /// The family login-policy document, validated before it is served.
+    /// Additive: `password` + `providers` above stay the shape the bundled
+    /// webui reads.
+    pub policy: LoginPolicy,
 }
 
 /// One login-methods entry.
@@ -225,10 +447,7 @@ pub struct OAuthProviderUpsert {
 /// deployment has no providers). A CORRUPT row (hand-edited JSON the
 /// `OAuthProvider` shape rejects) also lands on empty: the login page
 /// stays up and the admin list reads clean, and the next upsert
-/// overwrites the broken row with a well-formed registry. KNOWN GAP
-/// (no test yet): nothing surfaces WHICH row was corrupt or that a
-/// drop happened — a `tracing::warn!` on the parse failure is the
-/// obvious follow-up.
+/// overwrites the broken row with a well-formed registry.
 pub async fn load_providers(state: &AppState) -> Vec<OAuthProvider> {
     state
         .store
@@ -300,128 +519,108 @@ pub fn valid_provider_type(provider_type: &str) -> bool {
 
 // ── endpoint templates ─────────────────────────────────────────────────
 
-/// The authorize URL for a provider (None = unusable configuration).
-fn authorize_url(
-    provider: &OAuthProvider,
-    redirect_uri: &str,
-    state_param: &str,
-    challenge: &str,
-) -> Option<String> {
-    let encoded_redirect = urlencode(redirect_uri);
-    let mut url = match provider.provider_type.as_str() {
-        "builtin:github" => format!(
-            "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read%3Auser&state={}&code_challenge={}&code_challenge_method=S256",
-            urlencode(&provider.client_id), encoded_redirect, state_param, challenge,
-        ),
-        "builtin:feishu" => format!(
-            "https://accounts.feishu.cn/open-apis/authen/v1/authorize?app_id={}&redirect_uri={}&state={}",
-            urlencode(&provider.client_id), encoded_redirect, state_param,
-        ),
+/// One provider type's endpoint family: where the three legs are, how the
+/// token body is encoded, which scopes are mandatory, and the issuer the
+/// identity carries. This is *data* kirino's core consumes, never a code
+/// path it branches on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoints {
+    pub authorize: String,
+    pub token: String,
+    /// `None` for a provider whose token answer IS the identity (feishu).
+    pub userinfo: Option<String>,
+    pub token_body: TokenBody,
+    /// The scopes requested when the operator gives none. `None` = ask for
+    /// none at all (feishu: its authorize endpoint takes no `scope`).
+    pub default_scopes: Option<&'static [&'static str]>,
+    /// The issuer an identity carries when the provider's own answer names
+    /// none.
+    pub issuer: Option<String>,
+}
+
+/// GitHub's token endpoint (the vendor's documented route).
+const TOKEN_ENDPOINT_GITHUB: &str = "https://github.com/login/oauth/access_token";
+
+/// Feishu's v2 token endpoint (the vendor's documented route).
+const TOKEN_ENDPOINT_FEISHU: &str = "https://open.feishu.cn/open-apis/authen/v2/oauth/token";
+
+/// The built-in endpoint family for a provider type. `None` when the row
+/// cannot resolve one (an erp row without a base, or the `oidc` type, whose
+/// endpoints come from discovery).
+fn builtin_endpoints(provider: &OAuthProvider) -> Option<Endpoints> {
+    match provider.provider_type.as_str() {
+        "builtin:github" => Some(Endpoints {
+            authorize: "https://github.com/login/oauth/authorize".to_owned(),
+            token: TOKEN_ENDPOINT_GITHUB.to_owned(),
+            userinfo: Some("https://api.github.com/user".to_owned()),
+            // GitHub speaks form encoding (its JSON body is an opt-in the
+            // pre-kirino client never asked for) and is a confidential
+            // client: the secret rides the token request, never the browser.
+            token_body: TokenBody::Form,
+            default_scopes: Some(&["read:user"]),
+            issuer: Some("https://github.com".to_owned()),
+        }),
+        "builtin:feishu" => Some(Endpoints {
+            authorize: "https://accounts.feishu.cn/open-apis/authen/v1/authorize".to_owned(),
+            token: TOKEN_ENDPOINT_FEISHU.to_owned(),
+            // Feishu v2's token answer itself carries the user identity
+            // (`data.open_id` behind the `data` envelope, unwrapped by the
+            // transport adapter). There is no separate UserInfo leg, so the
+            // core reads the profile it already holds.
+            userinfo: None,
+            token_body: TokenBody::Form,
+            default_scopes: None,
+            issuer: Some("https://open.feishu.cn".to_owned()),
+        }),
         "builtin:erp" => {
             let base = absolute_base(provider.base_url.as_deref()?)?;
-            format!(
-                "{base}/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile&state={}&code_challenge={}&code_challenge_method=S256",
-                urlencode(&provider.client_id), encoded_redirect, state_param, challenge,
-            )
+            Some(Endpoints {
+                authorize: format!("{base}/oauth/authorize"),
+                token: format!("{base}/api/oauth/token"),
+                // The ERP provider mounts userinfo under its `/api` prefix
+                // (`/api/oauth/userinfo`, alongside `/api/oauth/token`). The
+                // bare `/oauth/userinfo` is NOT an ERP route: its host-split
+                // middleware 307s the request to the staff admin face, the
+                // callback's server-side GET follows into an HTML login page,
+                // and the decode dies with "error decoding response body"
+                // (the 2026-11-24 res.celestia.world report). Both legs are
+                // derived from `base_url` — the row carries no per-endpoint
+                // fields.
+                //
+                // MUT:erp-userinfo-prefix — reverting to the bare
+                // `/oauth/userinfo` makes both end-to-end OAuth cases fail
+                // against the `/api`-mounted stub (`tests/routes.rs`,
+                // `oauth_end_to_end_against_a_local_stub_provider` and
+                // `oauth_second_login_is_idempotent`).
+                userinfo: Some(format!("{base}/api/oauth/userinfo")),
+                token_body: TokenBody::Form,
+                default_scopes: Some(&["openid", "profile"]),
+                // The ERP is the family's own service: its issuer is the
+                // deployment's own origin, not a third-party hostname.
+                issuer: Some(base.to_owned()),
+            })
         }
-        _ => return None, // oidc resolves through discovery (async).
-    };
-    if url.contains(' ') {
-        url = url.replace(' ', "+");
-    }
-    Some(url)
-}
-
-/// Resolve the authorize URL, OIDC discovery included.
-async fn resolve_authorize_url(
-    state: &AppState,
-    provider: &OAuthProvider,
-    redirect_uri: &str,
-    state_param: &str,
-    challenge: &str,
-) -> Result<Option<String>, ApiError> {
-    if let Some(url) = authorize_url(provider, redirect_uri, state_param, challenge) {
-        return Ok(Some(url));
-    }
-    if provider.provider_type != "oidc" {
-        return Ok(None);
-    }
-    let issuer = provider.issuer_url.as_deref().unwrap_or_default();
-    let Some(document) = discover(state, issuer).await? else {
-        return Ok(None);
-    };
-    let Some(endpoint) = document.authorization_endpoint else {
-        return Ok(None);
-    };
-    let scopes = provider
-        .scopes
-        .clone()
-        .unwrap_or_else(|| "openid profile".to_owned());
-    Ok(Some(format!(
-        "{endpoint}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
-        urlencode(&provider.client_id),
-        urlencode(redirect_uri),
-        urlencode(&scopes),
-        state_param,
-        challenge,
-    )))
-}
-
-/// The token endpoint (None for oidc until discovery resolves).
-fn token_endpoint(provider: &OAuthProvider) -> Option<String> {
-    match provider.provider_type.as_str() {
-        "builtin:github" => Some("https://github.com/login/oauth/access_token".to_owned()),
-        // Feishu v2: app credentials in the form body.
-        "builtin:feishu" => {
-            Some("https://open.feishu.cn/open-apis/authen/v2/oauth/token".to_owned())
-        }
-        "builtin:erp" => Some(format!(
-            "{}/api/oauth/token",
-            absolute_base(provider.base_url.as_deref()?)?
-        )),
         _ => None,
     }
 }
 
-/// The userinfo endpoint (None for oidc until discovery resolves).
-fn userinfo_endpoint(provider: &OAuthProvider) -> Option<String> {
-    match provider.provider_type.as_str() {
-        "builtin:github" => Some("https://api.github.com/user".to_owned()),
-        // Feishu v2's token response itself carries the user identity.
-        "builtin:feishu" => None,
-        // The ERP provider mounts userinfo under its `/api` prefix
-        // (`/api/oauth/userinfo`, alongside `/api/oauth/token`). The bare
-        // `/oauth/userinfo` is NOT an ERP route: its host-split middleware
-        // 307s the request to the staff admin face, the callback's
-        // server-side GET follows into an HTML login page, and the decode
-        // dies with "error decoding response body" (the 2026-11-24
-        // res.celestia.world report). Both token and userinfo URLs are
-        // derived from `base_url` here — the provider row carries no
-        // per-endpoint fields.
-        //
-        // MUT:erp-userinfo-prefix — reverting to the bare `/oauth/userinfo`
-        // makes both end-to-end OAuth cases fail against the `/api`-mounted
-        // stub (`routes.rs`, `oauth_end_to_end_against_a_local_stub_provider`
-        // and `oauth_second_login_is_idempotent`).
-        "builtin:erp" => Some(format!(
-            "{}/api/oauth/userinfo",
-            absolute_base(provider.base_url.as_deref()?)?
-        )),
-        _ => None,
+/// The scopes to ask for: the operator's override when present, else the
+/// type's mandatory set.
+fn scopes_for(provider: &OAuthProvider, endpoints: &Endpoints) -> Vec<String> {
+    match provider.scopes.as_deref().map(str::trim) {
+        Some(raw) if !raw.is_empty() => raw.split_whitespace().map(str::to_owned).collect(),
+        _ => endpoints
+            .default_scopes
+            .unwrap_or_default()
+            .iter()
+            .map(|scope| (*scope).to_owned())
+            .collect(),
     }
 }
 
 fn absolute_base(base: &str) -> Option<&str> {
     let trimmed = base.trim();
     (!trimmed.is_empty()).then_some(trimmed)
-}
-
-fn urlencode(value: &str) -> String {
-    // The `url` crate's form serializer without the trailing '+' swap.
-    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
-    serializer.append_pair("", value);
-    let encoded = serializer.finish();
-    encoded.trim_start_matches('=').to_owned()
 }
 
 // ── OIDC discovery (cached, negative-cached) ───────────────────────────
@@ -435,6 +634,9 @@ pub struct DiscoveryDocument {
     pub token_endpoint: Option<String>,
     /// `userinfo_endpoint`.
     pub userinfo_endpoint: Option<String>,
+    /// The document's own `issuer` (the string its tokens must name).
+    #[serde(default)]
+    pub issuer: Option<String>,
 }
 
 struct DiscoveryCacheEntry {
@@ -523,21 +725,213 @@ async fn discover(state: &AppState, issuer: &str) -> Result<Option<DiscoveryDocu
     Ok(document)
 }
 
-// ── PKCE ───────────────────────────────────────────────────────────────
+// ── the attempt store ──────────────────────────────────────────────────
 
-/// A fresh PKCE S256 pair (verifier, challenge).
-pub fn pkce_s256_pair() -> (String, String) {
-    // 64 hex chars from two v4 UUIDs — within RFC 7636's 43..128
-    // unreserved-character verifier band.
-    let verifier = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    let challenge = pkce_challenge(&verifier);
-    (verifier, challenge)
+/// The in-memory store of in-flight sign-ins (kirino's
+/// [`LoginAttemptStore`](KirinoAttemptStore) contract), behind
+/// `crate::State`.
+///
+/// Nothing survives a restart — an in-flight sign-in simply starts over —
+/// and nothing here is ever persisted. Unlike kirino's reference store this
+/// one is **bounded**: the start route is unauthenticated and unrestricted,
+/// so an unbounded map would let any visitor grow the process's memory one
+/// redirect at a time.
+#[derive(Debug, Clone, Default)]
+pub struct LoginAttemptStore {
+    attempts: std::sync::Arc<Mutex<HashMap<String, LoginAttempt>>>,
 }
 
-/// The S256 challenge for a verifier (BASE64URL(SHA-256), no padding).
-pub fn pkce_challenge(verifier: &str) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(sha2::Sha256::digest(verifier.as_bytes()))
+impl LoginAttemptStore {
+    /// An empty store.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// How many attempts are in flight (cap diagnostics, and the test that
+    /// pins the bound).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.attempts
+            .lock()
+            .map(|attempts| attempts.len())
+            .unwrap_or_default()
+    }
+
+    /// Whether no attempt is in flight.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[async_trait::async_trait]
+impl KirinoAttemptStore for LoginAttemptStore {
+    async fn put(&self, attempt: LoginAttempt) -> anyhow::Result<()> {
+        let mut attempts = self
+            .attempts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the in-flight sign-in store is poisoned"))?;
+        // Make room BEFORE inserting, so the map never exceeds the cap: first
+        // whatever has already expired (the cheap half), then — if a flood of
+        // live attempts filled it — the oldest one. The start route is
+        // unauthenticated, so being evicted is part of the contract: that
+        // login simply starts over.
+        if attempts.len() >= OAUTH_ATTEMPT_CAP {
+            let now = Utc::now();
+            attempts.retain(|_, kept| !kept.is_expired(now));
+            if attempts.len() >= OAUTH_ATTEMPT_CAP {
+                let oldest = attempts
+                    .iter()
+                    .min_by_key(|(_, kept)| kept.created_at)
+                    .map(|(state, _)| state.clone());
+                if let Some(oldest) = oldest {
+                    attempts.remove(&oldest);
+                }
+            }
+        }
+        attempts.insert(attempt.state.clone(), attempt);
+        Ok(())
+    }
+
+    async fn take(&self, state: &str) -> anyhow::Result<Option<LoginAttempt>> {
+        let mut attempts = self
+            .attempts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the in-flight sign-in store is poisoned"))?;
+        // One lock spans lookup, expiry check and removal: a replayed
+        // callback finds nothing, and an expired attempt is never handed out.
+        let now = Utc::now();
+        match attempts.remove(state) {
+            Some(attempt) if !attempt.is_expired(now) => Ok(Some(attempt)),
+            _ => {
+                attempts.retain(|_, kept| !kept.is_expired(now));
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// The transport: built on first use.
+///
+/// The workspace runs rustls with a provider the `ReqwestFetcher` installs
+/// itself, and building the client is what installs it — doing that eagerly
+/// would make pre-network unit tests depend on who ran first (arona's
+/// precedent).
+fn fetch_transport() -> anyhow::Result<&'static plana_identity_relay::ReqwestFetcher> {
+    static TRANSPORT: OnceLock<plana_identity_relay::ReqwestFetcher> = OnceLock::new();
+    if let Some(fetcher) = TRANSPORT.get() {
+        return Ok(fetcher);
+    }
+    let fetcher =
+        plana_identity_relay::ReqwestFetcher::new().map_err(|err| anyhow::anyhow!(err))?;
+    // A concurrent caller may have won the race; either client serves.
+    let _ = TRANSPORT.set(fetcher);
+    TRANSPORT
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("the OAuth transport could not be built"))
+}
+
+// ── provider rows → kirino metadata ────────────────────────────────────
+
+/// One provider row resolved into everything kirino's protocol core needs.
+#[derive(Debug, Clone)]
+pub struct ProviderRoute {
+    /// The protocol metadata (endpoints, token encoding, scopes, issuer).
+    pub metadata: ProviderMetadata,
+    /// Confidential when the row carries a secret, public otherwise.
+    pub client: ClientAuth,
+}
+
+/// Assemble a provider row into the core's metadata, or `Err` naming why
+/// the row cannot complete a login (an unresolvable endpoint, an unusable
+/// URL).
+///
+/// `oidc` rows resolve their endpoints through the discovery cache and are
+/// therefore async; every built-in type assembles synchronously from its
+/// endpoint family.
+pub async fn resolve_route(
+    state: &AppState,
+    provider: &OAuthProvider,
+) -> Result<ProviderRoute, ApiError> {
+    let issuer_url = provider
+        .issuer_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(str::to_owned);
+
+    let endpoints = if provider.provider_type == "oidc" {
+        let issuer = issuer_url
+            .clone()
+            .ok_or_else(|| ApiError::bad_request("oidc provider needs an issuer_url"))?;
+        let document = discover(state, &issuer).await?.ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "OIDC discovery failed for '{issuer}' — check the issuer_url"
+            ))
+        })?;
+        let authorize = document.authorization_endpoint.ok_or_else(|| {
+            ApiError::bad_request("discovery document names no authorization_endpoint")
+        })?;
+        let token = document
+            .token_endpoint
+            .ok_or_else(|| ApiError::bad_request("discovery document names no token_endpoint"))?;
+        Endpoints {
+            authorize,
+            token,
+            userinfo: document.userinfo_endpoint,
+            token_body: TokenBody::Form,
+            default_scopes: Some(&["openid", "profile"]),
+            issuer: Some(document.issuer.unwrap_or(issuer)),
+        }
+    } else {
+        builtin_endpoints(provider).ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "provider '{}' has no usable endpoints (check base_url)",
+                provider.id
+            ))
+        })?
+    };
+
+    let parse = |what: &str, raw: &str| -> Result<url::Url, ApiError> {
+        url::Url::parse(raw).map_err(|err| {
+            ApiError::bad_request(format!(
+                "provider '{}' {what} is not a URL: {err}",
+                provider.id
+            ))
+        })
+    };
+    let authorize = parse("authorize endpoint", &endpoints.authorize)?;
+    let token = parse("token endpoint", &endpoints.token)?;
+    let userinfo = match endpoints.userinfo.as_deref() {
+        Some(raw) => Some(parse("userinfo endpoint", raw)?),
+        None => None,
+    };
+
+    let client = if provider.client_secret.is_empty() {
+        ClientAuth::Public {
+            client_id: provider.client_id.clone(),
+        }
+    } else {
+        ClientAuth::Confidential {
+            client_id: provider.client_id.clone(),
+            client_secret: provider.client_secret.clone().into(),
+        }
+    };
+
+    let scopes = scopes_for(provider, &endpoints);
+    Ok(ProviderRoute {
+        metadata: ProviderMetadata {
+            provider: provider.id.clone(),
+            issuer: endpoints.issuer,
+            authorize_url: authorize,
+            token_url: token,
+            userinfo_url: userinfo,
+            token_body: endpoints.token_body,
+            scopes,
+        },
+        client,
+    })
 }
 
 // ── the flow handlers ──────────────────────────────────────────────────
@@ -553,32 +947,41 @@ pub async fn redirect(
         return bad_request("OAuth provider not configured or disabled");
     };
 
-    let state_param = Uuid::new_v4().simple().to_string();
-    let (verifier, challenge) = pkce_s256_pair();
-    let redirect_uri = callback_uri(&state, &headers, &provider);
-
-    let Some(url) = resolve_authorize_url(&state, config, &redirect_uri, &state_param, &challenge)
-        .await
-        .unwrap_or(None)
-    else {
-        return bad_request(&format!(
-            "Provider '{provider}' could not resolve an authorize URL"
-        ));
+    let route = match resolve_route(&state, config).await {
+        Ok(route) => route,
+        Err(err) => return bad_request(&err.error),
+    };
+    let redirect_uri = match callback_url(&state, &headers, &provider) {
+        Ok(url) => url,
+        Err(err) => return bad_request(&err.error),
     };
 
-    // state + verifier in ONE HttpOnly cookie (600 s), scoped to the
-    // callback path, SameSite=Lax (the provider's redirect back is a
-    // top-level navigation). The PROVIDER rides the value too
-    // (`|`-joined: provider ids allow dots, but never a pipe), so a
-    // state minted for one provider cannot be replayed against
-    // another's callback.
-    let cookie = format!(
-        "{OAUTH_STATE_COOKIE}={provider}|{state_param}|{verifier}; Max-Age={OAUTH_STATE_MAX_AGE_SECS}; \
-         HttpOnly; SameSite=Lax; Path=/api/v1/auth/oauth"
-    );
+    // The browser binding: a fresh 32-byte RNG value, HttpOnly, scoped to
+    // the OAuth routes, SameSite=Lax (the provider's redirect back is a
+    // top-level navigation). kirino refuses a callback that presents a
+    // different binding — the login-CSRF gate.
+    let binding = new_browser_binding();
+    let attempt = match kirino_begin_with_binding(
+        state.oauth_attempts.as_ref(),
+        route.metadata.provider.clone(),
+        None,
+        Some(binding.clone()),
+        Duration::seconds(OAUTH_ATTEMPT_TTL_SECS),
+    )
+    .await
+    {
+        Ok(attempt) => attempt,
+        Err(err) => return bad_gateway(&format!("OAuth attempt could not be parked: {err}")),
+    };
+
+    let target = kirino_authorize_url(&route.metadata, &route.client, &redirect_uri, &attempt);
+    let cookie = binding_cookie(&binding, OAUTH_STATE_MAX_AGE_SECS);
     (
         StatusCode::FOUND,
-        [(header::SET_COOKIE, cookie), (header::LOCATION, url)],
+        [
+            (header::SET_COOKIE, cookie),
+            (header::LOCATION, target.to_string()),
+        ],
     )
         .into_response()
 }
@@ -588,156 +991,95 @@ pub async fn callback(
     State(state): State<AppState>,
     Path(provider): Path<String>,
     headers: HeaderMap,
-    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    // Strict state check: cookie vs provider echo (CSRF defense), with
-    // the provider segment bound in — the cookie must name THIS
-    // provider (a state minted for another one is a replay).
-    let Some(cookie_value) = cookie_value(&headers, OAUTH_STATE_COOKIE) else {
-        return forbidden("OAuth state cookie missing — restart the login");
-    };
-    let Some((cookie_provider, rest)) = cookie_value.split_once('|') else {
-        return forbidden("malformed OAuth state cookie");
-    };
-    let Some((cookie_state, verifier)) = rest.split_once('|') else {
-        return forbidden("malformed OAuth state cookie");
-    };
-    if cookie_provider != provider {
-        return forbidden("OAuth state cookie was minted for another provider");
-    }
-    let Some(provider_state) = params.get("state") else {
-        return forbidden("OAuth callback missing state parameter");
-    };
-    if cookie_state != provider_state {
-        return forbidden("OAuth state parameter mismatch — possible CSRF attack");
-    }
-    let Some(code) = params.get("code") else {
-        return bad_request("OAuth callback missing code parameter");
+    let binding = cookie_value(&headers, OAUTH_BINDING_COOKIE);
+    let query = KirinoCallbackQuery {
+        code: params.get("code").cloned(),
+        state: params.get("state").cloned(),
+        error: params.get("error").cloned(),
+        error_description: params.get("error_description").cloned(),
     };
 
+    // The provider vanished or was disabled between the two legs: the
+    // attempt dies with the row rather than resolving endpoints from a
+    // catalog no longer offered.
     let providers = load_providers(&state).await;
     let Some(config) = providers.iter().find(|p| p.id == provider && p.enabled) else {
         return bad_request("OAuth provider not configured or disabled");
     };
+    let route = match resolve_route(&state, config).await {
+        Ok(route) => route,
+        Err(err) => return bad_request(&err.error),
+    };
+    let redirect_uri = match callback_url(&state, &headers, &provider) {
+        Ok(url) => url,
+        Err(err) => return bad_request(&err.error),
+    };
+    let transport = match fetch_transport() {
+        Ok(transport) => transport,
+        Err(err) => return bad_gateway(&format!("OAuth transport unavailable: {err}")),
+    };
 
-    let redirect_uri = callback_uri(&state, &headers, &provider);
+    let relay = match kirino_finish(
+        transport,
+        state.oauth_attempts.as_ref(),
+        &route.metadata,
+        &route.client,
+        &redirect_uri,
+        KirinoCallback::new(&query, binding.as_deref(), &[]),
+    )
+    .await
+    {
+        Ok(relay) => relay,
+        Err(problem) => return refusal_response(problem),
+    };
 
     let secure_cookie = crate::origin::serves_https(&state, &headers);
-    match run_exchange_and_session(&state, config, &redirect_uri, code, verifier, secure_cookie)
-        .await
-    {
+    match mint_session(&state, &provider, &relay, secure_cookie).await {
         Ok(response) => {
-            // Clear the flow cookie alongside the session.
-            let cleared = format!(
-                "{OAUTH_STATE_COOKIE}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; \
-                 HttpOnly; SameSite=Lax; Path=/api/v1/auth/oauth"
-            );
             let mut response = response;
+            // Clear the binding cookie alongside the session.
             response
                 .headers_mut()
-                .append(header::SET_COOKIE, cleared.parse().unwrap());
+                .append(header::SET_COOKIE, cleared_binding_cookie());
             response
         }
-        Err(err) => (
-            StatusCode::BAD_GATEWAY,
-            [(header::CONTENT_TYPE, "application/json")],
-            serde_json::json!({"error": err.error}).to_string(),
-        )
-            .into_response(),
+        Err(err) => bad_gateway(&err.error),
     }
 }
 
-/// The token exchange + userinfo + find_or_create + session planting.
-async fn run_exchange_and_session(
+/// Map kirino's typed refusal onto the HTTP status the pre-kirino lane
+/// answered (kept so a client's error handling does not drift).
+fn refusal_response(problem: CallbackProblem) -> Response {
+    let message = problem.to_string();
+    match problem {
+        CallbackProblem::UnknownState
+        | CallbackProblem::BindingMismatch
+        | CallbackProblem::ProviderMismatch => forbidden(&message),
+        CallbackProblem::MissingState
+        | CallbackProblem::MissingCode
+        | CallbackProblem::ProviderDenied { .. } => bad_request(&message),
+        CallbackProblem::TokenInvalid(_)
+        | CallbackProblem::IdentityEmpty
+        | CallbackProblem::IdTokenInvalid(_)
+        | CallbackProblem::Transport(_) => bad_gateway(&message),
+    }
+}
+
+/// The account half: resolve the subject, `find_or_create_user`, plant the
+/// ordinary session cookie, land on the SPA root.
+async fn mint_session(
     state: &AppState,
-    config: &OAuthProvider,
-    redirect_uri: &str,
-    code: &str,
-    verifier: &str,
+    provider: &str,
+    relay: &RelayLogin,
     secure_cookie: bool,
 ) -> Result<Response, ApiError> {
-    let token_url = match token_endpoint(config) {
-        Some(url) => url,
-        None => {
-            let issuer = config.issuer_url.as_deref().unwrap_or_default();
-            match discover(state, issuer)
-                .await?
-                .and_then(|d| d.token_endpoint)
-            {
-                Some(url) => url,
-                None => return Err(ApiError::bad_request("no token endpoint configured")),
-            }
-        }
-    };
-
-    let mut form: Vec<(&str, &str)> = vec![
-        ("grant_type", "authorization_code"),
-        ("code", code),
-        ("redirect_uri", redirect_uri),
-        ("client_id", config.client_id.as_str()),
-        ("code_verifier", verifier),
-    ];
-    if !config.client_secret.is_empty() {
-        form.push(("client_secret", config.client_secret.as_str()));
-    }
-
-    let token_response = state
-        .http_client
-        .post(&token_url)
-        .header(header::ACCEPT, "application/json")
-        .form(&form)
-        .send()
-        .await
-        .map_err(|err| ApiError::bad_gateway(format!("token exchange failed: {err}")))?;
-    if !token_response.status().is_success() {
-        let status = token_response.status();
-        let body = token_response.text().await.unwrap_or_default();
-        return Err(ApiError::bad_gateway(format!(
-            "token exchange returned {status}: {body}"
-        )));
-    }
-    let token_json: serde_json::Value = token_response
-        .json()
-        .await
-        .map_err(|err| ApiError::bad_gateway(format!("token response: {err}")))?;
-    let access_token = token_json
-        .get("access_token")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| ApiError::bad_gateway("token response missing access_token"))?
-        .to_owned();
-
-    // Userinfo: dedicated endpoint, or (feishu v2) the token payload.
-    let userinfo: serde_json::Value = match userinfo_endpoint(config) {
-        Some(url) => {
-            let response = state
-                .http_client
-                .get(&url)
-                .header(header::AUTHORIZATION, format!("Bearer {access_token}"))
-                .send()
-                .await
-                .map_err(|err| ApiError::bad_gateway(format!("userinfo failed: {err}")))?;
-            if !response.status().is_success() {
-                return Err(ApiError::bad_gateway(format!(
-                    "userinfo returned {}",
-                    response.status()
-                )));
-            }
-            response
-                .json()
-                .await
-                .map_err(|err| ApiError::bad_gateway(format!("userinfo body: {err}")))?
-        }
-        None => token_json,
-    };
-
-    let subject = subject_from_userinfo(&userinfo)
+    let subject = subject_from_identity(&relay.profile)
         .ok_or_else(|| ApiError::bad_gateway("userinfo carried no subject"))?;
-    let display_name = ["name", "preferred_username", "login", "display_name"]
-        .iter()
-        .find_map(|key| userinfo.get(*key).and_then(|v| v.as_str()))
-        .map(str::to_owned);
+    let display_name = display_name_from_identity(&relay.profile);
 
-    let user = find_or_create_user(state, &config.id, &subject, display_name.as_deref()).await?;
+    let user = find_or_create_user(state, provider, &subject, display_name.as_deref()).await?;
 
     // The ordinary session cookie (same shape as the password login).
     let now = jiff::Timestamp::now();
@@ -763,17 +1105,24 @@ async fn run_exchange_and_session(
         StatusCode::FOUND,
         [
             (header::SET_COOKIE, cookie),
-            (header::LOCATION, "/".to_owned()),
+            (header::LOCATION, OAUTH_LANDING.to_owned()),
         ],
         axum::Json(session),
     )
         .into_response())
 }
 
-/// Extract the provider subject from a userinfo payload: `sub`
-/// (oidc/erp) | `id` (github, a JSON NUMBER) | `open_id` (feishu).
-/// Numbers stringify — GitHub's /user answers `{"id": 12345678}`, and
-/// an `as_str()`-only read would reject every GitHub login with 502.
+// ── claim mapping ──────────────────────────────────────────────────────
+
+/// The provider subject from the identity the core resolved: `sub`
+/// (oidc/erp) | `id` (github, a JSON NUMBER) | `open_id` (feishu). Numbers
+/// stringify — GitHub's `/user` answers `{"id": 12345678}`, and an
+/// `as_str()`-only read would reject every GitHub login.
+///
+/// kirino's own `subject_from_userinfo` is the fallback for the spellings it
+/// knows beyond these three; the local ladder stays first so the numeric
+/// GitHub `id` and the numeric discipline ("`sub` is a string, `id` may be a
+/// number") are exactly what this service has always minted.
 pub fn subject_from_userinfo(userinfo: &serde_json::Value) -> Option<String> {
     ["sub", "id", "open_id"].iter().find_map(|key| {
         userinfo.get(*key).and_then(|v| {
@@ -782,6 +1131,33 @@ pub fn subject_from_userinfo(userinfo: &serde_json::Value) -> Option<String> {
                 .or_else(|| v.as_u64().filter(|_| *key == "id").map(|n| n.to_string()))
         })
     })
+}
+
+/// The subject of a resolved identity: the raw claims first (the vendor
+/// ladder above), then the core's own reading of them.
+fn subject_from_identity(profile: &ProviderIdentity) -> Option<String> {
+    subject_from_userinfo(&profile.claims).or_else(|| {
+        let subject = profile.subject.trim();
+        (!subject.is_empty()).then(|| subject.to_owned())
+    })
+}
+
+/// The display name a first login mints with: the vendor's own spellings
+/// first (GitHub `login` never appears in an OIDC name ladder), then the
+/// core's reading.
+fn display_name_from_identity(profile: &ProviderIdentity) -> Option<String> {
+    ["name", "preferred_username", "login", "display_name"]
+        .iter()
+        .find_map(|key| {
+            profile
+                .claims
+                .get(*key)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| profile.display_name.clone())
 }
 
 /// `find_or_create_user` over the `oauth_identities` table: an existing
@@ -820,22 +1196,15 @@ pub async fn find_or_create_user(
         .map(str::to_owned)
         .unwrap_or_else(|| username.clone());
 
-    let candidate = NewUser {
+    // The prefixed name the first login would take; a collision falls back
+    // to a unique suffix (see the Conflict arm).
+    let candidate = i0721_store::CreateUser {
         username: username.clone(),
-        password: String::new(),
-        display_name: Some(display),
-        role: Some(Role::Member),
+        display_name: display,
+        role: Role::Member,
+        password_hash: None,
     };
-    let user = match state
-        .store
-        .create_user(i0721_store::CreateUser {
-            username: candidate.username.clone(),
-            display_name: candidate.display_name.clone().unwrap_or(username.clone()),
-            role: Role::Member,
-            password_hash: None,
-        })
-        .await
-    {
+    let user = match state.store.create_user(candidate.clone()).await {
         Ok(record) => record,
         // Lost the mint race (or the prefixed name collided): the
         // binding is the identity — if it exists now, ride it; else the
@@ -859,9 +1228,7 @@ pub async fn find_or_create_user(
                 .store
                 .create_user(i0721_store::CreateUser {
                     username: unique,
-                    display_name: candidate.display_name.unwrap_or(username.clone()),
-                    role: Role::Member,
-                    password_hash: None,
+                    ..candidate
                 })
                 .await
                 .map_err(ApiError::from)?
@@ -876,6 +1243,140 @@ pub async fn find_or_create_user(
     Ok(user)
 }
 
+// ── the login policy ───────────────────────────────────────────────────
+
+/// The start route a method row navigates to (the browser leg, same-origin).
+fn method_href(provider_id: &str) -> String {
+    format!("{OAUTH_PATH_PREFIX}/{}", urlencoding::encode(provider_id))
+}
+
+/// Assemble the login-methods document: the legacy fields plus the family
+/// [`LoginPolicy`].
+///
+/// The mode is derived, never configured: a catalog with at least one
+/// enabled provider is `federated`, an empty one is `local`. The `policy`
+/// is validated before it is returned; a document that disagrees with itself
+/// is not served (the caller answers 500 and logs it) — EXCEPT for the one
+/// reachable posture described in [`publish_policy`].
+pub fn login_methods_document(password: bool, providers: &[OAuthProvider]) -> LoginMethods {
+    let enabled: Vec<&OAuthProvider> = providers.iter().filter(|p| p.enabled).collect();
+    let legacy = enabled
+        .iter()
+        .map(|provider| LoginMethodProvider {
+            id: provider.id.clone(),
+            display_name: provider.display_name.clone(),
+            provider_type: provider.provider_type.clone(),
+            icon: provider.icon.clone(),
+        })
+        .collect();
+    let policy = publish_policy(password, &enabled);
+    LoginMethods {
+        password,
+        providers: legacy,
+        policy,
+    }
+}
+
+/// The family login-policy document for this deployment's catalog.
+///
+/// The method list is the SAME catalog the legacy `providers[]` payload
+/// carries, in the same order, with the same ids and labels — one catalog,
+/// two renderings, so the two documents cannot disagree about which
+/// entrances exist. A disabled row is not an entrance and never reaches the
+/// document, whichever caller built the slice.
+///
+/// # Errors
+///
+/// The first [`LoginPolicyViolation`], except for the one reachable posture
+/// the login-less document below describes: a deployment that offers no
+/// login method at all is published rather than refused. Every other
+/// violation means the catalog and the mode disagree, and that must never
+/// reach a UI.
+pub fn build_login_policy(
+    password: bool,
+    providers: &[&OAuthProvider],
+) -> Result<LoginPolicy, LoginPolicyViolation> {
+    validated_policy(password, providers).map(|policy| policy_to_wire(&policy))
+}
+
+/// kirino's own validated document for the catalog (the source of truth the
+/// published wire shape is projected from).
+fn validated_policy(
+    password: bool,
+    providers: &[&OAuthProvider],
+) -> Result<KirinoLoginPolicy, LoginPolicyViolation> {
+    let methods: Vec<KirinoMethodDescriptor> = providers
+        .iter()
+        .filter(|provider| provider.enabled)
+        .map(|provider| {
+            KirinoMethodDescriptor::oauth(
+                provider.id.clone(),
+                method_href(&provider.id),
+                provider.display_name.clone(),
+            )
+        })
+        .collect();
+    let mode = if methods.is_empty() {
+        KirinoAuthMode::Local
+    } else {
+        KirinoAuthMode::Federated
+    };
+    let policy = KirinoLoginPolicy {
+        version: LOGIN_POLICY_VERSION,
+        mode,
+        password,
+        methods,
+        relay: None,
+    };
+    policy.validate().map(|()| policy)
+}
+
+/// [`build_login_policy`] for the login-methods endpoint: a document that
+/// fails validation OTHER than the reachable login-less posture is replaced
+/// by the login-less document (and logged), never handed to a UI.
+fn publish_policy(password: bool, providers: &[&OAuthProvider]) -> LoginPolicy {
+    match validated_policy(password, providers) {
+        Ok(policy) => policy_to_wire(&policy),
+        // A deployment with the local-password kill-switch off and no usable
+        // provider has NO entrance at all. The contract calls that document
+        // inconsistent — `local` with no password reads as "nobody can sign
+        // in" — but it is a real, reachable configuration: the switch is off
+        // while the first provider is still being onboarded. Answering 500
+        // here would empty the login page for every visitor instead of
+        // showing them (and the operator) the truth, so the honest login-less
+        // document is published: `local`, no password, no method. It is the
+        // ONE document served without passing `validate()`, and the warning
+        // names the invariant it breaks (chest's precedent).
+        Err(LoginPolicyViolation::PasswordMissingInLocalMode) => {
+            tracing::warn!(
+                "login policy: this configuration offers no login method at all — the local \
+                 password switch is off and no usable OAuth provider is configured; serving \
+                 the login-less `local` document (password: false, methods: []) instead"
+            );
+            policy_to_wire(&KirinoLoginPolicy {
+                version: LOGIN_POLICY_VERSION,
+                mode: KirinoAuthMode::Local,
+                password: false,
+                methods: Vec::new(),
+                relay: None,
+            })
+        }
+        // Every other violation means the catalog and the mode disagree:
+        // serve the honest login-less document rather than a policy the UI
+        // cannot honour, and name the invariant that broke.
+        Err(violation) => {
+            tracing::error!("login policy: {violation}; serving the login-less `local` document");
+            policy_to_wire(&KirinoLoginPolicy {
+                version: LOGIN_POLICY_VERSION,
+                mode: KirinoAuthMode::Local,
+                password: false,
+                methods: Vec::new(),
+                relay: None,
+            })
+        }
+    }
+}
+
 // ── shared helpers ─────────────────────────────────────────────────────
 
 /// The callback URI as the provider sees it: the deployment's public
@@ -885,10 +1386,15 @@ pub async fn find_or_create_user(
 /// is still better than refusing the flow outright (the misconfiguration
 /// is visible in the provider's own error). The MCP share lane, which
 /// hands the URL to a human, refuses instead.
-fn callback_uri(state: &AppState, headers: &HeaderMap, provider: &str) -> String {
+fn callback_url(
+    state: &AppState,
+    headers: &HeaderMap,
+    provider: &str,
+) -> Result<url::Url, ApiError> {
     let origin = crate::origin::public_origin(state, headers)
         .unwrap_or_else(|| "http://localhost".to_owned());
-    format!("{origin}/api/v1/auth/oauth/{provider}/callback")
+    let raw = format!("{origin}{OAUTH_PATH_PREFIX}/{provider}/callback");
+    url::Url::parse(&raw).map_err(|err| ApiError::bad_request(format!("callback URI: {err}")))
 }
 
 /// Read one cookie's value from a Cookie header.
@@ -901,6 +1407,43 @@ fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Fresh browser binding (32 bytes of RNG, hex).
+fn new_browser_binding() -> String {
+    let mut raw = [0u8; 32];
+    getrandom_bytes(&mut raw);
+    raw.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Fill `buffer` from the OS RNG (the workspace's `getrandom` primitive,
+/// the same one behind every share/key token here).
+fn getrandom_bytes(buffer: &mut [u8]) {
+    match getrandom::fill(buffer) {
+        Ok(()) => {}
+        // The OS RNG is a hard dependency of every credential this service
+        // mints; a failure here means the process cannot be trusted to make
+        // one at all.
+        Err(err) => panic!("the OS RNG failed: {err}"),
+    }
+}
+
+/// The binding cookie. `max_age` 0 clears it.
+fn binding_cookie(value: &str, max_age: u64) -> String {
+    format!(
+        "{OAUTH_BINDING_COOKIE}={value}; Max-Age={max_age}; HttpOnly; SameSite=Lax; \
+         Path={OAUTH_PATH_PREFIX}"
+    )
+}
+
+fn cleared_binding_cookie() -> header::HeaderValue {
+    let cleared = format!(
+        "{OAUTH_BINDING_COOKIE}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; \
+         HttpOnly; SameSite=Lax; Path={OAUTH_PATH_PREFIX}"
+    );
+    cleared
+        .parse()
+        .unwrap_or_else(|_| header::HeaderValue::from_static(""))
 }
 
 fn bad_request(message: &str) -> Response {
@@ -921,21 +1464,50 @@ fn forbidden(message: &str) -> Response {
         .into_response()
 }
 
+fn bad_gateway(message: &str) -> Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::json!({"error": message}).to_string(),
+    )
+        .into_response()
+}
+
+/// The percent-encoder the login-policy `href` uses (a provider id is
+/// already path-safe, but the encoder keeps the rule true for every id).
+mod urlencoding {
+    /// Percent-encode everything outside `[A-Za-z0-9._~-]` (RFC 3986
+    /// unreserved), which is what a path segment needs.
+    pub fn encode(raw: &str) -> String {
+        raw.bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'~' | b'-') {
+                    (byte as char).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn pkce_challenge_is_s256_of_the_verifier() {
-        let (verifier, challenge) = pkce_s256_pair();
-        assert_eq!(challenge, pkce_challenge(&verifier));
-        // RFC 7636 §4.2: BASE64URL-ENCODE(SHA256(ASCII(verifier))).
-        let expected = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(sha2::Sha256::digest(verifier.as_bytes()));
-        assert_eq!(challenge, expected);
-        // Verifier charset/length band (43..=128 unreserved chars).
-        assert!((43..=128).contains(&verifier.len()));
-        assert!(verifier.chars().all(|c| c.is_ascii_alphanumeric()));
+    fn row(id: &str, provider_type: &str) -> OAuthProvider {
+        OAuthProvider {
+            id: id.to_owned(),
+            display_name: format!("{id} label"),
+            provider_type: provider_type.to_owned(),
+            client_id: "cid".to_owned(),
+            client_secret: "super-secret-value-9999".to_owned(),
+            base_url: Some("https://sso.example".to_owned()),
+            issuer_url: None,
+            scopes: None,
+            enabled: true,
+            icon: None,
+        }
     }
 
     #[test]
@@ -958,19 +1530,7 @@ mod tests {
 
     #[test]
     fn masked_never_carries_the_secret() {
-        let row = OAuthProvider {
-            id: "erp".to_owned(),
-            display_name: "ERP".to_owned(),
-            provider_type: "builtin:erp".to_owned(),
-            client_id: "cid".to_owned(),
-            client_secret: "super-secret-value-9999".to_owned(),
-            base_url: Some("https://sso.example".to_owned()),
-            issuer_url: None,
-            scopes: None,
-            enabled: true,
-            icon: None,
-        };
-        let masked = row.masked();
+        let masked = row("erp", "builtin:erp").masked();
         assert!(masked.has_secret);
         assert_eq!(masked.secret_tail, "9999");
         let json = serde_json::to_string(&masked).unwrap();
@@ -978,34 +1538,6 @@ mod tests {
             !json.contains("super-secret"),
             "the masked projection must never serialize the secret"
         );
-    }
-
-    #[test]
-    fn builtin_authorize_urls_carry_pkce_and_state() {
-        let row = OAuthProvider {
-            id: "erp".to_owned(),
-            display_name: "ERP".to_owned(),
-            provider_type: "builtin:erp".to_owned(),
-            client_id: "cid".to_owned(),
-            client_secret: String::new(),
-            base_url: Some("https://sso.example".to_owned()),
-            issuer_url: None,
-            scopes: None,
-            enabled: true,
-            icon: None,
-        };
-        let url = authorize_url(&row, "http://res.test/cb", "st123", "ch456").unwrap();
-        assert!(url.starts_with("https://sso.example/oauth/authorize?"));
-        assert!(url.contains("state=st123"));
-        assert!(url.contains("code_challenge=ch456"));
-        assert!(url.contains("code_challenge_method=S256"));
-
-        // GitHub carries PKCE too; feishu's v1 authorize has no PKCE slot
-        // (the flow binds through app credentials + state).
-        let mut github = row.clone();
-        github.provider_type = "builtin:github".to_owned();
-        let url = authorize_url(&github, "http://res.test/cb", "st", "ch").unwrap();
-        assert!(url.contains("code_challenge_method=S256"));
     }
 
     #[test]

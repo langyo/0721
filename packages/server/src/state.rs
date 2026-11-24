@@ -8,7 +8,7 @@ use tokio::sync::Semaphore;
 use crate::auth::{JwtSigner, LoginLimiter};
 use crate::blob::BlobStore;
 use crate::config::Config;
-use crate::oauth::DiscoveryCache;
+use crate::oauth::{DiscoveryCache, LoginAttemptStore};
 use crate::ws_tickets::WsTicketStore;
 
 /// Everything a handler needs.
@@ -29,10 +29,15 @@ pub struct AppState {
     /// One-time WebSocket admission tickets (in-memory: single-instance
     /// deployments — see `ws_tickets`).
     pub ws_tickets: Arc<WsTicketStore>,
-    /// The server-side OAuth HTTP client (token exchange + discovery).
+    /// The server-side HTTP client for OIDC discovery. The OAuth token
+    /// exchange and UserInfo read do NOT ride it: they go through kirino's
+    /// `HttpFetcher` seam (`plana-identity-relay`, built on first use).
     pub http_client: reqwest::Client,
     /// In-process OIDC discovery cache (positive + negative).
     pub discovery: Arc<DiscoveryCache>,
+    /// In-flight OAuth sign-ins (kirino's `LoginAttemptStore`; one-time and
+    /// TTL-bounded — see `oauth`).
+    pub oauth_attempts: Arc<LoginAttemptStore>,
     /// MCP SSE sessions (in-memory, TTL-pruned).
     pub mcp_sessions: crate::mcp::McpSessions,
 }
@@ -53,6 +58,7 @@ impl AppState {
             ws_tickets: Arc::new(WsTicketStore::new()),
             http_client: reqwest::Client::new(),
             discovery: Arc::new(DiscoveryCache::new()),
+            oauth_attempts: Arc::new(LoginAttemptStore::new()),
             mcp_sessions: crate::mcp::McpSessions::new(),
         }
     }
