@@ -19,11 +19,21 @@
 // byte for byte today, which makes the overlap harmless by coincidence.
 // The assertions below turn that coincidence into a pinned invariant.
 //
-// The scanner reads BRACE DEPTH, not indentation: SCSS is free-form, so
-// ` .x {` at any indentation inside another block is nested, and a
-// top-level rule may be written across many lines. Both a real nesting
-// and a real top-level rule are pinned by the self-test below, so the
-// detector cannot silently no-op.
+// The scanner reads BRACE DEPTH plus the selector text: a rule is
+// flagged when its selector sits inside another block (depth > 0) or
+// when its own compound selector demands an ancestor (`.files-page .x`,
+// `.files-page > .x`, `& .x`, `&.x`). Indentation means nothing and a
+// same-prefix name (`.x-other`) is not the target.
+//
+// KNOWN BLIND SPOTS — spellings this scanner cannot see, each pinned as
+// a documented non-detection in the self-test rather than pretended
+// away: SCSS interpolation (`#{".x"} { … }`), attribute-selector
+// landings (`[class~="x"] { … }`), and any other spelling that does not
+// literally write `.x` in a selector position. If a sheet needs one of
+// those, review the compiled CSS by hand — the guard will stay green.
+// (`App.scss`'s `#{…}` usage lives outside this guard's scope: the
+// interpolation rule in it is covered by the flat/nested shape test
+// above it.)
 
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -55,20 +65,26 @@ function stripComments(src: string): string {
 }
 
 /** One occurrence of `.<className> { … }`. */
-export interface ClassRule {
+interface ClassRule {
   /** Declarations written DIRECTLY in the block, nested rule blocks
-   *  removed and whitespace collapsed — the comparable identity of the
-   *  rule. */
+   *  removed, split on semicolons and re-joined — the comparable
+   *  identity of the rule. */
   topLevelBody: string;
   /** The brace depth the selector itself sits at (0 = top level). */
   depth: number;
+  /** True when the selector chain demands an ANCESTOR: anything but this
+   *  one class in its own compound selector (`.files-page .dialog-body`,
+   *  `.files-page > .dialog-body`, `& .dialog-body`). Depth cannot see
+   *  this — a same-string descendant sits at depth 0 and teleports just
+   *  as dead — so it is detected here, from the selector text. */
+  ancestor: boolean;
 }
 
 /** Every occurrence of `.<className> { … }` in a sheet, with balanced
  *  braces — so a block that itself contains nested rules is captured
  *  whole, and its TOP-LEVEL declarations are what `topLevelBody`
  *  carries. */
-export function classRules(src: string, className: string): ClassRule[] {
+function classRules(src: string, className: string): ClassRule[] {
   const code = stripComments(src);
   const out: ClassRule[] = [];
   let depth = 0;
@@ -92,7 +108,11 @@ export function classRules(src: string, className: string): ClassRule[] {
     // A class selector only counts where a selector may start: the
     // character before must be a delimiter (or the string start).
     const prev = i === 0 ? "" : code[i - 1]!;
-    if (prev !== "" && !/[\s,{}>+~(]/.test(prev)) {
+    // `&` immediately before the class is a SCSS parent reference
+    // (`&.dialog-body` compiles to `.page.dialog-body`) — the rule then
+    // demands the page scope just like any ancestor.
+    const afterParentRef = prev === "&";
+    if (prev !== "" && !afterParentRef && !/[\s,{}>+~(]/.test(prev)) {
       i += 1;
       continue;
     }
@@ -101,6 +121,17 @@ export function classRules(src: string, className: string): ClassRule[] {
       i += 1;
       continue;
     }
+    // The occurrence's OWN compound selector is the text between the
+    // last selector-list boundary and the class: after a `,` it is a
+    // sibling (no ancestor demanded); after a `;`/`{`/`}` nothing stands
+    // before it. Anything else in that piece — another class, an element,
+    // a combinator, a parent reference — is an ancestor the teleported
+    // element will not have. Depth cannot see `.files-page .x { … }`
+    // (it sits at depth 0); the selector text can.
+    let start = i - 1;
+    while (start >= 0 && !/[;{},]/.test(code[start]!)) start -= 1;
+    const compound = code.slice(start + 1, i).trim();
+    const ancestor = compound !== "" || afterParentRef;
     // Capture the balanced block (the `{` sits at the end of the match).
     const open = i + m[0].length - 1;
     let blockDepth = 0;
@@ -132,7 +163,7 @@ export function classRules(src: string, className: string): ClassRule[] {
       .map((line) => line.trim())
       .filter((line) => /^[-\w]+\s*:/.test(line))
       .join("; ");
-    out.push({ topLevelBody, depth });
+    out.push({ topLevelBody, depth, ancestor });
     // The block is balanced, so the outer depth is unchanged past it.
     i = close + 1;
   }
@@ -173,10 +204,42 @@ describe("teleported dialog styles", () => {
     const deep = classRules(".a { .b { .x { color: red; } } }", "x");
     expect(deep[0]!.depth).toBeGreaterThan(1);
 
+    // Same-string descendants sit at depth 0 — depth cannot see them.
+    // The selector text can, and must.
+    const descendant = classRules(".files-page .x { color: red; }", "x");
+    expect(descendant[0]!.depth).toBe(0);
+    expect(descendant[0]!.ancestor, "same-string descendant must count as an ancestor demand").toBe(true);
+
+    const child = classRules(".files-page > .x { color: red; }", "x");
+    expect(child[0]!.ancestor).toBe(true);
+
+    const parentRef = classRules(".page { & .x { color: red; } }", "x");
+    expect(parentRef[0]!.ancestor).toBe(true);
+
+    // A comma SIBLING is not an ancestor: `.keep, .x` styles `.x` at the
+    // top level, exactly like a lone rule.
+    const sibling = classRules(".keep, .x { color: red; }", "x");
+    expect(sibling[0]!.depth).toBe(0);
+    expect(sibling[0]!.ancestor).toBe(false);
+
     // A same-prefix class (`@media`, another name) is not the target.
     expect(classRules(".x-other { color: red; }", "x")).toHaveLength(0);
     // A `//`-commented selector is prose, not a rule.
     expect(classRules("// .x { color: red; }", "x")).toHaveLength(0);
+
+    // DOCUMENTED BLIND SPOTS (see the header): these spellings narrow
+    // the rule for real while the scanner returns nothing. They are
+    // pinned here so the boundary is a tested fact, not folklore — if a
+    // future parser closes one of them, this test failing is the signal
+    // to update the header.
+    expect(
+      classRules('.page { #{".x"} { color: red; } }', "x"),
+      "SCSS interpolation is a known blind spot (documented in the header)",
+    ).toHaveLength(0);
+    expect(
+      classRules('[class~="x"] { color: red; }', "x"),
+      "attribute-selector landing is a known blind spot (documented in the header)",
+    ).toHaveLength(0);
   });
 
   it("keeps every shared overlay class declared identically wherever it appears", () => {
@@ -214,6 +277,12 @@ describe("teleported dialog styles", () => {
               `${rule.depth}), but it styles a TELEPORTED element — the ancestor is ` +
               `absent in the overlay root`,
           ).toBe(0);
+          expect(
+            rule.ancestor,
+            `${sheet}: .${className} is written as a DESCENDANT of another selector ` +
+              `is written as a DESCENDANT of another selector, but it styles a ` +
+              `TELEPORTED element — the ancestor is absent in the overlay root`,
+          ).toBe(false);
         }
       }
     }
