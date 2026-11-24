@@ -165,7 +165,7 @@ describe("SettingsView site config (language control)", () => {
 
     expect(putSiteConfigMock).toHaveBeenCalledTimes(1);
     const payload = putSiteConfigMock.mock.calls[0]![0] as { portal: { language: string } };
-    // The picked code must be the one shipped — a control that never
+    // The picked code must be the one shipped — a control whose
     // wrote back would send the loaded value instead.
     expect(payload.portal.language).toBe("ja");
   });
@@ -374,7 +374,7 @@ describe("SettingsView referrer-host allow-list (dialog, never an inline row)", 
   });
 
   it("grows no input row anywhere in the page body when a list grows", async () => {
-    // The hard user rule, pinned STRUCTURALLY: adding an entry must never
+    // The hard user rule, pinned STRUCTURALLY: adding an entry may not
     // insert an editable control beside the button. Before the sweep both
     // lists pushed their row into the page body (`footerBanner.push(...)` /
     // `limitReferrerHost.push("")`), so the input count below grew by one

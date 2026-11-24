@@ -29,7 +29,7 @@ import { defineComponent, h } from "vue";
  * paragraph beside it (removed in the sweep; the invariant suite at
  * `src/__invariants__/inlineNotices.test.ts` holds that removal), and
  * buttons. The card itself is the create window's SECOND step — the
- * minted key appears inside the dialog where the action happened, never
+ * minted key appears inside the dialog where the action happened, with
  * as a block grown at the top of the page after the dialog closed.
  */
 
@@ -141,7 +141,7 @@ describe("KeysView clipboard", () => {
     // page-module insertion the user banned), so the card is teleported
     // and must be read document-scoped.
     const card = byTestId("copy-once-card");
-    // Structural pin: it is dialog content, never a page-level block.
+    // Structural pin: it is dialog content rather than a page-level block.
     expect(document.querySelector('.keys-page > [data-testid="copy-once-card"]')).toBeNull();
     expect(card.closest(".hk-modal-content, .hk-sheet, [role='dialog']")).not.toBeNull();
     return card;
@@ -150,7 +150,7 @@ describe("KeysView clipboard", () => {
   it("keeps the create window open on the minted key and closes on confirm", async () => {
     // MUT:copy-once-in-dialog — re-opening the page-level card (or closing
     // the dialog on success) reddens this: the credential must be shown in
-    // the window where the action happened, never inserted into the page.
+    // the window where the action happened, with no page-level insertion.
     const wrapper = mountView();
     await flushPromises();
     await openCreateCard(wrapper);

@@ -227,7 +227,7 @@ describe("PortalView", () => {
     // The dialog's body carries the confirmation sentence and NOTHING
     // else — no error paragraph grew inside it ([role="alert"] itself now
     // belongs to the toast item, so the absence is asserted where the
-    // removed block lived, never document-wide).
+    // removed block lived, scoped to that region).
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     expect(document.querySelector(".hk-modal-content [role='alert']")).toBeNull();
     expect(document.querySelector(".hk-modal-content p")?.textContent).toBe(

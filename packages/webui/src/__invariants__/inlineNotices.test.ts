@@ -87,11 +87,11 @@ function walk(dir: string): string[] {
  *
  * The failure mode of an imperfect heuristic is asymmetric, and it fails
  * safe for this rule's purpose: comments are detected FIRST (the `//` and
- * `/*` checks run before the regex branch), so a real comment always
+ * `/*` checks run before the regex branch), so real comments are
  * opens a comment state; the residual risk of the division heuristic is
  * copying extra text INTO the corpus (e.g. `a++ / 2; // note` reads the
  * `/` as a regex start and leaks the note), which can only cause a false
- * positive — a violation stays visible to the scans.
+ * positive — the scans stay able to see a violation.
  */
 function stripComments(source: string): string {
   const regexAfter = /[=(,:\[!&|?{};+\-*%<>~^~]/;
