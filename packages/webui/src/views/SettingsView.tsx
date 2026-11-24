@@ -1,4 +1,14 @@
-import { HkButton, HkEmptyState, HkIconButton, HkInput, HkSectionCard, HkSelect, HkSwitch } from "@celestia-island/hikari";
+import {
+  HkAdaptiveDialog,
+  HkButton,
+  HkEmptyState,
+  HkIconButton,
+  HkInput,
+  HkSectionCard,
+  HkSelect,
+  HkSwitch,
+  useToast,
+} from "@celestia-island/hikari";
 import { Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 import { computed, defineComponent, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -19,11 +29,25 @@ import "./SettingsView.scss";
  * silently resetting the omitted sections. The form therefore renders
  * the complete document and mirrors the same validation client-side
  * (pinned media path, parseable size limit) before saving.
+ *
+ * Two families of list live in this document, and BOTH obey one rule: a
+ * list grows only through its own second-level dialog, never by inserting
+ * an input row beside the button. "Add banner entry" and "Add" open a
+ * dialog that collects ONE entry (text + link / one host), and only the
+ * dialog's confirm appends it to the form; the list itself is read-only
+ * display with a per-row delete. The value reaches the wire document the
+ * same way it always did — through `save()`.
+ *
+ * Saving feedback is a TOAST on both lanes (the document save and the
+ * password kill-switch): the inline `save-error` / `save-flash` spans are
+ * gone, so neither a failed nor a successful save grows a paragraph in
+ * the page body.
  */
 export default defineComponent({
   name: "SettingsView",
   setup() {
     const { t } = useI18n();
+    const toast = useToast();
 
     /** The family select takes {value,label}; the language roster is plain
      * codes today, so the label is the code. */
@@ -36,9 +60,7 @@ export default defineComponent({
     const loadError = ref<string | null>(null);
     const passwordLogin = ref(true);
     const passwordBusy = ref(false);
-    const savedFlash = ref(false);
     const saveBusy = ref(false);
-    const saveError = ref<string | null>(null);
 
     /** The legacy language tags the portal config accepts (underscore form). */
     const LANGUAGES = [
@@ -113,13 +135,11 @@ export default defineComponent({
       passwordLogin.value = enabled;
       try {
         await api.putPasswordLogin(enabled);
-        savedFlash.value = true;
-        window.setTimeout(() => {
-          savedFlash.value = false;
-        }, 2400);
+        // Success is a toast, not a page-body flash on a 2.4 s timer.
+        toast.success(t("common.settings.saved"));
       } catch (err) {
         passwordLogin.value = previous;
-        saveError.value = saveErrorText(err);
+        toast.error(saveErrorText(err));
       } finally {
         passwordBusy.value = false;
       }
@@ -162,7 +182,6 @@ export default defineComponent({
     async function save() {
       if (!valid.value || saveBusy.value) return;
       saveBusy.value = true;
-      saveError.value = null;
       try {
         const strict: SiteConfigStrict = {
           portal: {
@@ -190,16 +209,96 @@ export default defineComponent({
           },
         };
         await api.putSiteConfig(strict);
-        savedFlash.value = true;
-        window.setTimeout(() => {
-          savedFlash.value = false;
-        }, 2400);
+        toast.success(t("common.settings.saved"));
       } catch (err) {
-        saveError.value = saveErrorText(err);
+        toast.error(saveErrorText(err));
       } finally {
         saveBusy.value = false;
       }
     }
+
+    // ── footer banner: one-entry dialog (no inline row growth) ──────────
+
+    const bannerOpen = ref(false);
+    const bannerDraft = ref({ text: "", url: "" });
+
+    function openBannerDialog(): void {
+      bannerDraft.value = { text: "", url: "" };
+      bannerOpen.value = true;
+    }
+
+    /** Confirm appends the collected entry to the FORM document; nothing is
+     *  persisted until the page's own save runs (the strict whole-document
+     *  submit is unchanged). */
+    function confirmBanner(): void {
+      const text = bannerDraft.value.text;
+      const url = bannerDraft.value.url;
+      // A blank banner is not an entry (save() drops it anyway) — refuse it
+      // here rather than handing the list an invisible row.
+      if (text.trim() === "") return;
+      form.footerBanner.push({ text, url });
+      bannerOpen.value = false;
+      bannerDraft.value = { text: "", url: "" };
+    }
+
+    /** A function, not a `computed`, so the array is rebuilt at every render
+     *  where the draft is read afresh — the confirm's `disabled` must follow
+     *  the draft keystroke by keystroke. */
+    const bannerActions = () => [
+      {
+        label: t("common.actions.cancel"),
+        variant: "secondary" as const,
+        onClick: () => {
+          bannerOpen.value = false;
+        },
+      },
+      {
+        label: t("common.actions.add"),
+        variant: "primary" as const,
+        disabled: bannerDraft.value.text.trim() === "",
+        onClick: () => {
+          confirmBanner();
+        },
+      },
+    ];
+
+    // ── referrer-host allow-list: one-entry dialog ─────────────────────
+
+    const hostOpen = ref(false);
+    const hostDraft = ref("");
+
+    function openHostDialog(): void {
+      hostDraft.value = "";
+      hostOpen.value = true;
+    }
+
+    /** Confirm appends the collected host to the FORM document (an all-blank
+     *  host is not a host — save() filters blanks the same way). */
+    function confirmHost(): void {
+      const host = hostDraft.value;
+      if (host.trim() === "") return;
+      form.limitReferrerHost.push(host);
+      hostOpen.value = false;
+      hostDraft.value = "";
+    }
+
+    const hostActions = () => [
+      {
+        label: t("common.actions.cancel"),
+        variant: "secondary" as const,
+        onClick: () => {
+          hostOpen.value = false;
+        },
+      },
+      {
+        label: t("common.actions.add"),
+        variant: "primary" as const,
+        disabled: hostDraft.value.trim() === "",
+        onClick: () => {
+          confirmHost();
+        },
+      },
+    ];
 
     return () => (
       <section class="site-settings">
@@ -237,19 +336,19 @@ export default defineComponent({
               </div>
               <div class="field">
                 <span>{t("common.settings.footerBanner")}</span>
+                {/* Read-only display: an entry is collected in the dialog
+                    below and only READ here (plus its delete). */}
                 <ul class="banner-list">
                   {form.footerBanner.map((banner, index) => (
                     <li key={index} class="banner-row">
-                      <HkInput
-                        v-model={banner.text}
-                        name={`banner-text-${index}`}
-                        placeholder={t("common.settings.bannerText")}
-                      />
-                      <HkInput
-                        v-model={banner.url}
-                        name={`banner-url-${index}`}
-                        placeholder={t("common.settings.bannerUrl")}
-                      />
+                      <span class="banner-text" data-testid={`banner-text-${index}`}>
+                        {banner.text}
+                      </span>
+                      {banner.url.trim() !== "" ? (
+                        <span class="banner-url" data-testid={`banner-url-${index}`}>
+                          {banner.url}
+                        </span>
+                      ) : null}
                       <HkIconButton
                         size={24}
                         variant="ghost"
@@ -262,7 +361,7 @@ export default defineComponent({
                     </li>
                   ))}
                 </ul>
-                <HkButton variant="ghost" onClick={() => form.footerBanner.push({ text: "", url: "" })}>
+                <HkButton variant="ghost" onClick={openBannerDialog}>
                   {{
                     icon: () => <Plus size={14} />,
                     default: () =>                         t("common.settings.addBanner"),
@@ -285,9 +384,11 @@ export default defineComponent({
               <div class="field">
                 <span>{t("common.settings.limitReferrerHost")}</span>
                 <ul class="banner-list">
-                  {form.limitReferrerHost.map((_host, index) => (
+                  {form.limitReferrerHost.map((host, index) => (
                     <li key={index} class="banner-row">
-                      <HkInput v-model={form.limitReferrerHost[index]!} name={`referrer-host-${index}`} />
+                      <span class="banner-text mono" data-testid={`referrer-host-${index}`}>
+                        {host}
+                      </span>
                       <HkIconButton
                         size={24}
                         variant="ghost"
@@ -300,7 +401,7 @@ export default defineComponent({
                     </li>
                   ))}
                 </ul>
-                <HkButton variant="ghost" onClick={() => form.limitReferrerHost.push("")}>
+                <HkButton variant="ghost" onClick={openHostDialog}>
                   {{
                     icon: () => <Plus size={14} />,
                     default: () =>                         t("common.actions.add"),
@@ -365,12 +466,67 @@ export default defineComponent({
                   default: () =>                       saveBusy.value ? t("common.status.loading") : t("common.actions.save"),
                 }}
               </HkButton>
-              {savedFlash.value ? <span class="save-flash" role="status">{t("common.settings.saved")}</span> : saveError.value ? (
-                <span class="save-error" role="alert">{saveError.value}</span>
-              ) : null}
             </footer>
           </>
         )}
+
+        {/* One-entry collector for the portal footer banner. The value lands
+            in form.footerBanner on confirm — never beside the button. */}
+        <HkAdaptiveDialog
+          modelValue={bannerOpen.value}
+          title={t("common.settings.addBanner")}
+          footerActions={bannerActions()}
+          width="26rem"
+          onUpdate:modelValue={(v: boolean) => (bannerOpen.value = v)}
+        >
+          <div class="entry-form">
+            <label class="field">
+              <span>{t("common.settings.bannerText")}</span>
+              <HkInput
+                modelValue={bannerDraft.value.text}
+                name="banner-draft-text"
+                autocomplete="off"
+                placeholder={t("common.settings.bannerText")}
+                data-testid="banner-dialog-text"
+                onUpdate:modelValue={(v: string) => { bannerDraft.value.text = v; }}
+              />
+            </label>
+            <label class="field">
+              <span>{t("common.settings.bannerUrl")}</span>
+              <HkInput
+                modelValue={bannerDraft.value.url}
+                name="banner-draft-url"
+                autocomplete="off"
+                placeholder={t("common.settings.bannerUrl")}
+                data-testid="banner-dialog-url"
+                onUpdate:modelValue={(v: string) => { bannerDraft.value.url = v; }}
+              />
+            </label>
+          </div>
+        </HkAdaptiveDialog>
+
+        {/* One-entry collector for the referrer-host allow-list. */}
+        <HkAdaptiveDialog
+          modelValue={hostOpen.value}
+          title={t("common.settings.limitReferrerHost")}
+          footerActions={hostActions()}
+          width="26rem"
+          onUpdate:modelValue={(v: boolean) => (hostOpen.value = v)}
+        >
+          <div class="entry-form">
+            <label class="field">
+              <span>{t("common.settings.limitReferrerHost")}</span>
+              <HkInput
+                modelValue={hostDraft.value}
+                name="referrer-host-draft"
+                autocomplete="off"
+                placeholder={t("common.settings.limitReferrerHost")}
+                data-testid="host-dialog-input"
+                onUpdate:modelValue={(v: string) => { hostDraft.value = v; }}
+              />
+            </label>
+          </div>
+        </HkAdaptiveDialog>
       </section>
     );
   },

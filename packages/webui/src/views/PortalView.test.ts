@@ -14,6 +14,7 @@ vi.mock("@/api", () => ({
 }));
 
 import PortalView from "./PortalView";
+import { HkToast, useToast } from "@celestia-island/hikari";
 import { createAppI18n } from "@/i18n";
 
 const png = (id: string, name: string) => ({
@@ -33,12 +34,28 @@ function page(items: ReturnType<typeof png>[]) {
   return { total: items.length, offset: 0, limit: 30, items };
 }
 
+/** Every mounted toast outlet — cleanup owns their lifetime. */
+const outlets: Array<{ unmount: () => void }> = [];
+
 async function mountView() {
+  // attachTo keeps the tree in the live document so the teleported
+  // confirm dialog is reachable from `document`, and the outlet renders
+  // the toasts this view raises (the inline notice lanes are GONE — the
+  // user's hard rule).
+  const host = document.createElement("div");
+  document.body.appendChild(host);
   const wrapper = mount(PortalView, {
     global: { plugins: [createAppI18n(), createPinia()] },
+    attachTo: host,
   });
+  outlets.push(mount(HkToast, { attachTo: document.body, props: { teleport: false } }));
   await flushPromises();
   return wrapper;
+}
+
+/** The messages on the toast surface (the view raises no inline alert now). */
+function toastTexts(): string[] {
+  return [...document.querySelectorAll(".hk-toast-message")].map((el) => el.textContent ?? "");
 }
 
 beforeEach(() => {
@@ -48,6 +65,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  outlets.splice(0).forEach((o) => o.unmount());
+  // The toast store is module-level (hikari state) — clear it so the next
+  // case's outlet renders only ITS OWN messages.
+  const toast = useToast();
+  for (const slot of toast.toasts.slice()) toast.remove(slot.id);
   localStorage.clear();
 });
 
@@ -86,12 +108,17 @@ describe("PortalView failure lane (never-empty)", () => {
     });
     await input.trigger("change");
     await flushPromises();
-    expect(wrapper.text()).toContain("Upload failed");
-    // and the fallback wording exactly once — the row renders the
-    // factory's message alone, so a double print (label + message)
-    // fails here. MUT:portal-upload-dedupe — restoring the old
-    // "<label> — <message>" row reddens this count.
-    expect(wrapper.text().match(/Upload failed/g)?.length ?? 0).toBe(1);
+    // The failure is a TOAST now; the lane row keeps only the file's name.
+    await vi.waitFor(() => {
+      expect(toastTexts().join("|")).toContain("Upload failed");
+    });
+    // and the fallback wording exactly once across the whole document —
+    // the toast carries the factory's message alone, so a double print
+    // (label + message in two places) fails here. MUT:portal-upload-dedupe
+    // — restoring the old "<label> — <message>" row reddens this count.
+    expect((document.body.textContent ?? "").match(/Upload failed/g)?.length ?? 0).toBe(1);
+    // Nothing was inserted beside the row: no page-level alert lane.
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     wrapper.unmount();
   });
 });
@@ -133,7 +160,7 @@ describe("PortalView", () => {
     expect(wrapper.findAll(".upload-row").length).toBe(0);
   });
 
-  it("keeps a failed upload in the lane with its error", async () => {
+  it("drops a failed upload's row and names the file in the toast", async () => {
     listFilesMock.mockResolvedValue(page([]));
     uploadFileMock.mockRejectedValue(new Error("undecodable image: not an image"));
     const wrapper = await mountView();
@@ -144,8 +171,19 @@ describe("PortalView", () => {
     await input.trigger("change");
     await flushPromises();
 
-    expect(wrapper.findAll(".upload-row").length).toBe(1);
-    expect(wrapper.find(".upload-error").text()).toContain("undecodable image");
+    // The row is GONE: a frozen ring with no message is a dead end the
+    // visitor cannot dismiss, so a failed upload leaves nothing behind in
+    // the lane. MUT:portal-upload-row-drop — keeping the row reddens this.
+    expect(wrapper.findAll(".upload-row").length).toBe(0);
+    // The toast is the whole report, and it NAMES the file — the only
+    // place that association survives the toast's auto-dismiss.
+    // MUT:portal-upload-name — dropping the `${file.name}: ` prefix
+    // reddens this.
+    await vi.waitFor(() => {
+      expect(toastTexts()).toEqual(["broken.png: undecodable image: not an image"]);
+    });
+    expect(wrapper.find(".upload-error").exists()).toBe(false);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
   it("removes the tile after a confirmed delete", async () => {
@@ -165,5 +203,37 @@ describe("PortalView", () => {
 
     expect(deleteFileMock).toHaveBeenCalledWith("aa");
     expect(wrapper.findAll(".portal-tile").length).toBe(0);
+  });
+
+  it("toasts a failed delete instead of growing a note in the dialog", async () => {
+    // MUT:portal-delete-toast — the old dialog paragraph is gone; a
+    // harness that reverts to an inline note reddens the negative
+    // assertion below (and the toast would be empty).
+    listFilesMock.mockResolvedValue(page([png("aa", "cat.webp")]));
+    deleteFileMock.mockRejectedValue(new Error("file is gone offline"));
+    const wrapper = await mountView();
+
+    await wrapper.find(".tile-action.danger").trigger("click");
+    await flushPromises();
+    const buttons = Array.from(document.body.querySelectorAll("button"));
+    const danger = buttons.filter((b) => (b.textContent ?? "").trim() === "Delete");
+    expect(danger.length).toBeGreaterThan(0);
+    danger[danger.length - 1]!.click();
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(toastTexts()).toEqual(["file is gone offline"]);
+    });
+    // The dialog's body carries the confirmation sentence and NOTHING
+    // else — no error paragraph grew inside it ([role="alert"] itself now
+    // belongs to the toast item, so the absence is asserted where the
+    // removed block lived, never document-wide).
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    expect(document.querySelector(".hk-modal-content [role='alert']")).toBeNull();
+    expect(document.querySelector(".hk-modal-content p")?.textContent).toBe(
+      "Delete this file? Its public link stops working.",
+    );
+    // The row survives a failed delete.
+    expect(wrapper.findAll(".portal-tile").length).toBe(1);
   });
 });

@@ -1,49 +1,15 @@
-// KeysView — the API-key roster. In-page surfaces (copy-once card, table
-// cell slots) nest under the page's root class (`.keys-page`), preserving
-// the old `<style scoped>` isolation. `.dialog-body` stays flat because
-// it renders inside the TELEPORTED HkAdaptiveDialog overlay root, outside
-// `.keys-page`'s DOM; its declaration is byte-identical to FilesView's
-// and the name is unique across the app (audit rides the receipt).
+// KeysView — the API-key roster. In-page surfaces (the table's cell slots)
+// nest under the page's root class (`.keys-page`), preserving the old
+// `<style scoped>` isolation. `.copy-once` (the minted-key step) and
+// `.dialog-body` stay flat because they render inside the TELEPORTED
+// HkAdaptiveDialog overlay root, outside `.keys-page`'s DOM;
+// `.dialog-body`'s declaration is byte-identical to FilesView's and the
+// names are unique across the app (audit rides the receipt).
 
 .keys-page {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-
-  .copy-once {
-    padding: 1rem;
-    border: 2px solid rgb(217 138 43);
-    border-radius: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-
-    .warning {
-      color: rgb(217 138 43);
-      font-size: 0.85rem;
-      margin: 0;
-    }
-
-    .copy-failed {
-      color: rgb(220 38 38);
-      font-size: 0.8rem;
-      margin: 0;
-    }
-
-    .key-text {
-      font-size: 0.9rem;
-      padding: 0.5rem;
-      border-radius: 0.4rem;
-      background: color-mix(in srgb, currentColor 6%, transparent);
-      word-break: break-all;
-    }
-
-    .actions {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-  }
 
   .key-name-cell {
     display: inline-flex;
@@ -58,6 +24,35 @@
 }
 
 // ── Teleported dialog content (HkAdaptiveDialog → overlay root) ────────
+
+.copy-once {
+  padding: 1rem;
+  border: 2px solid rgb(217 138 43);
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+
+  .warning {
+    color: rgb(217 138 43);
+    font-size: 0.85rem;
+    margin: 0;
+  }
+
+  .key-text {
+    font-size: 0.9rem;
+    padding: 0.5rem;
+    border-radius: 0.4rem;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+    word-break: break-all;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+}
 
 .dialog-body {
   display: flex;

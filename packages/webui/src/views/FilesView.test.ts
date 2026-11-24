@@ -43,6 +43,7 @@ vi.mock("@/api/files", () => ({
 
 import FilesView from "./FilesView";
 import PortalView from "./PortalView";
+import { HkToast, useToast } from "@celestia-island/hikari";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import type { FileDto } from "@/types";
@@ -94,7 +95,21 @@ function mountWithRouter(View: typeof FilesView | typeof PortalView): { wrapper:
   const host = document.createElement("div");
   document.body.appendChild(host);
   const wrapper = mount(harness(View), { global: { plugins: [pinia, router, i18n] }, attachTo: host });
+  // The family toast outlet renders the toasts these views raise; the
+  // inline `role="alert"` paragraph is GONE (the user's hard rule), so the
+  // assertions below read the toast surface, not DOM inserted beside the
+  // roster.
+  outlets.push(mount(HkToast, { attachTo: document.body, props: { teleport: false } }));
   return { wrapper, router };
+}
+
+/** Every mounted toast outlet — cleanup owns their lifetime (the views'
+ *  own wrappers are returned to the callers; outlets are harness state). */
+const outlets: Array<{ unmount: () => void }> = [];
+
+/** The toast surface's text (empty when no toast carries a message). */
+function toastText(): string {
+  return document.querySelector(".hk-toast-message")?.textContent ?? "";
 }
 
 let wrapper: ReturnType<typeof mount> | null = null;
@@ -112,6 +127,11 @@ beforeEach(() => {
 
 afterEach(() => {
   wrapper?.unmount();
+  outlets.splice(0).forEach((o) => o.unmount());
+  // The toast store is module-level (hikari state) — clear it so the next
+  // case's outlet renders only ITS OWN messages.
+  const toast = useToast();
+  for (const slot of toast.toasts.slice()) toast.remove(slot.id);
 });
 
 describe("FilesView surface (mount pin)", () => {
@@ -464,5 +484,59 @@ describe("PortalView surface (mount pin)", () => {
     expect(w.find(".file-detail").text()).toContain("a-original.webp");
     // A real size must format (a non-finite value degrades to "—").
     expect(w.find(".file-detail").text()).toMatch(/[0-9.]+\s?(B|KB|KiB|MB|MiB|GB|GiB)/);
+  });
+});
+
+describe("FilesView failure feedback (toast, never inline)", () => {
+  // The roster used to grow a `<p class="error" role="alert">` beside the
+  // grid on every failed load / create / rename / move / share / delete.
+  // The family feedback contract moved all of them to the toast outlet:
+  // the case below pins BOTH halves — the message reaches the toast, and
+  // nothing inserts an alert paragraph into the page.
+
+  it("toasts a failed roster load and inserts no page notice", async () => {
+    listFolderMock.mockReset().mockRejectedValue(new Error("rpc down"));
+    const { wrapper: w } = mountWithRouter(FilesView);
+    wrapper = w;
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(toastText()).toBe("rpc down");
+    });
+    // The page grew no notice: no alert paragraph, no `.error` block.
+    expect(w.find('[role="alert"]').exists()).toBe(false);
+    expect(w.find(".error").exists()).toBe(false);
+  });
+
+  it("toasts a failed rename and leaves the dialog's text intact", async () => {
+    listFolderMock.mockResolvedValue({ total: 1, offset: 0, limit: 30, items: [file("a")], crumbs: [] });
+    renameFileMock.mockReset().mockRejectedValue(new Error("name taken"));
+    const { wrapper: w } = mountWithRouter(FilesView);
+    wrapper = w;
+    await flushPromises();
+
+    const renameBtn = w.findAll(".file-tile")[0]!.findAll(".t-action").find(
+      (b) => b.attributes("title") === i18n.global.t("common.files.rename"),
+    );
+    await renameBtn!.trigger("click");
+    await flushPromises();
+
+    const input = document.querySelector<HTMLInputElement>("input");
+    expect(input).toBeTruthy();
+    input!.value = "a-RENAMED.webp";
+    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushPromises();
+    const submit = Array.from(document.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === i18n.global.t("common.actions.save"),
+    );
+    expect(submit).toBeTruthy();
+    submit!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(toastText()).toBe("name taken");
+    });
+    expect(w.find('[role="alert"]').exists()).toBe(false);
+    expect(w.find(".error").exists()).toBe(false);
   });
 });

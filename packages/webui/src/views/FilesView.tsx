@@ -1,4 +1,4 @@
-import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkInput, HkMasterDetail, HkSelect, HkSwitch, useChromeActionSize } from "@celestia-island/hikari";
+import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkInput, HkMasterDetail, HkSelect, HkSwitch, useChromeActionSize, useToast } from "@celestia-island/hikari";
 import {
   Copy,
   FileArchive,
@@ -36,12 +36,12 @@ export default defineComponent({
     const { t } = useI18n();
 
     const errorText = makeErrorText(t);
+    const toast = useToast();
     const route = useRoute();
     const router = useRouter();
 
     const items = ref<FileDto[]>([]);
     const loading = ref(false);
-    const error = ref<string | null>(null);
     const folderId = computed(() => {
       const id = route.params.folderId;
       return typeof id === "string" && id ? id : null;
@@ -53,7 +53,6 @@ export default defineComponent({
 
     async function load() {
       loading.value = true;
-      error.value = null;
       try {
         items.value = (await files.listFolder(folderId.value)).items;
         // The pane holds an OBJECT: a reload that drops its row (deleted
@@ -65,7 +64,8 @@ export default defineComponent({
         quotaUsed.value = Number(q.used_bytes);
         quotaLimit.value = q.quota_bytes != null ? Number(q.quota_bytes) : null;
       } catch (e) {
-        error.value = errorText(e);
+        // Transient load feedback: a toast, never DOM beside the roster.
+        toast.error(errorText(e));
       } finally {
         loading.value = false;
       }
@@ -163,7 +163,7 @@ export default defineComponent({
         newFolderOpen.value = false;
         void load();
       } catch (e) {
-        error.value = errorText(e);
+        toast.error(errorText(e));
       } finally {
         newFolderBusy.value = false;
       }
@@ -188,7 +188,7 @@ export default defineComponent({
           selected.value = items.value.find((f) => f.id === renamedId) ?? null;
         }
       } catch (e) {
-        error.value = errorText(e);
+        toast.error(errorText(e));
       } finally {
         renameBusy.value = false;
       }
@@ -209,7 +209,7 @@ export default defineComponent({
         moveTarget.value = null;
         void load();
       } catch (e) {
-        error.value = errorText(e);
+        toast.error(errorText(e));
       } finally {
         moveBusy.value = false;
       }
@@ -256,7 +256,7 @@ export default defineComponent({
           copyOk.value = false; // visible failure → manual copy prompt
         }
       } catch (e) {
-        error.value = errorText(e);
+        toast.error(errorText(e));
       } finally {
         shareBusy.value = false;
       }
@@ -285,7 +285,7 @@ export default defineComponent({
         deleteTarget.value = null;
         void load();
       } catch (e) {
-        error.value = errorText(e);
+        toast.error(errorText(e));
       } finally {
         deleteBusy.value = false;
       }
@@ -338,8 +338,6 @@ export default defineComponent({
             </span>
           </div>
         ) : null}
-
-        {error.value ? <p class="error" role="alert">{error.value}</p> : null}
 
         {loading.value && items.value.length === 0 ? (
           <HkEmptyState loading boxed title={t("common.status.loading")} />

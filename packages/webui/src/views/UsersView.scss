@@ -4,7 +4,9 @@
 // dialog's form stays flat because it renders inside the TELEPORTED
 // HkAdaptiveDialog overlay root, outside `.users`'s DOM — everything it
 // contains nests inside `.create-form` itself instead, so only that one
-// anchor name is flat-unique (audit rides the receipt).
+// anchor name is flat-unique (audit rides the receipt). The
+// `dialog-error` rule is GONE: a failed create/delete is a toast (the
+// family feedback contract), so nothing grows inside either dialog.
 
 .users {
   display: flex;
@@ -46,13 +48,4 @@
     gap: 0.3rem;
     font-size: 0.85rem;
   }
-
-}
-
-// Same teleport reason as ProvidersView: the CREATE form's own error sits
-// inside `.create-form`, but the DELETE confirmation's error renders in a
-// separate teleported dialog root — a single flat rule covers both.
-.dialog-error {
-  color: rgb(220 38 38);
-  font-size: 0.85rem;
 }

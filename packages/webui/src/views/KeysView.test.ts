@@ -1,5 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The API layer stays mocked; the clipboard contract is the subject.
 const listKeysMock = vi.fn();
@@ -12,6 +12,7 @@ vi.mock("@/api", () => ({
 }));
 
 import KeysView from "./KeysView";
+import { HkToast, useToast } from "@celestia-island/hikari";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 
@@ -22,7 +23,21 @@ import { defineComponent, h } from "vue";
  * The key page's clipboard tri-state (R3 S1): idle → copied(target) →
  * back to idle, and a REJECTED clipboard write must surface visibly
  * instead of dying silently (the pattern the share dialog set).
+ *
+ * The failure half is a TOAST (the family feedback contract): the
+ * copy-once card never grows a `role="alert"` paragraph beside its
+ * buttons. The card itself is the create window's SECOND step — the
+ * minted key appears inside the dialog where the action happened, never
+ * as a block grown at the top of the page after the dialog closed.
  */
+
+/** Every mounted toast outlet — cleanup owns their lifetime. */
+const outlets: Array<{ unmount: () => void }> = [];
+
+/** The text of the toast surface (empty when nothing is raised). */
+function toastTexts(): string[] {
+  return [...document.querySelectorAll(".hk-toast-message")].map((el) => el.textContent ?? "");
+}
 
 const KEY_ROW = {
   id: "k1",
@@ -52,10 +67,14 @@ function mountView() {
   // (attachTo keeps the component tree mounted for the event handlers).
   const host = document.createElement("div");
   document.body.appendChild(host);
-  return mount(Harness, {
+  const wrapper = mount(Harness, {
     attachTo: host,
     global: { plugins: [createAppI18n()] },
   });
+  // The family toast outlet renders what this view raises (the app
+  // mounts one at the root; a test mounts its own).
+  outlets.push(mount(HkToast, { attachTo: document.body, props: { teleport: false } }));
+  return wrapper;
 }
 
 /// The teleported element by data-testid (global, not within the wrapper).
@@ -94,6 +113,15 @@ describe("KeysView clipboard", () => {
     revokeKeyMock.mockReset();
   });
 
+  afterEach(() => {
+    outlets.splice(0).forEach((o) => o.unmount());
+    // The toast store is module-level (hikari state) — clear it so the
+    // next case's outlet renders only ITS OWN messages.
+    const toast = useToast();
+    for (const slot of toast.toasts.slice()) toast.remove(slot.id);
+    vi.useRealTimers();
+  });
+
   async function openCreateCard(wrapper: ReturnType<typeof mountView>) {
     createKeyMock.mockResolvedValue({
       id: "k2",
@@ -106,8 +134,35 @@ describe("KeysView clipboard", () => {
     nameInput.dispatchEvent(new Event("input"));
     await flushPromises();
     await clickTestId("new-key");
-    return wrapper.get('[data-testid="copy-once-card"]');
+    // The minted key rides INSIDE the secondary window now (it used to
+    // grow at the top of the page after the dialog closed — the
+    // page-module insertion the user banned), so the card is teleported
+    // and must be read document-scoped.
+    const card = byTestId("copy-once-card");
+    // Structural pin: it is dialog content, never a page-level block.
+    expect(document.querySelector('.keys-page > [data-testid="copy-once-card"]')).toBeNull();
+    expect(card.closest(".hk-modal-content, .hk-sheet, [role='dialog']")).not.toBeNull();
+    return card;
   }
+
+  it("keeps the create window open on the minted key and closes on confirm", async () => {
+    // MUT:copy-once-in-dialog — re-opening the page-level card (or closing
+    // the dialog on success) reddens this: the credential must be shown in
+    // the window where the action happened, never inserted into the page.
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateCard(wrapper);
+    // Still open, showing the key.
+    expect(byTestId("plaintext-key").textContent).toBe(
+      "i0721-fedcba9876543210fedcba9876543210",
+    );
+    await clickTestId("copy-once-done");
+    // Closed, and nothing was left behind in the page.
+    expect(document.querySelector("[data-testid='plaintext-key']")).toBeNull();
+    expect(document.querySelector("[data-testid='copy-once-card']")).toBeNull();
+    expect(document.querySelector(".keys-page > [data-testid='copy-once-card']")).toBeNull();
+    wrapper.unmount();
+  });
 
   it("copies the plaintext key and marks the target, then returns to idle", async () => {
     const wrapper = mountView();
@@ -162,13 +217,18 @@ describe("KeysView clipboard", () => {
     await openCreateCard(wrapper);
 
     await clickTestId("copy-key");
-    // The rendered message is the localized copyFailed string, and the
+    // The raised message is the localized copyFailed string, and the
     // button is NOT left showing the success label.
-    expect(byTestId("copy-failed").textContent?.trim()).toBe(
-      "Copy failed — select the text and copy it manually.",
-    );
+    await vi.waitFor(() => {
+      expect(document.querySelector(".hk-toast-message")?.textContent).toBe(
+        "Copy failed — select the text and copy it manually.",
+      );
+    });
     expect(byTestId("copy-key").textContent?.trim()).not.toBe("Copied!");
-    vi.useRealTimers();
+    // The card itself grows nothing: the failure is a toast, not a
+    // paragraph beside the buttons.
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    expect(document.querySelector('[data-testid="copy-failed"]')).toBeNull();
   });
 
   it("clears a stale success mark when a later copy fails", async () => {
@@ -190,8 +250,12 @@ describe("KeysView clipboard", () => {
     );
     await clickTestId("copy-config");
     expect(byTestId("copy-key").textContent?.trim()).not.toBe("Copied!");
-    expect(byTestId("copy-failed").textContent?.length).toBeGreaterThan(0);
-    vi.useRealTimers();
+    await vi.waitFor(() => {
+      expect(toastTexts()).toContain(
+        "Copy failed — select the text and copy it manually.",
+      );
+    });
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 });
 

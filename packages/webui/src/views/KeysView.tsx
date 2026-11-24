@@ -5,6 +5,7 @@ import {
   HkButton,
   HkIconButton,
   HkInput,
+  useToast,
   type HTableColumn,
 } from "@celestia-island/hikari";
 import { Copy, KeyRound, Trash2 } from "lucide-vue-next";
@@ -18,10 +19,20 @@ import { makeErrorText } from "@/composables/errorText";
 
 import "./KeysView.scss";
 
+/**
+ * The API-key roster plus its copy-once card.
+ *
+ * The minted credential appears INSIDE the create window (a second step of
+ * that secondary window), never as a block grown at the top of the page
+ * after the dialog closed — a click may not insert page DOM. A FAILED
+ * clipboard write is a TOAST: the card never grows an error paragraph
+ * beside its buttons.
+ */
 export default defineComponent({
   name: "KeysView",
   setup() {
     const { t } = useI18n();
+    const toast = useToast();
     const keys = ref<ApiKeyPublic[]>([]);
     const loading = ref(false);
     const error = ref<string | null>(null);
@@ -30,10 +41,9 @@ export default defineComponent({
     const newName = ref("");
     const createBusy = ref(false);
     /// Which copy button most recently succeeded (the tri-state: a target,
-    /// or nothing). A FAILED copy is its own flag so the failure is visible.
+    /// or nothing). A FAILED copy is raised on the toast surface.
     type CopyTarget = "key" | "config" | "prompt";
     const copied = ref<CopyTarget | null>(null);
-    const copyFailed = ref(false);
     const pendingRevoke = ref<ApiKeyPublic | null>(null);
     const revokeBusy = ref(false);
 
@@ -68,9 +78,20 @@ export default defineComponent({
       createBusy.value = true;
       try {
         created.value = await api.createKey(newName.value.trim());
-        createOpen.value = false;
+        // The dialog STAYS OPEN and swaps to the minted-key step: the
+        // copy-once card used to grow at the top of the page after the
+        // dialog closed (a module inserted into the page by a click —
+        // banned by the user's rule). The credential now appears where
+        // the action happened, in the secondary window.
         await load();
       } catch (e) { error.value = errorText(e); } finally { createBusy.value = false; }
+    }
+
+    /** Close the create window and drop the minted key from memory (it is
+     *  shown once, by design — reopening the dialog starts a new key). */
+    function finishCreated(): void {
+      created.value = null;
+      createOpen.value = false;
     }
 
     /// The MCP endpoint an agent connects to (the SSE lane).
@@ -82,14 +103,13 @@ export default defineComponent({
     /// button that copied; a FAILURE is never silent (a denied clipboard
     /// permission used to leave the button unchanged).
     async function copyText(target: CopyTarget, text: string) {
-      copyFailed.value = false;
       try {
         await navigator.clipboard.writeText(text);
         copied.value = target;
         setTimeout(() => { if (copied.value === target) copied.value = null; }, 3000);
       } catch {
         copied.value = null;
-        copyFailed.value = true;
+        toast.error(t("common.keys.copyFailed"));
       }
     }
 
@@ -114,29 +134,6 @@ export default defineComponent({
 
     return () => (
       <section class="keys-page">
-        {/* Copy-once card: shown immediately after creation */}
-        {created.value ? (
-          <div class="copy-once" data-testid="copy-once-card">
-            <p class="warning">{t("common.keys.copyOnceWarning")}</p>
-            <code class="key-text" data-testid="plaintext-key">{created.value.key}</code>
-            <div class="actions">
-              <HkButton variant="primary" data-testid="copy-key" onClick={copyKey}>
-                {{
-                  icon: () => <Copy size={14} />,
-                  default: () =>                       copied.value === "key" ? t("common.keys.copied") : t("common.actions.copyLink"),
-                }}
-              </HkButton>
-              <HkButton variant="ghost" data-testid="copy-config" onClick={copyConfig}>
-                {copied.value === "config" ? t("common.keys.copied") : t("common.keys.copyConfig")}
-              </HkButton>
-              <HkButton variant="ghost" data-testid="copy-prompt" onClick={copyPrompt}>
-                {copied.value === "prompt" ? t("common.keys.copied") : t("common.keys.copyPrompt")}
-              </HkButton>
-            </div>
-            {copyFailed.value ? <p role="alert" data-testid="copy-failed" class="copy-failed">{t("common.keys.copyFailed")}</p> : null}
-          </div>
-        ) : null}
-
         <HkAdminTablePage
           title={t("common.keys.title")}
           subtitle={t("common.status.total", { count: keys.value.length })}
@@ -184,16 +181,43 @@ export default defineComponent({
           }}
         </HkAdminTablePage>
 
+        {/* The create window, two steps: name → the minted-key card. The
+            credential rides HERE, where the action happened (never a block
+            grown at the top of the page after the dialog closed). */}
         <HkAdaptiveDialog
           modelValue={createOpen.value}
           title={t("common.keys.create")}
           width="26rem"
-          onUpdate:modelValue={(v: boolean) => (createOpen.value = v)}
+          onUpdate:modelValue={(v: boolean) => { if (!v) finishCreated(); }}
         >
-          <div class="dialog-body">
-            <HkInput v-model={newName.value} placeholder={t("common.keys.nameLabel")} data-testid="key-name" />
-            <HkButton variant="primary" data-testid="new-key" disabled={!newName.value.trim() || createBusy.value} onClick={doCreate}>{t("common.actions.create")}</HkButton>
-          </div>
+          {created.value ? (
+            <div class="copy-once" data-testid="copy-once-card">
+              <p class="warning">{t("common.keys.copyOnceWarning")}</p>
+              <code class="key-text" data-testid="plaintext-key">{created.value.key}</code>
+              <div class="actions">
+                <HkButton variant="primary" data-testid="copy-key" onClick={copyKey}>
+                  {{
+                    icon: () => <Copy size={14} />,
+                    default: () => copied.value === "key" ? t("common.keys.copied") : t("common.actions.copyLink"),
+                  }}
+                </HkButton>
+                <HkButton variant="ghost" data-testid="copy-config" onClick={copyConfig}>
+                  {copied.value === "config" ? t("common.keys.copied") : t("common.keys.copyConfig")}
+                </HkButton>
+                <HkButton variant="ghost" data-testid="copy-prompt" onClick={copyPrompt}>
+                  {copied.value === "prompt" ? t("common.keys.copied") : t("common.keys.copyPrompt")}
+                </HkButton>
+              </div>
+              <div class="dialog-body">
+                <HkButton variant="secondary" data-testid="copy-once-done" onClick={finishCreated}>{t("common.actions.confirm")}</HkButton>
+              </div>
+            </div>
+          ) : (
+            <div class="dialog-body">
+              <HkInput v-model={newName.value} placeholder={t("common.keys.nameLabel")} data-testid="key-name" />
+              <HkButton variant="primary" data-testid="new-key" disabled={!newName.value.trim() || createBusy.value} onClick={doCreate}>{t("common.actions.create")}</HkButton>
+            </div>
+          )}
         </HkAdaptiveDialog>
 
         <HkAdaptiveDialog

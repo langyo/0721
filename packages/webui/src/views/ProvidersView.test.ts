@@ -5,13 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const listProvidersMock = vi.fn();
 const upsertProviderMock = vi.fn();
+const deleteProviderMock = vi.fn();
 vi.mock("@/api", () => ({
   listProviders: (...args: unknown[]) => listProvidersMock(...args),
   upsertProvider: (...args: unknown[]) => upsertProviderMock(...args),
-  deleteProvider: vi.fn(),
+  deleteProvider: (...args: unknown[]) => deleteProviderMock(...args),
 }));
 
 import ProvidersView from "./ProvidersView";
+import { HkToast, useToast } from "@celestia-island/hikari";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import type { OAuthProviderPublic } from "@/types";
@@ -37,6 +39,9 @@ function provider(over: Partial<OAuthProviderPublic> = {}): OAuthProviderPublic 
   } as OAuthProviderPublic;
 }
 
+/** Every mounted toast outlet — cleanup owns their lifetime. */
+const outlets: Array<{ unmount: () => void }> = [];
+
 function mountView(): ReturnType<typeof mount> {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -59,7 +64,17 @@ function mountView(): ReturnType<typeof mount> {
   // from `document` (the dialogs mount outside the wrapper tree).
   const host = document.createElement("div");
   document.body.appendChild(host);
-  return mount(Harness, { global: { plugins: [pinia, router, i18n] }, attachTo: host });
+  const mounted = mount(Harness, { global: { plugins: [pinia, router, i18n] }, attachTo: host });
+  // The family toast outlet renders the toasts this view raises; the inline
+  // alert lanes are GONE (the family feedback contract), so the assertions
+  // below read the toast surface.
+  outlets.push(mount(HkToast, { attachTo: document.body, props: { teleport: false } }));
+  return mounted;
+}
+
+/** The messages on the toast surface (the view raises no inline alert). */
+function toastTexts(): string[] {
+  return [...document.querySelectorAll(".hk-toast-message")].map((el) => el.textContent ?? "");
 }
 
 let wrapper: ReturnType<typeof mount> | null = null;
@@ -68,10 +83,16 @@ beforeEach(() => {
   wrapper = null;
   listProvidersMock.mockReset().mockResolvedValue([]);
   upsertProviderMock.mockReset();
+  deleteProviderMock.mockReset();
 });
 
 afterEach(() => {
   wrapper?.unmount();
+  outlets.splice(0).forEach((o) => o.unmount());
+  // The toast store is module-level (hikari state) — clear it so the next
+  // case's outlet renders only ITS OWN messages.
+  const toast = useToast();
+  for (const slot of toast.toasts.slice()) toast.remove(slot.id);
 });
 
 describe("ProvidersView (family table roster)", () => {
@@ -146,7 +167,10 @@ describe("ProvidersView (family table roster)", () => {
     expect(wrapper.text()).toContain("rpc timeout");
   });
 
-  it("announces a failed toggle with the rejection text instead of snapping back silently", async () => {
+  it("toasts a failed toggle with the rejection text instead of snapping back silently", async () => {
+    // MUT:provider-toggle-toast — the banner above the table is gone; a
+    // harness that reverts to it reddens the negative assertion below and
+    // leaves the toast surface empty.
     listProvidersMock.mockResolvedValue([provider({ enabled: false })]);
     upsertProviderMock.mockRejectedValue("rpc timeout");
     wrapper = mountView();
@@ -154,11 +178,88 @@ describe("ProvidersView (family table roster)", () => {
     const toggle = wrapper.find('input[type="checkbox"]');
     await toggle.setValue(true);
     await flushPromises();
-    // The toggle's own alert lane (role=alert above the table) carries
-    // the string; the row's optimistic flip snaps back.
-    const alert = wrapper.find('[role="alert"]');
-    expect(alert.exists()).toBe(true);
-    expect(alert.text()).toContain("rpc timeout");
+    // The failure is a TOAST…
+    await vi.waitFor(() => {
+      expect(toastTexts()).toEqual(["rpc timeout"]);
+    });
+    // …nothing grew above the table…
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    // …and the row's optimistic flip still snapped back.
+    expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("toasts a failed save instead of growing a note in the edit dialog", async () => {
+    // MUT:provider-save-toast — the old dialog paragraph is gone; a
+    // harness that reverts to an inline note reddens the negative
+    // assertion below.
+    listProvidersMock.mockResolvedValue([]);
+    upsertProviderMock.mockRejectedValue(new Error("client_id already used"));
+    wrapper = mountView();
+    await flushPromises();
+
+    const create = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => (b.getAttribute("aria-label") ?? "").length > 0 && b.className.includes("hk-icon-button"),
+    );
+    expect(create).toBeTruthy();
+    create!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    const inputs = Array.from(document.querySelectorAll<HTMLInputElement>(".hk-dialog input, [role='dialog'] input"))
+      .filter((i) => i.type !== "radio" && i.type !== "checkbox");
+    inputs[0]!.value = "newprov";
+    inputs[0]!.dispatchEvent(new Event("input", { bubbles: true }));
+    inputs[1]!.value = "New provider";
+    inputs[1]!.dispatchEvent(new Event("input", { bubbles: true }));
+    inputs[2]!.value = "client-abc";
+    inputs[2]!.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushPromises();
+    const save = Array.from(document.querySelectorAll<HTMLButtonElement>("button.hk-btn-primary"))
+      .find((b) => b.textContent?.trim() === i18n.global.t("common.actions.save"));
+    expect(save).toBeTruthy();
+    save!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(toastTexts()).toEqual(["client_id already used"]);
+    });
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    // The dialog stays open on a failed save (the user retries in place),
+    // and its body carries no error paragraph of its own.
+    expect(document.querySelector(".hk-modal-content, [role='dialog']")).toBeTruthy();
+    expect(document.querySelector(".edit-form [role='alert']")).toBeNull();
+    expect(document.querySelector(".edit-form .dialog-error")).toBeNull();
+  });
+
+  it("toasts a failed delete instead of growing a note in the dialog", async () => {
+    // MUT:provider-delete-toast — the old dialog paragraph is gone; a
+    // harness that reverts to an inline note reddens the negative
+    // assertion below.
+    listProvidersMock.mockResolvedValue([provider()]);
+    deleteProviderMock.mockRejectedValue("rpc timeout");
+    wrapper = mountView();
+    await flushPromises();
+
+    const del = Array.from(document.querySelectorAll<HTMLButtonElement>("button.hk-icon-button"))
+      .find((b) => (b.getAttribute("aria-label") ?? "") === i18n.global.t("common.actions.delete"));
+    expect(del, "the row must render a delete action").toBeTruthy();
+    del!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+      .filter((b) => (b.textContent ?? "").trim() === i18n.global.t("common.actions.delete"));
+    expect(confirm.length).toBeGreaterThan(0);
+    confirm[confirm.length - 1]!.click();
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(toastTexts()).toEqual(["rpc timeout"]);
+    });
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    // The dialog's body is the confirmation sentence alone.
+    expect(document.querySelector(".hk-modal-content [role='alert']")).toBeNull();
+    expect(document.querySelector(".hk-modal-content .dialog-error")).toBeNull();
+    // The row survives a failed delete.
+    expect(wrapper.findAll("tbody tr").length).toBe(1);
   });
 
   it("picks the provider kind through the family radio", async () => {

@@ -2,6 +2,7 @@ import {
   HkEmptyState,
   HkLoginFlow,
   HkStatusBar,
+  useToast,
   type HkLoginChannel,
 } from "@celestia-island/hikari";
 import { KeyRound, Unplug } from "lucide-vue-next";
@@ -43,6 +44,7 @@ export default defineComponent({
   name: "LoginView",
   setup() {
     const { t } = useI18n();
+    const toast = useToast();
 
     const errorText = makeErrorText(t);
     const router = useRouter();
@@ -54,7 +56,6 @@ export default defineComponent({
     const appVersion: string = __APP_VERSION__;
     const channel = ref("");
     const loading = ref(false);
-    const error = ref<string | null>(null);
 
     /** Segment labels are the PANEL's own copy — hikari's locked copy rule
      * ("segment labels are ALWAYS the panel's own locale keys, never a
@@ -180,18 +181,20 @@ export default defineComponent({
 
     async function onAccountSubmit(_channel: string, username: string, password: string): Promise<void> {
       loading.value = true;
-      error.value = null;
       try {
         await auth.login(username, password);
         const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "/";
         await router.push(redirect);
       } catch (err) {
-        error.value =
+        // The family feedback contract: transient attempt feedback is a
+        // toast, never DOM inserted beside the card.
+        toast.error(
           err instanceof ApiError && err.status === 403
             ? t("common.auth.passwordDisabled")
             : err instanceof ApiError && err.status === 401
               ? t("common.auth.failed")
-              : errorText(err);
+              : errorText(err),
+        );
       } finally {
         loading.value = false;
       }
@@ -237,8 +240,6 @@ export default defineComponent({
                 description={t("common.auth.noMethods")}
               />
             ) : null}
-
-            {error.value ? <p class="login-error" role="alert">{error.value}</p> : null}
           </div>
         </div>
 
