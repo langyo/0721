@@ -1858,8 +1858,11 @@ impl ProviderStub {
                     }
                 }),
             )
+            // MUT:erp-userinfo-prefix — the stub mounts userinfo where the
+            // real ERP does (`/api/oauth/userinfo`); reverting the provider
+            // to the bare path makes the callback hit a 404 stub and fail.
             .route(
-                "/oauth/userinfo",
+                "/api/oauth/userinfo",
                 axum::routing::get(|headers: axum::http::HeaderMap| async move {
                     let auth = headers
                         .get(header::AUTHORIZATION)

@@ -389,8 +389,22 @@ fn userinfo_endpoint(provider: &OAuthProvider) -> Option<String> {
         "builtin:github" => Some("https://api.github.com/user".to_owned()),
         // Feishu v2's token response itself carries the user identity.
         "builtin:feishu" => None,
+        // The ERP provider mounts userinfo under its `/api` prefix
+        // (`/api/oauth/userinfo`, alongside `/api/oauth/token`). The bare
+        // `/oauth/userinfo` is NOT an ERP route: its host-split middleware
+        // 307s the request to the staff admin face, the callback's
+        // server-side GET follows into an HTML login page, and the decode
+        // dies with "error decoding response body" (the 2026-11-24
+        // res.celestia.world report). Both token and userinfo URLs are
+        // derived from `base_url` here — the provider row carries no
+        // per-endpoint fields.
+        //
+        // MUT:erp-userinfo-prefix — reverting to the bare `/oauth/userinfo`
+        // makes both end-to-end OAuth cases fail against the `/api`-mounted
+        // stub (`routes.rs`, `oauth_end_to_end_against_a_local_stub_provider`
+        // and `oauth_second_login_is_idempotent`).
         "builtin:erp" => Some(format!(
-            "{}/oauth/userinfo",
+            "{}/api/oauth/userinfo",
             absolute_base(provider.base_url.as_deref()?)?
         )),
         _ => None,
