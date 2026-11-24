@@ -392,10 +392,12 @@ fn userinfo_endpoint(provider: &OAuthProvider) -> Option<String> {
         // The ERP provider mounts userinfo under its `/api` prefix
         // (`/api/oauth/userinfo`, alongside `/api/oauth/token`). The bare
         // `/oauth/userinfo` is NOT an ERP route: its host-split middleware
-        // 307s the browser to the staff admin face, the body comes back as
-        // HTML, and the callback dies with "error decoding response body"
-        // (the 2026-11-24 res.celestia.world report). Only the token
-        // endpoint is configured per provider today; userinfo is derived.
+        // 307s the request to the staff admin face, the callback's
+        // server-side GET follows into an HTML login page, and the decode
+        // dies with "error decoding response body" (the 2026-11-24
+        // res.celestia.world report). Both token and userinfo URLs are
+        // derived from `base_url` here — the provider row carries no
+        // per-endpoint fields.
         "builtin:erp" => Some(format!(
             "{}/api/oauth/userinfo",
             absolute_base(provider.base_url.as_deref()?)?
