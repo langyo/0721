@@ -1,6 +1,11 @@
 // SettingsView — the site configuration editor. Everything nests under
 // the page's root class (`.site-settings`), preserving the old
-// `<style scoped>` isolation: no selector leaks past the page.
+// `<style scoped>` isolation: no selector leaks past the page. The two
+// one-entry dialogs' bodies (`.entry-form`) are the exception — they
+// render inside the TELEPORTED HkAdaptiveDialog overlay root, outside
+// `.site-settings`'s DOM — so that one anchor stays flat and unique.
+// The transient feedback surfaces (`.save-flash`, `.save-error`) are GONE:
+// both save lanes report through toasts (the family feedback contract).
 
 .site-settings {
   display: flex;
@@ -64,19 +69,45 @@
     align-items: center;
   }
 
+  // Read-only entry text (a row is display + delete, never an input).
+  .banner-row .banner-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .banner-row .banner-url {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.6;
+    font-size: 0.8rem;
+  }
+
   .save-row {
     display: flex;
     align-items: center;
     gap: 0.9rem;
   }
+}
 
-  .save-flash {
-    color: rgb(22 128 61);
-    font-size: 0.85rem;
-  }
+// ── Teleported dialog content (HkAdaptiveDialog → overlay root) ────────
 
-  .save-error {
-    color: rgb(220 38 38);
+// The one-entry collectors' body (the page's field rhythm, re-anchored
+// because the overlay root is not a descendant of `.site-settings`).
+.entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
     font-size: 0.85rem;
   }
 }

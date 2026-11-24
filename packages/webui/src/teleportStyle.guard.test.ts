@@ -171,7 +171,12 @@ function classRules(src: string, className: string): ClassRule[] {
  *  declared flat (rule 1) and identical wherever repeated (rule 2).
  *  The sheets' own headers document each of these as a teleport-space
  *  anchor — extend this list together with those headers. */
-const SHARED_TELEPORT_CLASSES = ["dialog-error", "dialog-body", "warn-text"] as const;
+const SHARED_TELEPORT_CLASSES = ["dialog-body", "warn-text"] as const;
+// `.dialog-error` left this list (toast-sweep): dialog failures are
+// toasts now, so the class is retired tree-wide (the inline-notice
+// invariant holds the retirement) — a class declared nowhere cannot be
+// pinned, and keeping it on the list would fail the vacuity guard
+// below.
 
 describe("teleported dialog styles", () => {
   const sheets = allSheets(resolve(here, ".."));

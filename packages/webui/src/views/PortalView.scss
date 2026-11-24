@@ -1,12 +1,12 @@
 // PortalView — the portal face. Everything that lives inside the page
 // nests under the page's root class (`.portal`), preserving the old
-// `<style scoped>` isolation. One exception stays flat: `.dialog-error`
-// renders inside the TELEPORTED HkAdaptiveDialog overlay root, outside
-// `.portal`'s DOM (the name is unique across the app; audit rides the
-// receipt). The dark-mode lane override was `:global([data-mode="dark"])
-// .upload-lane` in the scoped sheet — `[data-mode]` is applied by the
-// theme engine on <html>, so nesting it under `.portal` keeps the exact
-// match set.
+// `<style scoped>` isolation. The transient feedback surfaces
+// (`.upload-error`, `.dialog-error`) are GONE: operation failures are
+// toasts (the family feedback contract), so no rule has to reach into the
+// teleported dialog root any more. The dark-mode lane override was
+// `:global([data-mode="dark"]) .upload-lane` in the scoped sheet —
+// `[data-mode]` is applied by the theme engine on <html>, so nesting it
+// under `.portal` keeps the exact match set.
 
 .portal {
   display: flex;
@@ -156,17 +156,4 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
-  .upload-error {
-    font-size: 0.72rem;
-    color: rgb(220 38 38);
-    margin-inline-start: auto;
-  }
-}
-
-// ── Teleported dialog content (HkAdaptiveDialog → overlay root) ────────
-
-.dialog-error {
-  color: rgb(220 38 38);
-  font-size: 0.85rem;
 }

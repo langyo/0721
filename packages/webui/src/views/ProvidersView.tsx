@@ -1,4 +1,14 @@
-import { HkAdaptiveDialog, HkAdminTablePage, HkBadge, HkIconButton, HkInput, HkRadio, HkSwitch, type HTableColumn } from "@celestia-island/hikari";
+import {
+  HkAdaptiveDialog,
+  HkAdminTablePage,
+  HkBadge,
+  HkIconButton,
+  HkInput,
+  HkRadio,
+  HkSwitch,
+  useToast,
+  type HTableColumn,
+} from "@celestia-island/hikari";
 import { Pencil, Plus, Trash2, Unplug } from "lucide-vue-next";
 import { computed, defineComponent, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -16,6 +26,11 @@ import "./ProvidersView.scss";
  * delete. The client secret is write-only — the server answers with
  * `has_secret` + the last four characters, and an EMPTY secret field
  * on save keeps the stored one.
+ *
+ * Operation failures are TOASTS (the family feedback contract): a rejected
+ * save, a rejected delete and a rejected enable-toggle each raise one —
+ * the page, the edit dialog and the delete dialog insert no note of their
+ * own. The load lane keeps its scaffold empty state (a permanent surface).
  */
 export default defineComponent({
   name: "ProvidersView",
@@ -25,9 +40,6 @@ export default defineComponent({
     const rows = ref<OAuthProviderPublic[]>([]);
     const loading = ref(false);
     const loadError = ref<string | null>(null);
-    /** A toggle failure's visible message (the enable/disable lane's own
-     *  error row — a silent rollback reads as success). */
-    const toggleError = ref<string | null>(null);
 
     const PROVIDER_TYPES = ["builtin:github", "builtin:feishu", "builtin:erp", "oidc"] as const;
 
@@ -40,6 +52,7 @@ export default defineComponent({
     // The never-empty failure text (shared factory; the contract and
     // its pins live in composables/errorText).
     const errorText = makeErrorText(t);
+    const toast = useToast();
 
     async function load() {
       loading.value = true;
@@ -63,7 +76,6 @@ export default defineComponent({
 
     const dialogOpen = ref(false);
     const saving = ref(false);
-    const saveError = ref<string | null>(null);
     const editingId = ref<string | null>(null);
     const form = ref(emptyForm());
 
@@ -84,7 +96,6 @@ export default defineComponent({
     function openCreate() {
       editingId.value = null;
       form.value = emptyForm();
-      saveError.value = null;
       dialogOpen.value = true;
     }
 
@@ -101,7 +112,6 @@ export default defineComponent({
         scopes: row.scopes ?? "",
         enabled: row.enabled,
       };
-      saveError.value = null;
       dialogOpen.value = true;
     }
 
@@ -134,7 +144,6 @@ export default defineComponent({
     async function save() {
       if (!valid.value || saving.value) return;
       saving.value = true;
-      saveError.value = null;
       try {
         await api.upsertProvider({
           id: form.value.id,
@@ -152,7 +161,8 @@ export default defineComponent({
         dialogOpen.value = false;
         await load();
       } catch (err) {
-        saveError.value = errorText(err);
+        // A failed save is a toast — the edit dialog must not grow a note.
+        toast.error(errorText(err));
       } finally {
         saving.value = false;
       }
@@ -162,7 +172,6 @@ export default defineComponent({
 
     async function toggle(row: OAuthProviderPublic, enabled: boolean) {
       const previous = rows.value;
-      toggleError.value = null;
       rows.value = rows.value.map((r) => (r.id === row.id ? { ...r, enabled } : r));
       try {
         await api.upsertProvider({
@@ -180,13 +189,13 @@ export default defineComponent({
       } catch (err) {
         rows.value = previous;
         // The failure must be VISIBLE (the row just snapped back — say why).
-        toggleError.value = errorText(err);
+        // The family lane for that is a toast, not a banner above the table.
+        toast.error(errorText(err));
       }
     }
 
     const pendingDelete = ref<OAuthProviderPublic | null>(null);
     const deleteBusy = ref(false);
-    const deleteError = ref<string | null>(null);
 
     const deleteActions = computed(() => [
       {
@@ -210,13 +219,13 @@ export default defineComponent({
       const target = pendingDelete.value;
       if (!target) return;
       deleteBusy.value = true;
-      deleteError.value = null;
       try {
         await api.deleteProvider(target.id);
         rows.value = rows.value.filter((r) => r.id !== target.id);
         pendingDelete.value = null;
       } catch (err) {
-        deleteError.value = errorText(err);
+        // A failed delete is a toast — the dialog must not grow a note.
+        toast.error(errorText(err));
       } finally {
         deleteBusy.value = false;
       }
@@ -234,7 +243,6 @@ export default defineComponent({
 
     return () => (
       <section class="providers">
-        {toggleError.value ? <p class="toggle-error" role="alert">{toggleError.value}</p> : null}
         <HkAdminTablePage
           title={t("common.providers.title")}
           subtitle={t("common.status.total", { count: rows.value.length })}
@@ -286,7 +294,7 @@ export default defineComponent({
                   variant="ghost"
                   aria-label={t("common.actions.delete")}
                   {...{ title: t("common.actions.delete") }}
-                  onClick={() => { pendingDelete.value = row; deleteError.value = null; }}
+                  onClick={() => { pendingDelete.value = row; }}
                 >
                   {{ icon: () => <Trash2 size={14} /> }}
                 </HkIconButton>
@@ -352,7 +360,6 @@ export default defineComponent({
               <span>{t("common.providers.enabled")}</span>
               <HkSwitch v-model={form.value.enabled} aria-label={t("common.providers.enabled")} />
             </div>
-            {saveError.value ? <p class="dialog-error" role="alert">{saveError.value}</p> : null}
             <button type="submit" hidden><Plus size={14} /></button>
           </form>
         </HkAdaptiveDialog>
@@ -365,7 +372,6 @@ export default defineComponent({
           onUpdate:modelValue={(v: boolean) => !v && ((pendingDelete.value = null))}
         >
           <p>{t("common.providers.deleteConfirm", { id: pendingDelete.value?.id ?? "" })}</p>
-          {deleteError.value ? <p class="dialog-error" role="alert">{deleteError.value}</p> : null}
         </HkAdaptiveDialog>
       </section>
     );

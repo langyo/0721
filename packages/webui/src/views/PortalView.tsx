@@ -1,4 +1,12 @@
-import { HkAdaptiveDialog, HkButton, HkEmptyState, HkIconButton, HkMasterDetail, HkProgressRing } from "@celestia-island/hikari";
+import {
+  HkAdaptiveDialog,
+  HkButton,
+  HkEmptyState,
+  HkIconButton,
+  HkMasterDetail,
+  HkProgressRing,
+  useToast,
+} from "@celestia-island/hikari";
 import { ExternalLink, Copy, FileArchive, FileAudio, FileText, FileVideo, Folder, Images, Trash2 } from "lucide-vue-next";
 import { computed, h, defineComponent, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -20,6 +28,12 @@ import "./PortalView.scss";
  *
  * Picking a tile opens the shared detail pane beside the grid; the pane's
  * own action opens the original in a new tab.
+ *
+ * Operation failures are TOASTS (the family feedback contract): a rejected
+ * upload raises one toast at the point the item fails, and a rejected
+ * delete raises one — nothing about either inserts DOM beside the row, the
+ * dialog or the upload lane. The load lane keeps its page-level empty state
+ * (a permanent surface, not transient feedback).
  */
 export default defineComponent({
   name: "PortalView",
@@ -35,6 +49,7 @@ export default defineComponent({
 
     const errorText = makeErrorText(t);
     const uploadErrorText = makeErrorText(t, "common.portal.uploadFailed");
+    const toast = useToast();
 
     const PAGE_SIZE = 30;
 
@@ -49,7 +64,6 @@ export default defineComponent({
       id: number;
       name: string;
       progress: number;
-      error: string | null;
     }
 
     const uploads = ref<UploadEntry[]>([]);
@@ -92,7 +106,7 @@ export default defineComponent({
       const picked = Array.from(input.files ?? []);
       input.value = "";
       for (const file of picked) {
-        const entry: UploadEntry = { id: uploadSeq++, name: file.name, progress: 0, error: null };
+        const entry: UploadEntry = { id: uploadSeq++, name: file.name, progress: 0 };
         uploads.value = [...uploads.value, entry];
         void api
           .uploadFile(file, (fraction) => {
@@ -104,8 +118,12 @@ export default defineComponent({
             void load(true);
           })
           .catch((err: unknown) => {
-            entry.error = uploadErrorText(err);
-            uploads.value = [...uploads.value];
+            // A failed upload leaves NO row behind: a frozen ring with no
+            // message is a dead end the visitor cannot dismiss. The toast
+            // is the whole report, and it names the file — the only place
+            // that association survives the toast's auto-dismiss.
+            uploads.value = uploads.value.filter((u) => u.id !== entry.id);
+            toast.error(`${file.name}: ${uploadErrorText(err)}`);
           });
       }
     }
@@ -115,7 +133,6 @@ export default defineComponent({
     const copiedId = ref<string | null>(null);
     const pendingDelete = ref<FileDto | null>(null);
     const deleteBusy = ref(false);
-    const deleteError = ref<string | null>(null);
 
     const deleteActions = computed(() => [
       {
@@ -139,7 +156,6 @@ export default defineComponent({
       const target = pendingDelete.value;
       if (!target) return;
       deleteBusy.value = true;
-      deleteError.value = null;
       try {
         await api.deleteFile(target.id);
         // The pane must not keep showing the row that just vanished.
@@ -148,7 +164,8 @@ export default defineComponent({
         total.value = Math.max(0, total.value - 1);
         pendingDelete.value = null;
       } catch (err) {
-        deleteError.value = errorText(err);
+        // A failed delete is a toast — the dialog must not grow a note.
+        toast.error(errorText(err));
       } finally {
         deleteBusy.value = false;
       }
@@ -260,7 +277,7 @@ export default defineComponent({
                               class="tile-action danger"
                               aria-label={t("common.actions.delete")}
                               title={t("common.actions.delete")}
-                              onClick={() => { pendingDelete.value = file; deleteError.value = null; }}
+                              onClick={() => { pendingDelete.value = file; }}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -304,7 +321,9 @@ export default defineComponent({
           </>
         )}
 
-        {/* The upload lane: one row per in-flight file with its progress. */}
+        {/* The upload lane: one row per IN-FLIGHT file with its progress. A
+            failed file leaves no row at all — its toast names the file and
+            the reason. */}
         {uploads.value.length > 0 ? (
           <div
             class="upload-lane"
@@ -316,11 +335,6 @@ export default defineComponent({
               <div key={entry.id} class="upload-row">
                 <HkProgressRing value={entry.progress} size={20} strokeWidth={3} />
                 <span class="upload-name" title={entry.name}>{entry.name}</span>
-                {entry.error ? (
-                  <span class="upload-error" role="alert">
-                    {entry.error}
-                  </span>
-                ) : null}
               </div>
             ))}
           </div>
@@ -334,7 +348,6 @@ export default defineComponent({
           onUpdate:modelValue={(v: boolean) => !v && ((pendingDelete.value = null))}
         >
           <p>{t("common.portal.deleteConfirm")}</p>
-          {deleteError.value ? <p class="dialog-error" role="alert">{deleteError.value}</p> : null}
         </HkAdaptiveDialog>
       </section>
     );

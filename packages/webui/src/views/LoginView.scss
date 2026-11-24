@@ -23,16 +23,6 @@
     width: min(24rem, 100%);
   }
 
-  .login-error {
-    margin: 0.75rem 0 0;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.5rem;
-    background: color-mix(in srgb, rgb(220 38 38) 14%, transparent);
-    color: rgb(220 38 38);
-    font-size: 0.875rem;
-    text-align: center;
-  }
-
   .login-footer {
     display: flex;
     align-items: center;

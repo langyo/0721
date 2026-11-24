@@ -1,4 +1,14 @@
-import { HkAdaptiveDialog, HkAdminTablePage, HkBadge, HkDateTag, HkIconButton, HkInput, HkRadio, type HTableColumn } from "@celestia-island/hikari";
+import {
+  HkAdaptiveDialog,
+  HkAdminTablePage,
+  HkBadge,
+  HkDateTag,
+  HkIconButton,
+  HkInput,
+  HkRadio,
+  useToast,
+  type HTableColumn,
+} from "@celestia-island/hikari";
 import { ShieldCheck, Trash2, Users as UsersIcon } from "lucide-vue-next";
 import { computed, defineComponent, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -17,11 +27,20 @@ import "./UsersView.scss";
  * The admin user roster: list / create / delete. The create action is the
  * header's plus (the slot law — the dialog itself stays page-owned), the
  * refresh the header's refresh button.
+ *
+ * Operation RESULTS (a failed create, a failed delete) surface as TOASTS on
+ * a KEYED slot per operation: the family feedback contract — nothing about
+ * an attempt inserts DOM beside the dialog, the dialog stays open so the
+ * input survives a retry, and two failed attempts read as ONE message
+ * instead of a wall of paragraphs. Only the roster's LOAD failure stays in
+ * the scaffold: it is the page's permanent error surface (hard error /
+ * stale banner), not a transient reply to a click.
  */
 export default defineComponent({
   name: "UsersView",
   setup() {
     const { t } = useI18n();
+    const toast = useToast();
     const auth = useAuthStore();
 
     const PAGE_SIZE = 30;
@@ -62,9 +81,22 @@ export default defineComponent({
 
     // ── create dialog ──────────────────────────────────────────────────
 
+    /** The view's OWN keyed toast slots — one per operation. */
+    const CREATE_ERROR = "users-create-error";
+    const DELETE_ERROR = "users-delete-error";
+
+    /** Clear the keyed error slot a previous attempt left in the toast
+     *  stack. The inline note it replaced was state on THIS view and died
+     *  with its surface (the dialog reopened, the row re-picked); the toast
+     *  store is module-level, so that "it goes away with the surface"
+     *  behaviour has to be spelled out. */
+    function clearErrorToast(key: string): void {
+      const slot = toast.toasts.find((item) => item.key === key);
+      if (slot) toast.remove(slot.id);
+    }
+
     const createOpen = ref(false);
     const createBusy = ref(false);
-    const createError = ref<string | null>(null);
     const form = ref({ username: "", password: "", displayName: "", role: "member" as Role });
 
     /** The two account roles, as the family radio's {value,label} rows. */
@@ -95,14 +127,15 @@ export default defineComponent({
     usePageCreateAction({
       label: () => t("common.users.createTitle"),
       onCreate: () => {
-        createError.value = null;
+        // The stale toast of a previous attempt dies with the reopened
+        // dialog — the old inline note cleared here too.
+        clearErrorToast(CREATE_ERROR);
         createOpen.value = true;
       },
     });
 
     async function submitCreate() {
       createBusy.value = true;
-      createError.value = null;
       try {
         await api.createUser({
           username: form.value.username,
@@ -114,10 +147,14 @@ export default defineComponent({
         form.value = { username: "", password: "", displayName: "", role: "member" };
         await load(true);
       } catch (err) {
-        createError.value =
+        // Operation result → toast (KEYED, so repeat attempts merge into
+        // one message; the dialog stays open with the typed input).
+        toast.show(
           err instanceof ApiError && err.status === 409
             ? t("common.users.conflict")
-            : errorText(err);
+            : errorText(err),
+          { type: "error", key: CREATE_ERROR },
+        );
       } finally {
         createBusy.value = false;
       }
@@ -127,7 +164,6 @@ export default defineComponent({
 
     const pendingDelete = ref<UserDto | null>(null);
     const deleteBusy = ref(false);
-    const deleteError = ref<string | null>(null);
 
     const deleteActions = computed(() => [
       {
@@ -152,14 +188,16 @@ export default defineComponent({
       const target = pendingDelete.value;
       if (!target) return;
       deleteBusy.value = true;
-      deleteError.value = null;
       try {
         await api.deleteUser(target.id);
         users.value = users.value.filter((u) => u.id !== target.id);
         total.value = Math.max(0, total.value - 1);
         pendingDelete.value = null;
+        clearErrorToast(DELETE_ERROR);
       } catch (err) {
-        deleteError.value = errorText(err);
+        // A failed delete is a toast — the dialog must not grow a note, and
+        // the row stays put so the attempt can be retried.
+        toast.show(errorText(err), { type: "error", key: DELETE_ERROR });
       } finally {
         deleteBusy.value = false;
       }
@@ -219,7 +257,7 @@ export default defineComponent({
                   variant="ghost"
                   aria-label={t("common.actions.delete")}
                   {...{ title: t("common.actions.delete") }}
-                  onClick={() => { pendingDelete.value = row; deleteError.value = null; }}
+                  onClick={() => { clearErrorToast(DELETE_ERROR); pendingDelete.value = row; }}
                 >
                   {{ icon: () => <Trash2 size={14} /> }}
                 </HkIconButton>
@@ -269,7 +307,6 @@ export default defineComponent({
                 <HkRadio v-model={form.value.role} options={roleOptions.value} size="sm" />
               </div>
             </div>
-            {createError.value ? <p class="dialog-error" role="alert">{createError.value}</p> : null}
           </form>
         </HkAdaptiveDialog>
 
@@ -281,7 +318,6 @@ export default defineComponent({
           onUpdate:modelValue={(v: boolean) => !v && ((pendingDelete.value = null))}
         >
           <p>{t("common.users.deleteConfirm", { name: pendingDelete.value?.display_name ?? "" })}</p>
-          {deleteError.value ? <p class="dialog-error" role="alert">{deleteError.value}</p> : null}
         </HkAdaptiveDialog>
       </section>
     );
