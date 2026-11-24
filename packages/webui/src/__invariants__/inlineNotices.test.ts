@@ -68,25 +68,134 @@ function walk(dir: string): string[] {
   return out;
 }
 
-/** Strip comments so prose about the ban is not mistaken for a violation. */
-function withoutComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+/**
+ * Remove comments from a JS/TS/CSS source, string- and regex-aware.
+ *
+ * A regex-based stripper is UNSOUND here: a `//` inside a regex literal or
+ * a string deletes the rest of the line INCLUDING live code, so a notice
+ * planted after such a literal would evade every check (demonstrated in
+ * review with `const sep = /^.*\/\//;` followed by a banned span — both
+ * suites stayed green). This is a small single-pass scanner instead:
+ *
+ *  - line and block comments are removed (block comments keep their
+ *    newlines so line-based reasoning survives);
+ *  - strings and template literals are copied verbatim (escapes honoured);
+ *  - `/` is treated as a regex start only when the previous significant
+ *    character says so (operators, openers, statement starts); after an
+ *    identifier, a digit, `)` or `]` it is division. Regexes honour `\`
+ *    escapes and `[...]` classes, and cannot span lines.
+ *
+ * The failure mode of an imperfect heuristic is bounded: misreading
+ * division as a regex can only over-KEEP code (the regex body is copied,
+ * not deleted), never over-DELETE it — so a violation can still be hidden
+ * by a mis-scanned comment, but a legitimate scan can never be emptied by
+ * one.
+ */
+function stripComments(source: string): string {
+  const regexAfter = /[=(,:\[!&|?{};+\-*%<>~^~]/;
+  let out = "";
+  let prev = "=";
+  let i = 0;
+  while (i < source.length) {
+    const c = source[i];
+    const next = source[i + 1] ?? "";
+    if (c === "/" && next === "/") {
+      while (i < source.length && source[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      i += 2;
+      let closed = false;
+      while (i < source.length) {
+        if (source[i] === "*" && source[i + 1] === "/") {
+          i += 2;
+          closed = true;
+          break;
+        }
+        if (source[i] === "\n") out += "\n";
+        i++;
+      }
+      out += " ";
+      if (!closed) break; // unterminated block comment: the rest is comment
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      out += c;
+      i++;
+      while (i < source.length && source[i] !== quote) {
+        if (source[i] === "\\") {
+          out += source[i] + (source[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        // A newline physically ends a ' or " string; keep scanning (the
+        // source would be invalid TS anyway) rather than looping forever.
+        out += source[i];
+        i++;
+      }
+      out += quote;
+      i++;
+      prev = quote;
+      continue;
+    }
+    if (c === "/" && next !== "/" && next !== "*" && regexAfter.test(prev)) {
+      // Regex literal: copy verbatim (escapes and character classes).
+      out += c;
+      i++;
+      while (i < source.length && source[i] !== "/") {
+        if (source[i] === "\\") {
+          out += source[i] + (source[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        if (source[i] === "\n") break; // not a regex after all; bail out
+        out += source[i];
+        i++;
+      }
+      out += "/";
+      i++;
+      prev = "/";
+      continue;
+    }
+    out += c;
+    i++;
+    if (!/\s/.test(c)) prev = c;
+  }
+  return out;
 }
 
 const FILES = walk(SRC)
   .filter((f) => !/\.test\.tsx?$/.test(f))
-  .map((f) => ({ path: relative(SRC, f).split("\\").join("/"), text: withoutComments(readFileSync(f, "utf8")) }));
+  .map((f) => ({ path: relative(SRC, f).split("\\").join("/"), text: stripComments(readFileSync(f, "utf8")) }));
 
 describe("the page-inline notice ban (tree-wide)", () => {
-  it("scans the tree at all — a green over zero files would prove nothing", () => {
+  it("scans the tree at all — a green over a thinned corpus proves nothing", () => {
     // MUT:inline-notice-scan — narrowing this walk (or breaking the
-    // extension filter) empties the corpus and reddens here rather than
-    // silently passing everything below.
-    expect(FILES.length).toBeGreaterThan(15);
-    expect(FILES.some((f) => f.path === "views/FilesView.tsx")).toBe(true);
-    expect(FILES.some((f) => f.path === "layouts/AppShell.tsx")).toBe(true);
+    // extension filter) thins the corpus below the full view list and
+    // reddens here rather than silently passing everything below. Every
+    // migrated view/layout/component must be IN the corpus: an exempted
+    // file is an unguarded file.
+    const REQUIRED = [
+      "App.tsx",
+      "layouts/AppShell.tsx",
+      "components/FileDetailView.tsx",
+      "components/SettingsDialog.tsx",
+      "views/LoginView.tsx",
+      "views/SharedFileView.tsx",
+      "views/FilesView.tsx",
+      "views/PortalView.tsx",
+      "views/TimelineView.tsx",
+      "views/SharesView.tsx",
+      "views/KeysView.tsx",
+      "views/UsersView.tsx",
+      "views/ProvidersView.tsx",
+      "views/SettingsView.tsx",
+    ];
+    const inCorpus = new Set(FILES.map((f) => f.path));
+    const missing = REQUIRED.filter((r) => !inCorpus.has(r));
+    expect(missing).toEqual([]);
+    expect(FILES.length).toBeGreaterThan(60);
   });
 
   it("renders no transient notice inside a page", () => {
@@ -102,11 +211,14 @@ describe("the page-inline notice ban (tree-wide)", () => {
     const offenders: string[] = [];
     for (const f of FILES) {
       for (const cls of RETIRED_NOTICE_CLASSES) {
-        // A class TOKEN: `class="… dialog-error …"` or a CSS `.dialog-error` rule.
+        // A class TOKEN: `class="… dialog-error …"` or a CSS selector that
+        // names the class. The token boundaries reject both longer names
+        // (`.dialog-error-foo`) and deeper specificity drift (`.dialog-error:hover`
+        // and `.dialog-error:not(.x)` still match; `.dialog-errorish` does not).
         const asClass = new RegExp(`class(?:Name)?="[^"]*\\b${cls}\\b`);
-        const asRule = new RegExp(`\\.${cls}\\b\\s*(?=\\{|,|\\s)`);
+        const asSelector = new RegExp(`\\.${cls}(?![\\w-])`);
         if (asClass.test(f.text)) offenders.push(`${f.path}: class ${cls}`);
-        if (f.path.endsWith(".css") && asRule.test(f.text)) offenders.push(`${f.path}: rule .${cls}`);
+        if (f.path.endsWith(".css") && asSelector.test(f.text)) offenders.push(`${f.path}: rule .${cls}`);
       }
     }
     // MUT:retired-notice-class — restoring any removed notice (or its CSS
