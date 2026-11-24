@@ -8,13 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // subject (the family table anatomy replaced the hand-built list).
 const listUsersMock = vi.fn();
 const deleteUserMock = vi.fn();
+const createUserMock = vi.fn();
 vi.mock("@/api", () => ({
   listUsers: (...args: unknown[]) => listUsersMock(...args),
   deleteUser: (...args: unknown[]) => deleteUserMock(...args),
-  createUser: vi.fn(),
+  createUser: (...args: unknown[]) => createUserMock(...args),
 }));
 
-import UsersView from "./UsersView.vue";
+import UsersView from "./UsersView";
+import { HkToast, useToast } from "@celestia-island/hikari";
+import { ApiError } from "@/api/client";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import { useAuthStore } from "@/stores/auth";
@@ -25,6 +28,11 @@ import type { UserDto } from "@/types";
  * the account/role/created columns, the roster reports the server's total,
  * and the signed-in admin gets no delete affordance on their own row
  * (deleting yourself would drop the admin surface mid-session).
+ *
+ * Operation RESULTS (create / delete failures) are TOASTS: the inline
+ * `role="alert"` paragraphs inside the dialogs are gone (the user's hard
+ * rule — no DOM inserted beside a control), so the assertions below read
+ * the toast surface and pin the paragraphs' ABSENCE.
  */
 
 const i18n = createAppI18n();
@@ -38,6 +46,10 @@ function user(id: string, username: string, role: "admin" | "member"): UserDto {
     created_at: "2026-11-01T10:00:00Z",
   };
 }
+
+/** Every mounted toast outlet — cleanup owns their lifetime (the view's
+ *  own wrapper is returned to the caller; the outlet is harness state). */
+const outlets: Array<{ unmount: () => void }> = [];
 
 function mountView(): ReturnType<typeof mount> {
   const pinia: Pinia = createPinia();
@@ -53,12 +65,36 @@ function mountView(): ReturnType<typeof mount> {
     components: { UsersView },
     setup() {
       const bar = provideActionBar();
-      // Render the roster and the bar's registered entries (the refresh
-      // button) so the failed-reload path is reachable from a test.
+      // Render the roster and the bar's registered entries (the create
+      // plus + the refresh button) so both paths are reachable from a test.
       return () => [h(UsersView), h("div", { class: "probe-actions" }, bar.actions.value.flatMap((r) => r()))];
     },
   };
-  return mount(Harness, { global: { plugins: [pinia, router, i18n] }, attachTo: document.body });
+  // attachTo keeps the tree in the live document — the dialogs teleport to
+  // the overlay root, and a detached mount hides them.
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const mounted = mount(Harness, { global: { plugins: [pinia, router, i18n] }, attachTo: host });
+  // The family toast outlet renders the toasts this view raises.
+  outlets.push(mount(HkToast, { attachTo: document.body, props: { teleport: false } }));
+  return mounted;
+}
+
+/** The latest message on the toast surface (empty when nothing is shown). */
+function toastText(): string {
+  const nodes = document.querySelectorAll(".hk-toast-message");
+  return nodes.length > 0 ? (nodes[nodes.length - 1]!.textContent ?? "") : "";
+}
+
+/** The header's create plus (the action-bar registration). */
+function createButton(): HTMLButtonElement | null {
+  const scope = document.querySelector<HTMLElement>(".probe-actions");
+  if (!scope) return null;
+  return (
+    Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.getAttribute("aria-label") === i18n.global.t("common.users.createTitle"),
+    ) ?? null
+  );
 }
 
 let wrapper: ReturnType<typeof mount> | null = null;
@@ -67,10 +103,16 @@ beforeEach(() => {
   wrapper = null;
   listUsersMock.mockReset();
   deleteUserMock.mockReset();
+  createUserMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   wrapper?.unmount();
+  outlets.splice(0).forEach((o) => o.unmount());
+  // The toast store is module-level (hikari state) — clear it so the next
+  // case's outlet renders only ITS OWN messages.
+  const toast = useToast();
+  for (const slot of toast.toasts.slice()) toast.remove(slot.id);
 });
 
 describe("UsersView (family table roster)", () => {
@@ -207,37 +249,11 @@ describe("UsersView (family table roster)", () => {
     expect(wrapper.text()).toContain(i18n.global.t("common.status.error"));
   });
 
-  it("surfaces a failed delete in the dialog instead of closing silently", async () => {
-    listUsersMock.mockResolvedValue({
-      items: [user("me", "me", "admin"), user("u2", "alice", "member")],
-      total: 5,
-    });
-    deleteUserMock.mockRejectedValue("rpc timeout");
-    wrapper = mountView();
-    await flushPromises();
-    const del = wrapper.find(`button[aria-label="${i18n.global.t("common.actions.delete")}"]`);
-    await del.trigger("click");
-    await flushPromises();
-    // Confirm inside the dialog — the adaptive dialog teleports, so the
-    // footer's danger action lives at the document level.
-    const confirm = Array.from(document.querySelectorAll("button")).find(
-      (b) => b.textContent?.trim() === i18n.global.t("common.actions.delete"),
-    );
-    expect(confirm).toBeTruthy();
-    confirm!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await flushPromises();
-    // The dialog (teleported) stays open and carries the rejection text.
-    expect(document.body.textContent).toContain("rpc timeout");
-    expect(wrapper.findAll("tbody tr").length).toBe(2);
-  });
-
   it("keeps the role picker a NAMED radiogroup (a11y contract)", async () => {
     listUsersMock.mockResolvedValue({ items: [user("me", "me", "admin")], total: 1 });
     wrapper = mountView();
     await flushPromises();
-    const create = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
-      (b) => (b.getAttribute("aria-label") ?? "").length > 0 && b.className.includes("hk-icon-button"),
-    );
+    const create = createButton();
     expect(create).toBeTruthy();
     create!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushPromises();
@@ -257,5 +273,118 @@ describe("UsersView (family table roster)", () => {
     await flushPromises();
     expect(wrapper.findAll("tbody tr").length).toBe(0);
     expect(wrapper.text()).toContain(i18n.global.t("common.users.empty"));
+  });
+});
+
+describe("UsersView operation feedback (toasts, not inline blocks)", () => {
+  it("raises a failed delete as a toast and grows nothing inside the dialog", async () => {
+    listUsersMock.mockResolvedValue({
+      items: [user("me", "me", "admin"), user("u2", "alice", "member")],
+      total: 5,
+    });
+    deleteUserMock.mockRejectedValue("rpc timeout");
+    wrapper = mountView();
+    await flushPromises();
+    const del = wrapper.find(`button[aria-label="${i18n.global.t("common.actions.delete")}"]`);
+    await del.trigger("click");
+    await flushPromises();
+    // Confirm inside the dialog — the adaptive dialog teleports, so the
+    // footer's danger action lives at the document level.
+    const confirm = Array.from(document.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === i18n.global.t("common.actions.delete"),
+    );
+    expect(confirm).toBeTruthy();
+    confirm!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    // The rejection reaches the TOAST surface…
+    await vi.waitFor(() => {
+      expect(toastText()).toBe("rpc timeout");
+    });
+    // …the dialog stays open (the target survives the failure)…
+    expect(document.body.textContent).toContain(
+      i18n.global.t("common.users.deleteConfirm", { name: "ALICE" }),
+    );
+    // …no row disappeared…
+    expect(wrapper.findAll("tbody tr").length).toBe(2);
+    // …and NO paragraph grew inside the dialog (the hard rule). Scoped to
+    // the dialog's own body: [role="alert"] itself is legitimate now — the
+    // toast item carries it — so the absence is asserted where the removed
+    // blocks used to live.
+    expect(document.querySelector(".dialog-error")).toBeNull();
+    expect(document.querySelector(".hk-modal-content [role='alert']")).toBeNull();
+    expect(document.querySelector(".hk-modal-content p")?.textContent).toBe(
+      i18n.global.t("common.users.deleteConfirm", { name: "ALICE" }),
+    );
+  });
+
+  it("raises a failed create as a toast with the 409 copy, keeping the form filled", async () => {
+    listUsersMock.mockResolvedValue({ items: [user("me", "me", "admin")], total: 1 });
+    createUserMock.mockRejectedValue(new ApiError(409, "taken"));
+    wrapper = mountView();
+    await flushPromises();
+
+    const create = createButton();
+    expect(create, "the header must expose the create plus").toBeTruthy();
+    create!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    const username = document.querySelector<HTMLInputElement>('[data-testid="create-username"]');
+    const password = document.querySelector<HTMLInputElement>('[data-testid="create-password"]');
+    expect(username).toBeTruthy();
+    expect(password).toBeTruthy();
+    for (const [input, value] of [
+      [username!, "alice"],
+      [password!, "secret"],
+    ] as Array<[HTMLInputElement, string]>) {
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    await flushPromises();
+
+    // The dialog's primary footer action ("Create").
+    const submit = Array.from(document.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === i18n.global.t("common.actions.create"),
+    );
+    expect(submit).toBeTruthy();
+    submit!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    expect(createUserMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(toastText()).toBe(i18n.global.t("common.users.conflict"));
+    });
+    // The dialog stays open — the typed credentials survive the retry.
+    expect(document.querySelector<HTMLInputElement>('[data-testid="create-username"]')?.value).toBe("alice");
+    // The inline note is gone for good.
+    expect(document.querySelector(".dialog-error")).toBeNull();
+    expect(document.querySelector(".hk-modal-content [role='alert']")).toBeNull();
+  });
+
+  it("keeps a single toast slot for repeated failures of the same operation", async () => {
+    // The toast store is module-level and a keyed slot would otherwise
+    // stack one paragraph per attempt — the wall-of-text the inline block
+    // never produced. Two identical failures must read as ONE message.
+    listUsersMock.mockResolvedValue({
+      items: [user("me", "me", "admin"), user("u2", "alice", "member")],
+      total: 5,
+    });
+    deleteUserMock.mockRejectedValue("rpc timeout");
+    wrapper = mountView();
+    await flushPromises();
+    const del = wrapper.find(`button[aria-label="${i18n.global.t("common.actions.delete")}"]`);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await del.trigger("click");
+      await flushPromises();
+      const confirm = Array.from(document.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === i18n.global.t("common.actions.delete"),
+      );
+      confirm!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushPromises();
+    }
+    await vi.waitFor(() => {
+      expect(toastText()).toBe("rpc timeout");
+    });
+    expect(document.querySelectorAll(".hk-toast-message").length).toBe(1);
   });
 });

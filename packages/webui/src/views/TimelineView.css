@@ -1,0 +1,8 @@
+/* TimelineView — the tile roster grid (view-scoped `count`/`grid`/`tile`/
+ * `more` prefixes). */
+.count { margin: 0 0 0.5rem; opacity: 0.7; font-size: 0.85rem; }
+.grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 0.6rem; }
+.tile-btn { display: block; width: 100%; padding: 0; border: 2px solid transparent; border-radius: 0.6rem; background: none; cursor: pointer; overflow: hidden; }
+.tile-btn img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.tile.active .tile-btn { border-color: color-mix(in srgb, currentColor 45%, transparent); }
+.more { display: flex; justify-content: center; margin-top: 1rem; }

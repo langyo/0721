@@ -1,0 +1,4 @@
+/* SharesView — roster cells (view-scoped `share-` prefix). The inline
+ * "revoked" note is GONE: revoke feedback (success and failure) is a
+ * toast. */
+.share-link { font-family: var(--hk-font-mono, ui-monospace, monospace); }

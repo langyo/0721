@@ -1,0 +1,42 @@
+/* UsersView — roster layout (class-prefixed `user-`/`users-`/`create-form`).
+ * The `dialog-error` paragraph is GONE: a failed create/delete is a toast
+ * (the family feedback contract), so nothing grows inside the dialogs. */
+.users {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.user-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.user-login {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.user-name-cell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.users-more {
+  display: flex;
+  justify-content: center;
+}
+
+.create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}

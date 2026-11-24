@@ -1,0 +1,43 @@
+/* AppShell — view-scoped account-window layout (the `account-` prefix, kept
+ * verbatim from the SFC's scoped block so the styles stay scoped to the
+ * shell's own markup). */
+.account-window {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+  padding-block: 0.5rem;
+}
+
+.account-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.account-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  font-size: 0.9rem;
+}
+
+.account-label {
+  opacity: 0.65;
+}
+
+.account-mono {
+  font-family: var(--hk-font-mono, ui-monospace, monospace);
+}
+
+.account-badge {
+  font-weight: 600;
+}
+
+.account-actions {
+  margin-top: 0.25rem;
+}
