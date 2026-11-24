@@ -61,33 +61,41 @@ export default defineComponent({
       { key: "actions", title: "", align: "right", width: "3.5rem", copyable: false },
     ]);
 
+    /** Announce the revoke on THIS view's own slot.
+     *
+     *  The key is load-bearing on BOTH ends: an unkeyed success push lands
+     *  in the one slot the whole app shares, so clearing it would wipe an
+     *  unrelated view's confirmation, while a keyed push with an unkeyed
+     *  clear leaves a stale "revoked" sitting over a failure. Push and
+     *  clear are therefore one pair, written here and read nowhere else. */
+    function announceRevoked(): void {
+      toast.show(t("common.files.revoked"), { type: "success", key: REVOKED_TOAST_KEY });
+    }
+
+    /** Dismiss THIS view's revoked note — never the shared success slot. */
+    function clearRevoked(): void {
+      const stale = toast.toasts.find(
+        (slot) => slot.type === "success" && slot.key === REVOKED_TOAST_KEY,
+      );
+      if (stale) toast.remove(stale.id);
+    }
+
     async function revoke(token: string) {
       try {
         await files.shareDelete(token);
         // Success is announced on the toast surface only (never a note
-        // beside the roster), under THIS view's own slot key: an unkeyed
-        // success push shares the one global success slot, so clearing it
-        // would wipe an unrelated view's confirmation (e.g. the settings
-        // page's "saved") out of the corner stack.
-        toast.show(t("common.files.revoked"), { type: "success", key: REVOKED_TOAST_KEY });
+        // beside the roster).
+        announceRevoked();
         void load();
       } catch (e) {
         // Each attempt starts from a clean slate: a stale "revoked"
         // toast over a failed revoke claims a success that did not
         // happen (the old inline note was reset the same way).
-        clearSuccessLane();
+        clearRevoked();
         // The failure lane — a silent catch leaves the row on screen
         // with no explanation and no retry.
         toast.error(errorText(e));
       }
-    }
-
-    /** Dismiss THIS view's revoked note — never the shared success slot. */
-    function clearSuccessLane() {
-      const stale = toast.toasts.find(
-        (slot) => slot.type === "success" && slot.key === REVOKED_TOAST_KEY,
-      );
-      if (stale) toast.remove(stale.id);
     }
 
     return () => (

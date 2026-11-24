@@ -340,8 +340,9 @@ export default defineComponent({
                 </>
               )}
 
-        {/* The upload lane: one row per in-flight file with its progress. A
-            failed item's message is a toast — the row keeps only its name. */}
+        {/* The upload lane: one row per IN-FLIGHT file with its progress. A
+            failed file leaves no row at all — its toast names the file and
+            the reason. */}
         {uploads.value.length > 0 && (
           <div
             class="upload-lane"
