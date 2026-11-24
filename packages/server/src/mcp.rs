@@ -55,7 +55,7 @@ use i0721_proto::{FileDto, FileKind, KeyOp, NewShare};
 
 use crate::api::upload_core::{run_upload, UploadInput};
 use crate::error::ApiError;
-use crate::key_scopes::{is_live, parse_scopes, required_op, Denial, Live};
+use crate::key_scopes::{authorize, is_live, parse_scopes, required_op, Denial, Live};
 use crate::state::AppState;
 
 /// Session TTL and cap (chest-matched).
@@ -483,7 +483,6 @@ pub async fn message(
         )
             .into_response();
     }
-    let scopes = parse_scopes(&key_record.scopes);
 
     // Parse and validate the request shape. A body the server cannot even
     // read answers an HTTP error with the id-less error frame; a VALID
@@ -518,7 +517,7 @@ pub async fn message(
     let user_id = session.user_id;
     let tx = session.tx.clone();
     tokio::spawn(async move {
-        let outcome = dispatch_tool(&state, user_id, origin, &scopes, &method, &params).await;
+        let outcome = dispatch_tool(&state, user_id, origin, &key_record, &method, &params).await;
         let _ = tx.send(response_frame(&id, outcome)).await;
     });
 
@@ -690,7 +689,7 @@ async fn dispatch_tool(
     state: &AppState,
     user_id: Uuid,
     origin: Option<String>,
-    scopes: &BTreeSet<KeyOp>,
+    key: &i0721_proto::ApiKeyRecord,
     method: &str,
     params: &Value,
 ) -> Result<Value, RpcFault> {
@@ -706,7 +705,7 @@ async fn dispatch_tool(
         // Only the tools this key may actually call: an agent that
         // cannot upload should not be told `upload_file` exists.
         "tools/list" => Ok(json!({
-            "tools": visible_tools(scopes),
+            "tools": visible_tools(&parse_scopes(&key.scopes)),
         })),
         "tools/call" => {
             let tool = params
@@ -723,11 +722,22 @@ async fn dispatch_tool(
             // (-32001, see [`SCOPE_DENIED`]); a tool that runs and fails
             // is a RESULT with `isError` — three different layers that
             // must not share the `result` slot.
-            let required = required_op(tool)
-                .ok_or_else(|| RpcFault::new(-32602, format!("no such tool: {tool:?}")))?;
-            if !scopes.contains(&required) {
-                let denial = Denial::Scope { required };
-                return Err(RpcFault::new(SCOPE_DENIED, denial.message(tool)));
+            //
+            // The decision itself is NOT taken here: the caller already
+            // proved the key live for this frame, so [`authorize`] on that
+            // same (freshly loaded) record is the one interpreter of the
+            // permission set — the inline `scopes.contains` this used to
+            // do made the MCP lane and `key_scopes` two sources of truth.
+            if let Err(denial) = authorize(key, tool) {
+                let code = match denial {
+                    Denial::UnknownTool => -32602,
+                    // Revocation/expiry were settled by the per-frame
+                    // re-check above; reaching them here would mean the
+                    // record changed mid-frame, and a refusal is still the
+                    // right answer.
+                    Denial::Revoked | Denial::Expired | Denial::Scope { .. } => SCOPE_DENIED,
+                };
+                return Err(RpcFault::new(code, denial.message(tool)));
             }
             match call_tool(state, user_id, origin.as_deref(), tool, &args).await {
                 Ok(result) => {
