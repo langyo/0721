@@ -5490,7 +5490,7 @@ async fn mcp_keys_crud_copy_once_semantics() {
         &state,
         &token,
         "keys.create",
-        serde_json::json!({"name": "my agent key"}),
+        serde_json::json!({"name": "my agent key", "ops": all_ops()}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{envelope}");
@@ -5530,7 +5530,7 @@ async fn mcp_keys_crud_copy_once_semantics() {
         &state,
         &token,
         "keys.create",
-        serde_json::json!({"name": "second"}),
+        serde_json::json!({"name": "second", "ops": all_ops()}),
     )
     .await;
     let key2 = e2["result"]["key"].as_str().unwrap().to_owned();
@@ -5565,7 +5565,7 @@ async fn mcp_sse_handshake_and_tool_flow() {
         &state,
         &token,
         "keys.create",
-        serde_json::json!({"name": "mcp-test"}),
+        serde_json::json!({"name": "mcp-test", "ops": all_ops()}),
     )
     .await;
     let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
@@ -5622,7 +5622,7 @@ async fn mcp_sse_first_frame_has_endpoint_event() {
         &state,
         &token,
         "keys.create",
-        serde_json::json!({"name": "tcp-sse"}),
+        serde_json::json!({"name": "tcp-sse", "ops": all_ops()}),
     )
     .await;
     let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
@@ -5672,7 +5672,7 @@ async fn mcp_revoked_key_sse_handshake_401() {
         &state,
         &token,
         "keys.create",
-        serde_json::json!({"name": "revoke-me"}),
+        serde_json::json!({"name": "revoke-me", "ops": all_ops()}),
     )
     .await;
     let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
@@ -5725,7 +5725,7 @@ async fn mcp_keys_admin_gate() {
         &state,
         &token,
         "keys.create",
-        serde_json::json!({"name": "admin-key"}),
+        serde_json::json!({"name": "admin-key", "ops": all_ops()}),
     )
     .await;
     let admin_key_id = e1["result"]["id"].as_str().unwrap().to_owned();
@@ -5818,17 +5818,116 @@ fn session_id_of(frame: &str) -> String {
         .collect()
 }
 
+/// The permissions a test key needs when the test is about something
+/// OTHER than permissions: every op, in the canonical order. Existing
+/// lane tests predate per-key permissions; granting all three keeps their
+/// subject (uploads, paging, shares) the only thing under test.
+const ALL_OPS: &[&str] = &["read", "upload", "share"];
+
+/// The same set, as the `ops` array a `keys.create` / `keys.update`
+/// payload carries.
+fn all_ops() -> serde_json::Value {
+    serde_json::json!(ALL_OPS)
+}
+
 /// Mint an API key through the RPC lane and return the plaintext.
+///
+/// The key is granted [`ALL_OPS`]: a key created with no permission can
+/// do nothing, which would turn every tool test below into a scope test.
+/// The permission lanes build their own keys with an explicit `ops` list
+/// (`mcp_api_key_with`).
 async fn mcp_api_key(state: &AppState, token: &str, name: &str) -> String {
-    let (status, envelope) = rpc(
-        state,
-        token,
-        "keys.create",
-        serde_json::json!({"name": name}),
-    )
-    .await;
+    mcp_api_key_with(state, token, name, all_ops()).await
+}
+
+/// Mint an API key with an explicit permission list (and optional
+/// `expires_at`), returning `(id, plaintext)`.
+async fn mcp_api_key_with_at(
+    state: &AppState,
+    token: &str,
+    name: &str,
+    ops: serde_json::Value,
+    expires_at: Option<&str>,
+) -> (String, String) {
+    let mut payload = serde_json::json!({"name": name, "ops": ops});
+    if let Some(expires_at) = expires_at {
+        payload["expires_at"] = serde_json::Value::String(expires_at.to_owned());
+    }
+    let (status, envelope) = rpc(state, token, "keys.create", payload).await;
     assert_eq!(status, StatusCode::OK, "{envelope}");
-    envelope["result"]["key"].as_str().unwrap().to_owned()
+    assert!(
+        envelope.get("error").is_none(),
+        "key creation must succeed: {envelope}"
+    );
+    (
+        envelope["result"]["id"]
+            .as_str()
+            .expect("the response carries the id")
+            .to_owned(),
+        envelope["result"]["key"]
+            .as_str()
+            .expect("the response carries the plaintext")
+            .to_owned(),
+    )
+}
+
+/// [`mcp_api_key_with_at`] without an expiry.
+async fn mcp_api_key_with(
+    state: &AppState,
+    token: &str,
+    name: &str,
+    ops: serde_json::Value,
+) -> String {
+    mcp_api_key_with_at(state, token, name, ops, None).await.1
+}
+
+/// The user id behind a session token (the tests' shortcut to "who am
+/// I" for rows planted straight into the store).
+fn admin_of(state: &AppState, token: &str) -> uuid::Uuid {
+    state
+        .signer
+        .verify(token)
+        .expect("the test token verifies")
+        .sub
+        .parse()
+        .expect("the subject is a uuid")
+}
+
+/// Plant an API key DIRECTLY in the store — the only way to build a row
+/// the RPC lanes refuse to create (an already-expired key, or a legacy
+/// row whose `scopes` is not the canonical object). Answers
+/// `(id, plaintext)`.
+///
+/// The RPC pre-validates `expires_at` (must be in the future), so a test
+/// that needs a key to EXPIRE plants one and lets the clock do it, or
+/// plants one already past its instant.
+async fn plant_api_key(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    name: &str,
+    scopes: &str,
+    expires_at: Option<&str>,
+) -> (uuid::Uuid, String) {
+    let plaintext = format!("i0721-{}", uuid::Uuid::new_v4().simple());
+    let record = i0721_proto::ApiKeyRecord {
+        id: uuid::Uuid::new_v4(),
+        user_id,
+        name: name.to_owned(),
+        key_prefix: i0721_server::mcp::mask_api_key(&plaintext),
+        key_hash: i0721_server::mcp::hash_api_key(&plaintext),
+        scopes: scopes.to_owned(),
+        expires_at: expires_at.map(str::to_owned),
+        last_used_at: None,
+        revoked_at: None,
+        created_at: Timestamp::now(),
+    };
+    let id = record.id;
+    state
+        .store
+        .create_api_key(&record)
+        .await
+        .expect("plant the API key row");
+    (id, plaintext)
 }
 
 /// Open the SSE lane over real TCP: the socket plus its session id.
@@ -6164,7 +6263,7 @@ async fn mcp_revoked_key_kills_the_live_session() {
         &state,
         &token,
         "keys.create",
-        serde_json::json!({"name": "live-revoke"}),
+        serde_json::json!({"name": "live-revoke", "ops": all_ops()}),
     )
     .await;
     let api_key = envelope["result"]["key"].as_str().unwrap().to_owned();
@@ -6929,4 +7028,794 @@ async fn cookie_secure_rejects_an_unknown_value() {
         ),
         Ok(_) => panic!("an unknown I0721_COOKIE_SECURE must refuse to start"),
     }
+}
+
+// ── the permission / expiry wave (K) ───────────────────────────────────
+//
+// A key's operation set is enforced per tool on the MCP lane, and an
+// optional expiry is checked at the handshake AND on every frame. The
+// vocabulary itself is unit-tested in `i0721_server::key_scopes`; these
+// tests prove the WIRING (which tool asks for which op, which surface
+// answers which code).
+
+/// ① The five tools `tools/list` advertises and the permission table are
+/// the SAME set, in both directions: a tool added to the specs without a
+/// permission mapping (or the reverse) fails here instead of shipping a
+/// permission-free tool.
+#[test]
+fn tool_specs_match_the_permission_table_exactly() {
+    let specs = i0721_server::mcp::tool_specs();
+    let mut spec_names: Vec<String> = specs
+        .as_array()
+        .expect("the tool specs are an array")
+        .iter()
+        .map(|tool| {
+            tool["name"]
+                .as_str()
+                .expect("every spec carries a name")
+                .to_owned()
+        })
+        .collect();
+    spec_names.sort_unstable();
+    let mut table_names: Vec<String> = i0721_server::key_scopes::TOOL_REQUIRED_OP
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    table_names.sort_unstable();
+    assert_eq!(
+        spec_names, table_names,
+        "every advertised tool must be in TOOL_REQUIRED_OP and vice versa"
+    );
+    for (name, op) in i0721_server::key_scopes::TOOL_REQUIRED_OP {
+        assert_eq!(
+            i0721_server::key_scopes::required_op(name),
+            Some(op),
+            "{name} maps to one op"
+        );
+    }
+    assert_eq!(
+        i0721_server::key_scopes::required_op("no_such_tool"),
+        None,
+        "an unknown name has no op"
+    );
+}
+
+/// The `-32001` code the scope refusal rides.
+const SCOPE_DENIED: i64 = -32001;
+
+/// The exact refusal text the spec fixes (one phrasing, every surface).
+fn scope_denied_message(op: &str, tool: &str) -> String {
+    format!("scope denied: this API key lacks the \"{op}\" permission required by tool \"{tool}\"")
+}
+
+/// ② Every tool × (key lacking its op → `-32001`; key holding it →
+/// allowed). "Allowed" is proven by the call producing a TOOL result (a
+/// domain error for the deliberately non-existent ids is fine — what
+/// must NOT happen is the protocol refusal).
+#[tokio::test]
+async fn mcp_tool_calls_require_the_mapped_permission() {
+    let (mut state, token) = test_state_with_token().await;
+    // The share tool needs a public origin to succeed; it only has to
+    // get PAST the permission gate here.
+    let mut configured = (*state.config).clone();
+    configured.public_origin = Some("https://res.example.test".to_owned());
+    state.config = Arc::new(configured);
+
+    // (tool, required op, arguments that reach the tool body)
+    let cases: [(&str, &str, serde_json::Value); 5] = [
+        ("list_files", "read", serde_json::json!({})),
+        (
+            "file_info",
+            "read",
+            serde_json::json!({"id": "00000000-0000-0000-0000-000000000001"}),
+        ),
+        (
+            "search_files",
+            "read",
+            serde_json::json!({"query": "nothing-matches"}),
+        ),
+        (
+            "upload_file",
+            "upload",
+            serde_json::json!({"content_base64": base64_of(&tiny_png()), "name": "gated.png"}),
+        ),
+        (
+            "get_share_link",
+            "share",
+            serde_json::json!({"file_id": "00000000-0000-0000-0000-000000000002"}),
+        ),
+    ];
+    let every_op = ["read", "upload", "share"];
+
+    for (index, (tool, op, arguments)) in cases.into_iter().enumerate() {
+        // A key granted exactly the OTHER two permissions: it lacks the
+        // one this tool needs.
+        let others: Vec<&str> = every_op
+            .into_iter()
+            .filter(|candidate| *candidate != op)
+            .collect();
+        let lacking = mcp_api_key_with(
+            &state,
+            &token,
+            &format!("lacks-{op}-{index}"),
+            serde_json::json!(others),
+        )
+        .await;
+        let (mut sse, session_id) = mcp_handshake(&state, &lacking).await;
+        let id = 100 + index as i64 * 2;
+        let status = mcp_post_frame(
+            &state,
+            &session_id,
+            id,
+            "tools/call",
+            serde_json::json!({"name": tool, "arguments": arguments}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::ACCEPTED,
+            "{tool}: the refusal rides the stream, not the POST"
+        );
+        let frames = sse_read_until(&mut sse, "\"error\"").await;
+        let envelope = sse_envelope(&frames);
+        assert_eq!(envelope["id"], id, "{tool}: the frame carries its id");
+        assert_eq!(
+            envelope["error"]["code"], SCOPE_DENIED,
+            "{tool} without {op} is a -32001 protocol error: {envelope}"
+        );
+        assert!(
+            envelope.get("result").is_none(),
+            "{tool}: a scope refusal is NOT an isError result: {envelope}"
+        );
+        assert_eq!(
+            envelope["error"]["message"],
+            scope_denied_message(op, tool),
+            "{tool}: the refusal names the permission and the tool"
+        );
+
+        // The SAME tool with a key that holds the op gets past the gate.
+        let holding = mcp_api_key_with(
+            &state,
+            &token,
+            &format!("holds-{op}-{index}"),
+            serde_json::json!([op]),
+        )
+        .await;
+        let (mut sse, session_id) = mcp_handshake(&state, &holding).await;
+        let status = mcp_post_frame(
+            &state,
+            &session_id,
+            id + 1,
+            "tools/call",
+            serde_json::json!({"name": tool, "arguments": arguments}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let frames = sse_read_until(&mut sse, &format!("\"id\":{}", id + 1)).await;
+        let envelope = sse_envelope(&frames);
+        assert!(
+            envelope.get("error").is_none(),
+            "{tool} with {op} must run, not be refused: {envelope}"
+        );
+        assert!(
+            envelope["result"]["content"].is_array(),
+            "{tool} with {op} answers a tool result: {envelope}"
+        );
+    }
+}
+
+/// ③ `tools/list` advertises only the tools the key may call: no
+/// permission → none, one permission → exactly the tools of that op, all
+/// three → the whole surface.
+#[tokio::test]
+async fn mcp_tools_list_is_filtered_by_the_keys_permissions() {
+    let (state, token) = test_state_with_token().await;
+
+    // `keys.create` refuses an empty op list, so the empty-permission key
+    // is PLANTED — that is also the shape every pre-permission-wave key
+    // carries after the migration.
+    let admin_id = admin_of(&state, &token);
+    let (_, no_perms) = plant_api_key(&state, admin_id, "no-perms", r#"{"ops":[]}"#, None).await;
+
+    // (op list, the tools those ops cover)
+    let expectations: [(&str, Vec<&str>, Vec<&str>); 2] = [
+        ("upload-only", vec!["upload"], vec!["upload_file"]),
+        (
+            "read-share",
+            vec!["share", "read"],
+            vec!["file_info", "get_share_link", "list_files", "search_files"],
+        ),
+    ];
+    // First the planted empty-permission key: it may call NOTHING, so
+    // `tools/list` answers an EMPTY array.
+    {
+        let (mut sse, session_id) = mcp_handshake(&state, &no_perms).await;
+        let status =
+            mcp_post_frame(&state, &session_id, 1, "tools/list", serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let frames = sse_read_until(&mut sse, "\"id\":1").await;
+        let envelope = sse_envelope(&frames);
+        assert!(envelope.get("error").is_none(), "no-perms: {envelope}");
+        assert_eq!(
+            envelope["result"]["tools"],
+            serde_json::json!([]),
+            "a key with no permission is advertised no tool at all"
+        );
+    }
+    for (id, (label, ops, expected)) in (2_i64..).zip(expectations) {
+        let key = mcp_api_key_with(&state, &token, label, serde_json::json!(ops)).await;
+        let (mut sse, session_id) = mcp_handshake(&state, &key).await;
+        let status =
+            mcp_post_frame(&state, &session_id, id, "tools/list", serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let frames = sse_read_until(&mut sse, &format!("\"id\":{id}")).await;
+        let envelope = sse_envelope(&frames);
+        assert!(envelope.get("error").is_none(), "{label}: {envelope}");
+        let mut names: Vec<&str> = envelope["result"]["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{label}: tools must be an array: {envelope}"))
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("a tool name"))
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, expected, "{label}: exactly the permitted tools");
+    }
+}
+
+/// ④ Expiry on the transport: an expired key cannot open a stream; a
+/// session whose key lapses mid-flight is refused on its NEXT frame with
+/// a 401 and the session is removed; a key without a future expiry keeps
+/// working.
+#[tokio::test]
+async fn mcp_expired_keys_cannot_open_or_keep_a_session() {
+    let (state, token) = test_state_with_token().await;
+    let admin_id = admin_of(&state, &token);
+
+    // (a) Already past its instant → the handshake itself answers 401.
+    let past = (Timestamp::now() - std::time::Duration::from_secs(60)).to_string();
+    let (_, expired) = plant_api_key(
+        &state,
+        admin_id,
+        "already-expired",
+        r#"{"ops":["read"]}"#,
+        Some(&past),
+    )
+    .await;
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/mcp/sse")
+                .header(header::AUTHORIZATION, format!("Bearer {expired}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "an expired key cannot open an SSE stream"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+        "this API key has expired",
+        "the refusal says WHY (not the generic invalid-key text)"
+    );
+
+    // (a2) An unparseable expiry is expired too (fail-closed).
+    let (_, broken) = plant_api_key(
+        &state,
+        admin_id,
+        "broken-expiry",
+        r#"{"ops":["read"]}"#,
+        Some("soon"),
+    )
+    .await;
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/mcp/sse")
+                .header(header::AUTHORIZATION, format!("Bearer {broken}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "an expiry that does not parse must not read as 'never expires'"
+    );
+
+    // (b) Lapses AFTER the session opened → the next frame is a 401 and
+    // the session leaves the table.
+    let (lapsing_id, lapsing) = plant_api_key(
+        &state,
+        admin_id,
+        "lapsing",
+        r#"{"ops":["read"]}"#,
+        Some(&(Timestamp::now() + std::time::Duration::from_secs(3600)).to_string()),
+    )
+    .await;
+    let (mut sse, session_id) = mcp_handshake(&state, &lapsing).await;
+    // The session works while the key is live...
+    let status = mcp_post_frame(&state, &session_id, 1, "initialize", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"protocolVersion\"").await;
+    assert!(frames.contains("\"id\":1"), "{frames}");
+
+    // ...then the key expires under the session (the row is rewritten
+    // with a past instant — the store is the authority, not a cache).
+    let past_again = (Timestamp::now() - std::time::Duration::from_secs(1)).to_string();
+    state
+        .store
+        .update_api_key(
+            lapsing_id,
+            "lapsing",
+            r#"{"ops":["read"]}"#,
+            Some(&past_again),
+        )
+        .await
+        .expect("expire the key");
+    let (status, body) =
+        mcp_post_message(&state, &session_id, "tools/list", serde_json::json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a frame arriving after the key expired is refused"
+    );
+    assert_eq!(
+        body["error"], "this session's API key has expired",
+        "the frame refusal names the expiry"
+    );
+    assert_eq!(
+        state.mcp_sessions.len(),
+        0,
+        "the expired session was removed from the table"
+    );
+    // A removed session answers the generic 401 from then on.
+    let (status, _) =
+        mcp_post_message(&state, &session_id, "tools/list", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // The stream ends (the sender fell out of scope): the socket is
+    // closed instead of squatting.
+    let tail = sse_drain(&mut sse, std::time::Duration::from_secs(2)).await;
+    assert!(
+        !tail.contains("event: message"),
+        "no further frames ride a dead session: {tail}"
+    );
+
+    // (c) A future expiry, and no expiry at all, both keep working.
+    for (label, expiry) in [
+        (
+            "future",
+            Some((Timestamp::now() + std::time::Duration::from_secs(3600)).to_string()),
+        ),
+        ("never", None),
+    ] {
+        let (_, live) = plant_api_key(
+            &state,
+            admin_id,
+            label,
+            r#"{"ops":["read"]}"#,
+            expiry.as_deref(),
+        )
+        .await;
+        let (mut sse, session_id) = mcp_handshake(&state, &live).await;
+        let status =
+            mcp_post_frame(&state, &session_id, 2, "tools/list", serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{label}: the session opens");
+        let frames = sse_read_until(&mut sse, "\"id\":2").await;
+        assert!(
+            sse_envelope(&frames).get("error").is_none(),
+            "{label}: the frame is answered"
+        );
+    }
+}
+
+/// ⑦ `keys.create`: the happy path stores the canonical scopes and the
+/// canonical instant; an empty op list, an unknown op, a past instant and
+/// an empty name are all refused with the repo's invalid-params shape.
+#[tokio::test]
+async fn keys_create_validates_ops_and_expiry() {
+    let (state, token) = test_state_with_token().await;
+
+    // The happy path: duplicates collapse, the order is canonical, and
+    // the instant is stored in canonical RFC 3339 form.
+    let future = Timestamp::now() + std::time::Duration::from_secs(3600);
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({
+            "name": "  agent one  ",
+            "ops": ["share", "read", "share"],
+            "expires_at": future.to_string(),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(envelope.get("error").is_none(), "{envelope}");
+    let created = &envelope["result"];
+    assert_eq!(created["name"], "agent one", "the name is trimmed");
+    assert!(
+        created["key"].as_str().unwrap().starts_with("i0721-"),
+        "the plaintext key is still an `ApiKeyCreated`"
+    );
+    let id = created["id"].as_str().unwrap().to_owned();
+
+    let (_, list) = rpc(&state, &token, "keys.list", serde_json::Value::Null).await;
+    let row = list["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id.as_str())
+        .unwrap_or_else(|| panic!("the created key is listed: {list}"));
+    assert_eq!(
+        row["ops"],
+        serde_json::json!(["read", "share"]),
+        "ops come back deduped in the canonical order"
+    );
+    assert_eq!(
+        row["expires_at"],
+        future.to_string(),
+        "the instant is stored canonically"
+    );
+    assert_eq!(row["expired"], false);
+
+    // The refusals — all of them invalid params (-32602), not a new code.
+    for (label, payload) in [
+        ("empty ops", serde_json::json!({"name": "n", "ops": []})),
+        (
+            "unknown op",
+            serde_json::json!({"name": "n", "ops": ["root"]}),
+        ),
+        (
+            "past instant",
+            serde_json::json!({
+                "name": "n",
+                "ops": ["read"],
+                "expires_at": "2000-01-01T00:00:00Z",
+            }),
+        ),
+        (
+            "unparseable instant",
+            serde_json::json!({"name": "n", "ops": ["read"], "expires_at": "tomorrow"}),
+        ),
+        (
+            "empty name",
+            serde_json::json!({"name": "   ", "ops": ["read"]}),
+        ),
+        ("no ops field", serde_json::json!({"name": "n"})),
+    ] {
+        let (_, envelope) = rpc(&state, &token, "keys.create", payload).await;
+        assert_eq!(
+            rpc_error_code(&envelope),
+            -32602,
+            "{label}: invalid params, the repo's existing shape: {envelope}"
+        );
+    }
+
+    // The canonical-instant half: a non-UTC offset is normalized.
+    let offset = future;
+    let offset_text = format!("{offset}");
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "utc", "ops": ["upload"], "expires_at": offset_text}),
+    )
+    .await;
+    assert!(envelope.get("error").is_none(), "{envelope}");
+}
+
+/// ⑧ `keys.update`: owner and admin may edit, a stranger may not; the
+/// whole record is replaced (an omitted `expires_at` clears it); a
+/// revoked key answers not-found; an EXPIRED key can be renewed.
+#[tokio::test]
+async fn keys_update_is_owner_or_admin_and_replaces_the_whole_record() {
+    let (state, admin_token) = test_state_with_token().await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "updater".to_owned(),
+            display_name: "Updater".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    let other = state
+        .store
+        .create_user(CreateUser {
+            username: "stranger".to_owned(),
+            display_name: "Stranger".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let stranger_token = state.signer.sign(other.id, Timestamp::now());
+
+    // A member's key, with an expiry.
+    let (key_id, _plaintext) = mcp_api_key_with_at(
+        &state,
+        &member_token,
+        "member-key",
+        serde_json::json!(["read", "upload"]),
+        Some(&(Timestamp::now() + std::time::Duration::from_secs(3600)).to_string()),
+    )
+    .await;
+
+    // (1) A stranger cannot edit it → 403 (-32005), the owner-or-admin
+    // rule `keys.revoke` uses.
+    let (_, envelope) = rpc(
+        &state,
+        &stranger_token,
+        "keys.update",
+        serde_json::json!({
+            "id": key_id,
+            "name": "hijacked",
+            "ops": ["read", "upload", "share"],
+        }),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "a member cannot edit another member's key: {envelope}"
+    );
+
+    // (2) The owner edits: a whole-record replacement that clears the
+    // expiry.
+    let (status, envelope) = rpc(
+        &state,
+        &member_token,
+        "keys.update",
+        serde_json::json!({
+            "id": key_id,
+            "name": "renamed",
+            "ops": ["share"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(
+        envelope["result"],
+        serde_json::Value::Null,
+        "update answers null"
+    );
+    let (_, list) = rpc(&state, &member_token, "keys.list", serde_json::Value::Null).await;
+    let row = find_key_row(&list, &key_id);
+    assert_eq!(row["name"], "renamed");
+    assert_eq!(
+        row["ops"],
+        serde_json::json!(["share"]),
+        "ops were replaced"
+    );
+    assert!(
+        row["expires_at"].is_null(),
+        "an omitted expires_at CLEARS the expiry: {row}"
+    );
+
+    // (3) An admin may edit a member's key.
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "keys.update",
+        serde_json::json!({
+            "id": key_id,
+            "name": "admin-edit",
+            "ops": ["read"],
+            "expires_at": (Timestamp::now() + std::time::Duration::from_secs(600)).to_string(),
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an admin may edit any key: {envelope}"
+    );
+
+    // (4) An EXPIRED key can be renewed (that is the point of editing a
+    // live-enough key): plant one in the past and push its expiry into
+    // the future.
+    let past = (Timestamp::now() - std::time::Duration::from_secs(60)).to_string();
+    let (expired_id, _) = plant_api_key(
+        &state,
+        member.id,
+        "expired",
+        r#"{"ops":["read"]}"#,
+        Some(&past),
+    )
+    .await;
+    let (_, list) = rpc(&state, &member_token, "keys.list", serde_json::Value::Null).await;
+    assert_eq!(
+        find_key_row(&list, &expired_id.to_string())["expired"],
+        true,
+        "the expired key is listed as expired"
+    );
+    let renewed = (Timestamp::now() + std::time::Duration::from_secs(3600)).to_string();
+    let (status, envelope) = rpc(
+        &state,
+        &member_token,
+        "keys.update",
+        serde_json::json!({
+            "id": expired_id.to_string(),
+            "name": "renewed",
+            "ops": ["read", "upload"],
+            "expires_at": renewed,
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an expired key is renewable: {envelope}"
+    );
+    let (_, list) = rpc(&state, &member_token, "keys.list", serde_json::Value::Null).await;
+    let row = find_key_row(&list, &expired_id.to_string());
+    assert_eq!(
+        row["expired"], false,
+        "the renewal cleared the expired flag"
+    );
+    assert_eq!(row["ops"], serde_json::json!(["read", "upload"]));
+
+    // (5) A REVOKED key cannot be edited → not-found (-32006), the same
+    // answer `keys.revoke` gives a dead id.
+    let (status, _) = rpc(
+        &state,
+        &member_token,
+        "keys.revoke",
+        serde_json::json!({"id": key_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "keys.update",
+        serde_json::json!({"id": key_id, "name": "zombie", "ops": ["read"]}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32006,
+        "a revoked key is not updatable (not found): {envelope}"
+    );
+
+    // (6) The validation is the same as create's.
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "keys.update",
+        serde_json::json!({"id": expired_id.to_string(), "name": "x", "ops": []}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32602,
+        "update refuses an empty permission set: {envelope}"
+    );
+}
+
+/// ⑨ `keys.list` reports the new fields and the canonical op order,
+/// whatever shape the stored row has (a legacy or hand-written scopes
+/// payload is parsed, never echoed).
+#[tokio::test]
+async fn keys_list_reports_ops_and_expiry_in_canonical_order() {
+    let (state, token) = test_state_with_token().await;
+
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({
+            "name": "ordered",
+            "ops": ["share", "upload", "read"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let id = envelope["result"]["id"].as_str().unwrap().to_owned();
+
+    // A hand-planted row carrying the future-wave shape (an extra key)
+    // and an out-of-order list.
+    let admin_id = admin_of(&state, &token);
+    let (planted_id, _) = plant_api_key(
+        &state,
+        admin_id,
+        "hand-written",
+        r#"{"buckets":["b1"],"ops":["share","read"]}"#,
+        None,
+    )
+    .await;
+
+    let (_, list) = rpc(&state, &token, "keys.list", serde_json::Value::Null).await;
+    let row = find_key_row(&list, &id);
+    assert_eq!(
+        row["ops"],
+        serde_json::json!(["read", "upload", "share"]),
+        "the list reports the canonical order, not the stored order: {row}"
+    );
+    assert!(
+        row.get("expires_at").is_some(),
+        "the field is present (null)"
+    );
+    assert_eq!(row["expired"], false);
+    let planted = find_key_row(&list, &planted_id.to_string());
+    assert_eq!(
+        planted["ops"],
+        serde_json::json!(["read", "share"]),
+        "an object scopes payload with an extra key still yields its ops: {planted}"
+    );
+    assert!(
+        !serde_json::to_string(&list).unwrap().contains("buckets"),
+        "the raw stored payload is never echoed"
+    );
+}
+
+/// The listed row of one key (panics with the whole list when absent).
+fn find_key_row<'a>(list: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    list["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("keys.list answers an array: {list}"))
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap_or_else(|| panic!("no key {id} in {list}"))
+}
+
+/// The seam for the next wave, proven at the WIRE level: a client that
+/// sends the (not-yet-persisted) `buckets` key alongside `ops` is
+/// IGNORED, not rejected — the key is created exactly as if it had only
+/// carried `ops`, and the stored payload is the canonical op-only object
+/// (the next wave adds `buckets` to the SCHEMA, not to this request
+/// shape). The parser's own tolerance is unit-tested in
+/// `i0721_server::key_scopes` (`parse_scopes_truth_table_is_fail_closed`).
+#[tokio::test]
+async fn keys_create_and_update_ignore_an_unknown_buckets_key() {
+    let (state, token) = test_state_with_token().await;
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({
+            "name": "bucketed",
+            "ops": ["read"],
+            "buckets": [],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(
+        envelope.get("error").is_none(),
+        "an unknown `buckets` key must not turn into a -32602: {envelope}"
+    );
+    let id = envelope["result"]["id"].as_str().unwrap().to_owned();
+
+    let (_, list) = rpc(&state, &token, "keys.list", serde_json::Value::Null).await;
+    assert_eq!(find_key_row(&list, &id)["ops"], serde_json::json!(["read"]));
+
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "keys.update",
+        serde_json::json!({
+            "id": id,
+            "name": "bucketed",
+            "ops": ["read", "upload"],
+            "buckets": ["00000000-0000-0000-0000-000000000001"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let (_, list) = rpc(&state, &token, "keys.list", serde_json::Value::Null).await;
+    assert_eq!(
+        find_key_row(&list, &id)["ops"],
+        serde_json::json!(["read", "upload"])
+    );
 }

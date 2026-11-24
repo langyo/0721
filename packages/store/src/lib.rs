@@ -272,6 +272,22 @@ pub trait Store: Send + Sync {
     /// Soft-revoke by id (owner-or-admin checked by the caller).
     async fn revoke_api_key(&self, id: Uuid) -> Result<bool, StoreError>;
 
+    /// Whole-record edit of a LIVE key (owner-or-admin checked by the
+    /// caller): name, the raw `scopes` JSON text and the optional
+    /// `expires_at` are all replaced, so `expires_at = None` CLEARS an
+    /// expiry. Answers whether a live row matched — a revoked or missing
+    /// id is `false`, exactly like [`Store::revoke_api_key`].
+    ///
+    /// The `scopes` text is not validated here beyond being JSON (the pg
+    /// path parses it into JSONB); interpreting it belongs to the caller.
+    async fn update_api_key(
+        &self,
+        id: Uuid,
+        name: &str,
+        scopes_json: &str,
+        expires_at: Option<&str>,
+    ) -> Result<bool, StoreError>;
+
     /// Find a live (non-revoked) key by its hash. The caller handles
     /// the async last_used_at refresh.
     async fn find_api_key_by_hash(

@@ -368,6 +368,38 @@ impl Store for MemoryStore {
         }
     }
 
+    async fn update_api_key(
+        &self,
+        id: Uuid,
+        name: &str,
+        scopes_json: &str,
+        expires_at: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        // The in-memory twin of the pg write: the payload must parse
+        // before it can replace the stored text, and the stored form is
+        // serde_json's re-serialization (what the pg JSONB column hands
+        // back), so both backends answer byte-identical scopes.
+        let scopes = serde_json::from_str::<serde_json::Value>(scopes_json).map_err(|err| {
+            StoreError::Db(format!(
+                "api key scopes must be valid JSON ({err}): {scopes_json:?}"
+            ))
+        })?;
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let row = inner
+            .api_keys
+            .iter_mut()
+            .find(|k| k.id == id && k.revoked_at.is_none());
+        match row {
+            Some(key) => {
+                key.name = name.to_owned();
+                key.scopes = scopes.to_string();
+                key.expires_at = expires_at.map(str::to_owned);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     async fn find_api_key_by_hash(
         &self,
         key_hash: &str,
