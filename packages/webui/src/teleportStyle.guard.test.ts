@@ -31,9 +31,6 @@
 // landings (`[class~="x"] { … }`), and any other spelling that does not
 // literally write `.x` in a selector position. If a sheet needs one of
 // those, review the compiled CSS by hand — the guard will stay green.
-// (`App.scss`'s `#{…}` usage lives outside this guard's scope: the
-// interpolation rule in it is covered by the flat/nested shape test
-// above it.)
 
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -279,9 +276,9 @@ describe("teleported dialog styles", () => {
           ).toBe(0);
           expect(
             rule.ancestor,
-            `${sheet}: .${className} is written as a DESCENDANT of another selector ` +
-              `is written as a DESCENDANT of another selector, but it styles a ` +
-              `TELEPORTED element — the ancestor is absent in the overlay root`,
+            `${sheet}: .${className} is written as a DESCENDANT of another selector, ` +
+              `but it styles a TELEPORTED element — the ancestor is absent in the ` +
+              `overlay root`,
           ).toBe(false);
         }
       }
