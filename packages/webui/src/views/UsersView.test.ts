@@ -363,10 +363,10 @@ describe("UsersView (family table roster)", () => {
   });
 
   it("keeps a single keyed slot for repeated failures of the same operation", async () => {
-    // The toast store is module-level, so a keyed slot would otherwise
-    // stack one paragraph per attempt — the wall of text the inline block
-    // never produced. Two DIFFERENT failures of the same operation must
-    // also read as ONE message (the key is what collapses them).
+    // MUT:users-keyed-slot — the toast store is module-level, so a keyed
+    // slot merges repeated failures of one operation into ONE message
+    // (the key collapses them), where the inline block stacked a
+    // paragraph per attempt.
     listUsersMock.mockResolvedValue({
       items: [user("me", "me", "admin"), user("u2", "alice", "member")],
       total: 5,
