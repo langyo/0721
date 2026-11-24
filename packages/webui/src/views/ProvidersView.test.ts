@@ -11,7 +11,7 @@ vi.mock("@/api", () => ({
   deleteProvider: vi.fn(),
 }));
 
-import ProvidersView from "./ProvidersView.vue";
+import ProvidersView from "./ProvidersView";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import type { OAuthProviderPublic } from "@/types";

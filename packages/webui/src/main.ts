@@ -3,7 +3,7 @@ import "@celestia-island/hikari/styles";
 import { createPinia } from "pinia";
 import { createApp } from "vue";
 
-import App from "./App.vue";
+import App from "./App";
 import { createAppI18n, setGlobalI18n, setLocale } from "@/i18n";
 import { router } from "@/router";
 import { registerBrandPresets } from "@/theme";

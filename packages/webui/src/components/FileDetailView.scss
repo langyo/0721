@@ -1,0 +1,57 @@
+// FileDetailView — the embedded file detail pane. Everything nests
+// under the component's root class (`.file-detail`), preserving the
+// old `<style scoped>` isolation: no selector leaks past the pane.
+
+.file-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.75rem;
+    background: color-mix(in srgb, currentColor 5%, transparent);
+    overflow: hidden;
+
+    img {
+      display: block;
+      max-width: 100%;
+      max-height: 18rem;
+      object-fit: contain;
+    }
+
+    .kind-icon {
+      opacity: 0.5;
+      padding: 2rem;
+    }
+  }
+
+  .name {
+    margin: 0;
+    font-weight: 600;
+    word-break: break-all;
+  }
+
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-size: 0.875rem;
+  }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .label {
+    opacity: 0.6;
+  }
+
+  .mono {
+    font-family: var(--hk-font-mono, ui-monospace, monospace);
+  }
+}

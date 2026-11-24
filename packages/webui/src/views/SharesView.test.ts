@@ -10,7 +10,7 @@ vi.mock("@/api/files", () => ({
   shareDelete: (...args: unknown[]) => shareDeleteMock(...args),
 }));
 
-import SharesView from "./SharesView.vue";
+import SharesView from "./SharesView";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import type { ShareDto } from "@/types";

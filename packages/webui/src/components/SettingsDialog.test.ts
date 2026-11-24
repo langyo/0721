@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // ignored at runtime). This file exists so that class cannot repeat.
 vi.mock("@/api", () => ({ health: vi.fn().mockRejectedValue(new Error("no net")) }));
 
-import SettingsDialog from "./SettingsDialog.vue";
+import SettingsDialog from "./SettingsDialog";
 import { createAppI18n, setLocale } from "@/i18n";
 
 const i18n = createAppI18n();

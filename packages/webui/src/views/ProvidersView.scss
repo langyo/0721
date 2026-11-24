@@ -1,0 +1,79 @@
+// ProvidersView — the admin provider registry. In-page surfaces (the
+// toggle-error banner, the table cell slots) nest under the page's root
+// class (`.providers`), preserving the old `<style scoped>` isolation.
+// The edit dialog's form stays flat because it renders inside the
+// TELEPORTED HkAdaptiveDialog overlay root, outside `.providers`'s DOM —
+// everything it contains nests inside `.edit-form` itself instead, so
+// only that one anchor name is flat-unique (audit rides the receipt).
+
+.providers {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  .toggle-error {
+    color: rgb(220 38 38);
+    font-size: 0.85rem;
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, rgb(220 38 38) 12%, transparent);
+  }
+
+  .provider-name-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    text-align: start;
+    background: none;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .provider-name {
+    font-weight: 600;
+  }
+
+  .provider-meta {
+    opacity: 0.65;
+    font-size: 0.85em;
+  }
+
+  .provider-actions {
+    display: inline-flex;
+    gap: 0.25rem;
+  }
+}
+
+// ── Teleported dialog content (HkAdaptiveDialog → overlay root) ────────
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.85rem;
+  }
+
+  .hint {
+    opacity: 0.65;
+    font-size: 0.72rem;
+  }
+
+  .switch-field {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .dialog-error {
+    color: rgb(220 38 38);
+    font-size: 0.85rem;
+  }
+}

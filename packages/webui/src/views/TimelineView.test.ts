@@ -8,8 +8,8 @@ vi.mock("@/api/files", () => ({
   listTimeline: (...args: unknown[]) => listTimelineMock(...args),
 }));
 
-import TimelineView from "./TimelineView.vue";
-import FilesView from "./FilesView.vue";
+import TimelineView from "./TimelineView";
+import FilesView from "./FilesView";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 import type { FileDto } from "@/types";

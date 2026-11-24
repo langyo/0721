@@ -13,7 +13,7 @@ vi.mock("@/api", () => ({
   deleteFile: (...args: unknown[]) => deleteFileMock(...args),
 }));
 
-import PortalView from "./PortalView.vue";
+import PortalView from "./PortalView";
 import { createAppI18n } from "@/i18n";
 
 const png = (id: string, name: string) => ({

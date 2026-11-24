@@ -1,0 +1,15 @@
+// SharesView — the my-shares roster. The page's root <section> carries NO
+// class (unchanged contract), so these two selectors cannot nest under a
+// root class and stay flat; the old `<style scoped>` isolation is
+// restored by name uniqueness instead — `.ok` and `.share-link` are
+// carried by no other sheet in the app (audit rides the receipt).
+
+.ok {
+  color: rgb(22 128 61);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.share-link {
+  font-family: var(--hk-font-mono, ui-monospace, monospace);
+}

@@ -13,7 +13,7 @@ vi.mock("@/api", () => ({
   deleteFile: vi.fn(),
 }));
 
-import PortalView from "./PortalView.vue";
+import PortalView from "./PortalView";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
 
