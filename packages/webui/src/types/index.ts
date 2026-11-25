@@ -37,6 +37,7 @@ export type { RelayDirective } from "./RelayDirective.ts";
 export type { Role } from "./Role.ts";
 export type { RouterConfig } from "./RouterConfig.ts";
 export type { RouterConfigStrict } from "./RouterConfigStrict.ts";
+export type { SettingHealth } from "./SettingHealth.ts";
 export type { ShareDto } from "./ShareDto.ts";
 export type { SiteConfig } from "./SiteConfig.ts";
 export type { SiteConfigStrict } from "./SiteConfigStrict.ts";
