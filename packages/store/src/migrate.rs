@@ -449,13 +449,25 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
         ),
     ];
 
+    // 0008 (the P2a materialization) runs on EVERY database — it needs
+    // no bootstrap facts (it only reads tables that 0007 created, and it
+    // sorts after 0007, so the runner never sees it before them). It is
+    // pushed BEFORE the facts gate: the P1→P2a upgrade path is a database
+    // where 0007 is already applied and the env is gone (legal per R-U),
+    // and the K-era keys must still materialize there.
+    out.push(Migration::new(
+        "20261122000008",
+        "materialize scopes.buckets onto every live K-era key (R-T snapshot of granted_buckets)",
+        MIGRATION_0008_KEY_BUCKETS_SQL.to_owned(),
+    ));
+
     // 0007 (the bucket wave) is appended ONLY when the caller resolved
     // the bootstrap facts — the R-U wiring: a missing
     // `I0721_STORAGE_BACKEND` while 0007 is pending must fail the start
     // BEFORE any migration runs, never run the migration half-built.
-    // 0008 rides WITH 0007 in the same decision (its UPDATE needs the
-    // 0007 tables; a database without the facts stays untouched —
-    // the caller refuses to start instead).
+    // The list is kept version-sorted for every caller (the runner sorts
+    // anyway, but the static invariants read it in order).
+    out.sort_by(|a, b| a.version.cmp(&b.version));
     let Some(bootstrap) = bootstrap else {
         return out;
     };
@@ -486,16 +498,7 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
         ),
     ));
 
-    // 0008 (the P2a slice) runs on EVERY database — it needs no
-    // bootstrap facts: it only materializes `scopes.buckets` onto the
-    // K-era keys from data already present since 0007. It sorts after
-    // 0007 and is pushed AFTER it here, so a database always has the
-    // grants/buckets tables before the UPDATE runs.
-    out.push(Migration::new(
-        "20261122000008",
-        "materialize scopes.buckets onto every live K-era key (R-T snapshot of granted_buckets)",
-        MIGRATION_0008_KEY_BUCKETS_SQL.to_owned(),
-    ));
+    out.sort_by(|a, b| a.version.cmp(&b.version));
     out
 }
 
@@ -651,14 +654,19 @@ mod tests {
         versions.dedup();
         assert_eq!(versions.len(), all.len());
         assert!(all.iter().all(|m| !m.sql.trim().is_empty()));
-        // Without the bootstrap facts 0007 is absent: the R-U wiring's
-        // "no values, no migration" shape.
+        // Without the bootstrap facts 0007 is absent (the R-U wiring's
+        // "no values, no migration" shape) while 0008 — which needs no
+        // facts — is present.
         let without = super::migrations(None);
         assert!(
             without.iter().all(|m| m.version != "20261122000007"),
             "0007 is only appended when the bootstrap facts are known"
         );
-        assert_eq!(without.len(), 6);
+        assert!(
+            without.iter().any(|m| m.version == "20261122000008"),
+            "0008 runs on every database"
+        );
+        assert_eq!(without.len(), 7);
         assert_eq!(all.len(), 8);
     }
 
@@ -728,14 +736,21 @@ mod tests {
                         .contains(MIGRATION_0008_KEY_BUCKETS_SQL.trim_end_matches(';'))),
             "0008 is present, carries the verbatim R-T SQL and runs once"
         );
-        // 0008 rides the WITH-bootstrap list (its UPDATE needs the 0007
-        // tables); the without-facts list stops at 0006 — the caller
-        // refuses to start instead of running a half-built migration set.
+        // 0008 rides BOTH lists: it needs no facts (its UPDATE reads only
+        // tables 0007 created, and it sorts after 0007, so a with-facts
+        // database always has them first), and the P1→P2a upgrade path —
+        // 0007 applied, env gone, `None` facts — must still materialize
+        // the K-era keys.
+        let none = migrations(None);
         assert!(
-            migrations(None)
-                .iter()
-                .all(|m| m.version.as_str() < "20261122000008"),
-            "0008 never runs before the 0007 tables exist"
+            none.iter()
+                .filter(|m| m.version.as_str() == "20261122000008")
+                .count()
+                == 1
+                && none.iter().any(|m| m.version == "20261122000008"
+                    && m.sql
+                        .contains(MIGRATION_0008_KEY_BUCKETS_SQL.trim_end_matches(';'))),
+            "0008 runs on every database, facts or not"
         );
         // The shape constant is the one the normalization writes and the
         // column default carries — one source of truth, no drift.

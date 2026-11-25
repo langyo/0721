@@ -1479,9 +1479,24 @@ async fn pg_0007_bootstrap_bucket_id_is_stable() {
 /// already proves the shape; this re-runs the whole 0007 SQL block on
 /// the migrated database and counts the rows.
 #[tokio::test]
-async fn a_database_migrated_by_0007_has_a_bootstrap_row_per_backend_label() {
+async fn pg_0007_seats_a_bootstrap_row_per_backend_label() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
+    // The lane database is shared across serial tests: earlier fixtures
+    // (the M1b backfill one) seat `bootstrap-s3` themselves with a
+    // serving shape. This test owns its precondition — drop unreferenced
+    // legacy rows first so the planted CTE below seats them fresh.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM storage_buckets WHERE slug IN ('bootstrap-s3', 'bootstrap-ipfs') \
+                   AND NOT EXISTS (SELECT 1 FROM files f WHERE f.bucket_id = storage_buckets.id)"
+                .to_owned(),
+            params: vec![],
+        })
+        .await
+        .unwrap();
     // Plant one s3 row so a legacy s3 bucket must appear; the current
     // backend is local (the fixture's).
     plant_file(&store, user.id, "legacy-s3.png", "s3", None).await;
@@ -1531,7 +1546,7 @@ async fn a_database_migrated_by_0007_has_a_bootstrap_row_per_backend_label() {
 /// COALESCE by slug); this plants rows of every label and reads the
 /// assignments back through the store.
 #[tokio::test]
-async fn rows_are_backfilled_by_their_storage_backend_label() {
+async fn pg_0007_backfills_rows_by_their_storage_backend_label() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
     plant_file(&store, user.id, "by-s3.png", "s3", None).await;
@@ -1588,7 +1603,7 @@ async fn rows_are_backfilled_by_their_storage_backend_label() {
 /// (`gcs` is not one of the three tags) they must fold onto
 /// `bootstrap-local`.
 #[tokio::test]
-async fn folders_and_unlabelled_rows_follow_the_current_backend() {
+async fn pg_0007_folders_and_unlabelled_rows_follow_the_current_backend() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
     let folder = store
@@ -1646,7 +1661,7 @@ async fn folders_and_unlabelled_rows_follow_the_current_backend() {
 /// Q5/R-K's refusal half: a second ipfs bucket is refused by the
 /// partial unique index (DIRECT INSERT only — the upsert half is P2a).
 #[tokio::test]
-async fn second_ipfs_bucket_is_refused() {
+async fn pg_0007_second_ipfs_bucket_is_refused() {
     let Some(store) = db().await else { return };
     fn insert<'a>(
         store: &'a PgStore,
@@ -2092,7 +2107,7 @@ async fn plant_key(store: &PgStore, user_id: uuid::Uuid, name: &str, scopes: &st
 /// demotion-time answer — the snapshot happens at 0008's runtime, not at
 /// the key's creation).
 #[tokio::test]
-async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
+async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
     let Some(store) = db().await else { return };
     // Two buckets: `open` carries grant_on_signup, `closed` does not.
     // SLUG-UNIQUE slugs (one lane database shared by the whole suite).
@@ -2341,7 +2356,7 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
 /// MUT:M-P2A8 — dropping the `revoked_at IS NULL` guard makes 0008
 /// rewrite REVOKED keys too; the revoked row must stay untouched.
 #[tokio::test]
-async fn revoked_keys_are_untouched_by_0008() {
+async fn pg_0008_revoked_keys_are_untouched() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
     let id = plant_key(&store, user.id, "revoked", r#"{"ops":["read"]}"#).await;
@@ -2383,7 +2398,7 @@ async fn revoked_keys_are_untouched_by_0008() {
 /// MUT:M-P2A9 — dropping the `IS DISTINCT FROM 'array'` guard rewrites
 /// keys that ALREADY carry a buckets array; those must be untouched.
 #[tokio::test]
-async fn keys_already_carrying_buckets_are_untouched() {
+async fn pg_0008_keys_already_carrying_buckets_are_untouched() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
     let id = plant_key(
@@ -2406,7 +2421,7 @@ async fn keys_already_carrying_buckets_are_untouched() {
 /// not-carrying-buckets predicate is NOT a fixed point (or worse, is
 /// unguarded in the other direction); re-running must change nothing.
 #[tokio::test]
-async fn migration_0008_is_idempotent() {
+async fn pg_0008_is_idempotent() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
     let id = plant_key(&store, user.id, "twice", r#"{"ops":["read"]}"#).await;
