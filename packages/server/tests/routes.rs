@@ -9233,7 +9233,7 @@ async fn upload_without_override_never_falls_back_to_the_bootstrap_bucket() {
     let resolved = state.registry.resolve_upload_bucket(None);
     assert!(
         resolved.is_err(),
-        "an unresolvable upload bucket is an error, not a fallback: {resolved:?}"
+        "an unresolvable upload bucket is an error, not a fallback"
     );
     match resolved {
         Err(err) => assert!(
