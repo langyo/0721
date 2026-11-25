@@ -166,7 +166,20 @@
     "revoked": "Revogada",
     "prefix": "Prefixo",
     "state": "Estado",
-    "active": "Ativa"
+    "active": "Ativa",
+    "permissions": "Permissões",
+    "op_read": "Leitura (lista, info, pesquisa)",
+    "op_upload": "Envio",
+    "op_share": "Criar links de partilha",
+    "noPermissions": "Sem permissões — edite para conceder",
+    "expiry": "Validade",
+    "expiryOptional": "Validade (opcional)",
+    "neverExpires": "Nunca expira",
+    "expired": "Expirada",
+    "edit": "Editar chave de API",
+    "updated": "Chave de API atualizada",
+    "opsRequired": "Selecione pelo menos uma permissão",
+    "expiryFuture": "A validade deve estar no futuro"
   },
   "menu": {
     "account": "Conta"

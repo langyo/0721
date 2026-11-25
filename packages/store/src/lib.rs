@@ -272,11 +272,40 @@ pub trait Store: Send + Sync {
     /// Soft-revoke by id (owner-or-admin checked by the caller).
     async fn revoke_api_key(&self, id: Uuid) -> Result<bool, StoreError>;
 
+    /// Whole-record edit of a LIVE key (owner-or-admin checked by the
+    /// caller): name, the raw `scopes` JSON text and the optional
+    /// `expires_at` are all replaced, so `expires_at = None` CLEARS an
+    /// expiry. Answers whether a live row matched — a revoked or missing
+    /// id is `false`, exactly like [`Store::revoke_api_key`].
+    ///
+    /// The `scopes` text is not validated here beyond being JSON (the pg
+    /// path parses it into JSONB); interpreting it belongs to the caller.
+    async fn update_api_key(
+        &self,
+        id: Uuid,
+        name: &str,
+        scopes_json: &str,
+        expires_at: Option<&str>,
+    ) -> Result<bool, StoreError>;
+
     /// Find a live (non-revoked) key by its hash. The caller handles
     /// the async last_used_at refresh.
     async fn find_api_key_by_hash(
         &self,
         key_hash: &str,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError>;
+
+    /// Find a key by id, ANY state (revoked and expired rows included).
+    ///
+    /// This is the ownership handle the `keys.*` lanes need: the acting
+    /// user is compared against the RECORD's own `user_id`, so an admin
+    /// can reach a key they do not own and a member's lookup for someone
+    /// else's key still answers the row (and is then refused) rather than
+    /// silently "not found". It is NOT a credential check — presenting a
+    /// key still goes through [`Store::find_api_key_by_hash`].
+    async fn find_api_key_by_id(
+        &self,
+        id: Uuid,
     ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError>;
 
     /// Best-effort last_used_at update (never blocks the request path).

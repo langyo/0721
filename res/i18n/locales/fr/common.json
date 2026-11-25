@@ -166,7 +166,20 @@
     "revoked": "Révoquée",
     "prefix": "Préfixe",
     "state": "État",
-    "active": "Active"
+    "active": "Active",
+    "permissions": "Autorisations",
+    "op_read": "Lecture (liste, infos, recherche)",
+    "op_upload": "Téléversement",
+    "op_share": "Créer des liens de partage",
+    "noPermissions": "Aucune autorisation — modifiez pour en accorder",
+    "expiry": "Expiration",
+    "expiryOptional": "Expiration (facultative)",
+    "neverExpires": "N'expire jamais",
+    "expired": "Expirée",
+    "edit": "Modifier la clé API",
+    "updated": "Clé API mise à jour",
+    "opsRequired": "Sélectionnez au moins une autorisation",
+    "expiryFuture": "L'expiration doit être dans le futur"
   },
   "menu": {
     "account": "Compte"

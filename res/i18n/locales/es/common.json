@@ -166,7 +166,20 @@
     "revoked": "Revocada",
     "prefix": "Prefijo",
     "state": "Estado",
-    "active": "Activa"
+    "active": "Activa",
+    "permissions": "Permisos",
+    "op_read": "Lectura (lista, info, búsqueda)",
+    "op_upload": "Subir",
+    "op_share": "Crear enlaces compartidos",
+    "noPermissions": "Sin permisos — edita para conceder",
+    "expiry": "Caducidad",
+    "expiryOptional": "Caducidad (opcional)",
+    "neverExpires": "Nunca caduca",
+    "expired": "Caducada",
+    "edit": "Editar clave API",
+    "updated": "Clave API actualizada",
+    "opsRequired": "Selecciona al menos un permiso",
+    "expiryFuture": "La caducidad debe ser futura"
   },
   "menu": {
     "account": "Cuenta"

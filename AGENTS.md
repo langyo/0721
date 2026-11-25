@@ -9,13 +9,15 @@
 - 网盘 + 图床资源服务（langyo 个人仓，Apache-2.0）；staging 上线 `res.celestia.world`
   （node-1:3026，`i0721-staging.service`）；OAuth 对接 `auth.celestia.world`（ERP provider
   `res-celestia`），开源版支持 Google/GitHub/飞书等 provider + 可选账密双模式。
+- 0721 是 rustfs 的独立前端（自有桶 + 桶级凭据），与 arona `storage.*`（平台服务面 + 开通面）并列、互不隶属；chest / entelecheia 的静态资源读写一律经 arona，**禁止**把它们接到 0721。目标模型唯一家 = `_reports/media-hosting-consolidation-20261124/REPORT.md`（工作区路径）。
 
 ## 架构终态（11 波全部合并，#19–#26）
 
 - **服务端**：axum 0.8 + tokio + lacrymira ^0.2（PostgreSQL，`i0721-pg`）+ jiff（禁 chrono）。
 - **通信面**：WS JSON-RPC（plana-rpc-server @ `/api/rpc`，一次性 WS ticket + httpOnly cookie）+
   REST 白名单（health / auth bootstrap / refresh / logout / ws-ticket / upload / media / share / MCP SSE+message）+
-  MCP（SSE transport + 5 agent 工具 + API key `i0721-<32hex>` 哈希存储 + copy-once）。
+  MCP（SSE transport + 5 agent 工具 + API key `i0721-<32hex>` 哈希存储 + copy-once +
+  每 key 权限 `read`/`upload`/`share` 与可选过期，逐工具执行）。
 - **数据模型**：users（`quota_bytes`）/ `oauth_identities` / files（folder + `parent_id` + 同层唯一索引 +
   软删 + 级联回收）/ shares / `api_keys` / settings 六表。
 - **存储**：`I0721_STORAGE_BACKEND` = local | s3（`object_store` ^0.12）| ipfs（kubo RPC + MFS）。
@@ -53,6 +55,6 @@
 
 ## 遗留（后续波次）
 
-- scopes 执行与 key `expires_at`；DashMap 替代 Mutex 注册表；Range/流式读取；
+- DashMap 替代 Mutex 注册表；Range/流式读取；
   per-file 存储放置；MFS 多节点映射入库；text 预览大小帽；上传取消/拖拽。
 - `cred_scan` 测试夹具豁免已登记 `_ledger/tool-exemptions.md`。

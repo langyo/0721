@@ -5,6 +5,13 @@
 // HkAdaptiveDialog overlay root, outside `.keys-page`'s DOM;
 // `.dialog-body`'s declaration is byte-identical to FilesView's and the
 // names are unique across the app (audit rides the receipt).
+//
+// The create/edit form's anchors (`.key-ops-field`, `.key-expiry-field`,
+// `.key-native-input`) are FLAT for the same reason — a rule that demands
+// `.keys-page` as an ancestor never applies inside the overlay root — and
+// every one of them is prefixed `key-`: flat rules are GLOBAL in the
+// single-page bundle, so a name shared with another view's sheet would
+// make whichever chunk loads last win.
 
 .keys-page {
   display: flex;
@@ -20,6 +27,33 @@
   .key-prefix {
     font-family: var(--hk-font-mono, ui-monospace, monospace);
     opacity: 0.8;
+  }
+
+  // ── the permission cells ──────────────────────────────────────────
+  .key-ops {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+
+  // ── the expiry cell ───────────────────────────────────────────────
+  .key-expiry {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-variant-numeric: tabular-nums;
+
+    &.never {
+      opacity: 0.6;
+      font-style: italic;
+    }
+  }
+
+  .key-row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
   }
 }
 
@@ -58,4 +92,67 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+
+  // The edit window names the key it is editing by its masked PREFIX.
+  // The roster's `.key-prefix` rule is nested under `.keys-page` (this
+  // element is teleported outside it), so the dialog carries its own
+  // flat indirection rather than reaching for the table's.
+  .key-edit-prefix {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    opacity: 0.7;
+
+    .key-edit-prefix-text {
+      font-family: var(--hk-font-mono, ui-monospace, monospace);
+    }
+  }
+}
+
+// The permission group: a bordered fieldset whose legend names it (the
+// three switches read as ONE choice set, not three unrelated toggles).
+.key-ops-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 0.5rem;
+
+  legend {
+    padding: 0 0.3rem;
+    font-size: 0.85rem;
+  }
+
+  .key-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.85rem;
+  }
+}
+
+.key-expiry-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.key-native-input {
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  background: transparent;
+  color: inherit;
+}
+
+// A form's own validation line: it lives INSIDE the dialog (where the
+// action happens), never in the page behind it.
+.key-form-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgb(217 138 43);
 }

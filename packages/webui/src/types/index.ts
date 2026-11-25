@@ -15,6 +15,7 @@ export type { FileDto } from "./FileDto.ts";
 export type { FileKind } from "./FileKind.ts";
 export type { FooterBanner } from "./FooterBanner.ts";
 export type { HealthReport } from "./HealthReport.ts";
+export type { KeyOp } from "./KeyOp.ts";
 export type { LoginMethodDescriptor } from "./LoginMethodDescriptor.ts";
 export type { LoginMethodProvider } from "./LoginMethodProvider.ts";
 export type { LoginMethods } from "./LoginMethods.ts";

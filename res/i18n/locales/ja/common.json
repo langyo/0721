@@ -166,7 +166,20 @@
     "revoked": "取り消しました",
     "prefix": "プレフィックス",
     "state": "状態",
-    "active": "有効"
+    "active": "有効",
+    "permissions": "権限",
+    "op_read": "読み取り（一覧・詳細・検索）",
+    "op_upload": "アップロード",
+    "op_share": "共有リンクの作成",
+    "noPermissions": "権限がありません — 編集して付与してください",
+    "expiry": "有効期限",
+    "expiryOptional": "有効期限（任意）",
+    "neverExpires": "無期限",
+    "expired": "期限切れ",
+    "edit": "API キーを編集",
+    "updated": "API キーを更新しました",
+    "opsRequired": "少なくとも 1 つの権限を選択してください",
+    "expiryFuture": "有効期限は現在より後にしてください"
   },
   "menu": {
     "account": "アカウント"

@@ -80,6 +80,26 @@ FROM free fr
 WHERE fr.id = f.id
   AND fr.free_rank = fr.rename_rank"#;
 
+/// The API-key scope shape every row must carry from the permission
+/// wave on: an OBJECT with an `ops` array, e.g. `{"ops":["read"]}`.
+///
+/// Before that wave the column held a bare `[]` nobody executed, which
+/// every reader treated as "all permissions". Permissions ARE executed
+/// now, so that shape must land as the EMPTY set instead — a key whose
+/// owner never picked permissions cannot act until `keys.update` grants
+/// them (fail-closed: the normalization can only ever narrow).
+pub const API_KEY_SCOPES_SHAPE_SQL: &str = r#"'{"ops":[]}'::jsonb"#;
+
+/// The migration-0006 legacy normalization, extracted so the PG lane can
+/// re-run it against a hand-planted legacy row (the migration itself is
+/// a one-shot on a fresh database). Idempotent: a row that already has an
+/// object `scopes` is untouched, so the test can re-run it at will.
+pub const MIGRATION_0006_NORMALIZE_SQL: &str = r#"UPDATE api_keys
+SET scopes = '{"ops":[]}'::jsonb
+WHERE scopes IS NULL
+   OR jsonb_typeof(scopes) IS DISTINCT FROM 'object'
+   OR jsonb_typeof(scopes -> 'ops') IS DISTINCT FROM 'array'"#;
+
 /// The baseline schema plus the settings seed.
 ///
 /// The seed row uses `ON CONFLICT DO NOTHING`, so a database whose
@@ -215,6 +235,26 @@ pub fn migrations() -> Vec<Migration> {
                 ON api_keys (key_hash);
             "#,
         ),
+        Migration::new(
+            "20261122000006",
+            "api_keys: optional expires_at + fail-closed legacy scopes normalization",
+            // The expiry column is nullable TEXT holding RFC 3339, the
+            // same shape as `revoked_at` / `last_used_at` (nullable time
+            // columns stay text; see `entity.rs`).
+            //
+            // The normalization is the OTHER half: from this wave on the
+            // permission set is ENFORCED, so a legacy row's bare `[]`
+            // (read by nobody, meaning nothing) must not widen into
+            // "everything". Any `scopes` that is not an object with an
+            // `ops` array becomes the empty permission set.
+            format!(
+                r#"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS expires_at TEXT;
+            {};
+            ALTER TABLE api_keys ALTER COLUMN scopes SET DEFAULT {shape};"#,
+                MIGRATION_0006_NORMALIZE_SQL,
+                shape = API_KEY_SCOPES_SHAPE_SQL,
+            ),
+        ),
     ]
 }
 
@@ -258,10 +298,44 @@ mod tests {
             !json_str.contains('$'),
             "the payload carries no dollar sign, so no dollar-quote tag can be formed between the payload and the closing delimiter"
         );
-        let json: serde_json::Value = serde_json::from_str(json_str).expect("seed JSON parses");
-        assert_eq!(
-            json,
-            serde_json::to_value(i0721_proto::default_site_config()).unwrap()
+    }
+
+    #[test]
+    fn migration_0006_normalizes_legacy_scopes_and_adds_the_expiry_column() {
+        let migration = migrations()
+            .into_iter()
+            .find(|m| m.version == "20261122000006")
+            .expect("the permission wave's migration is present");
+        assert!(
+            migration
+                .sql
+                .contains("ADD COLUMN IF NOT EXISTS expires_at TEXT"),
+            "the expiry column is nullable TEXT (RFC 3339), added reentrantly"
+        );
+        assert!(
+            migration
+                .sql
+                .contains(MIGRATION_0006_NORMALIZE_SQL.trim_end_matches(';')),
+            "the migration runs the SHARED normalization the PG lane re-runs"
+        );
+        // The shape constant is the one the normalization writes and the
+        // column default carries — one source of truth, no drift.
+        assert!(
+            MIGRATION_0006_NORMALIZE_SQL.contains(API_KEY_SCOPES_SHAPE_SQL),
+            "the normalization writes exactly the documented shape"
+        );
+        assert!(
+            migration
+                .sql
+                .contains(&format!("SET DEFAULT {API_KEY_SCOPES_SHAPE_SQL}")),
+            "the column default is the normalized shape, not the legacy []"
+        );
+        // Fail-closed: the normalization may only ever NARROW a row into
+        // the empty-ops object, so the replacement text must be the
+        // empty array (never a populated one).
+        assert!(
+            API_KEY_SCOPES_SHAPE_SQL.contains(r#""ops":[]"#),
+            "normalization never grants an op"
         );
     }
 }

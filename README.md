@@ -44,7 +44,8 @@ backends and an MCP surface for AI agents.
   palettes) — embedded into the release binary
 - Internationalization (JSON catalogs, 12 locales, en + zh-Hans baselines)
 - MCP surface for AI agents: API-key authenticated SSE transport, five
-  netdisk tools, copy-once key reveal
+  netdisk tools, per-key permissions (read / upload / share) with an
+  optional expiry, copy-once key reveal
 - Deploy via Docker Compose
 - Written in Rust with a TypeScript frontend
 
@@ -259,7 +260,7 @@ and `?token=` stay open for non-browser clients, tried in that order:
 - `auth.verify` — the session's user projection
 - `files.list {offset, limit}` · `files.update {id, name}` · `files.delete {id}` (owner-or-admin)
 - `users.list {offset, limit}` · `users.create {username, password, display_name?, role?}` · `users.delete {id}` — admin role required
-- `keys.create {name}` · `keys.list` · `keys.revoke {id}` — the MCP API keys; `create` answers the plaintext key exactly once, `revoke` also kills the live MCP sessions that key opened
+- `keys.create {name, ops, expires_at?}` · `keys.update {id, name, ops, expires_at?}` · `keys.list` · `keys.revoke {id}` — the MCP API keys; `create` answers the plaintext key exactly once, `update` replaces the whole record (name, permissions, expiry — an omitted `expires_at` clears it), `revoke` also kills the live MCP sessions that key opened
 - `settings.get` · `settings.put` — admin role required; `put` takes the COMPLETE strict document (missing sections/leaves → error, never a silent default reset)
 
 **Transport**: the webui prefers the WebSocket (heartbeat + latency);
@@ -302,13 +303,13 @@ session.
 
 JSON-RPC 2.0 conventions on this surface: protocol failures (`-32600`
 invalid request, `-32601` unknown method, `-32602` unknown tool /
-invalid params, `-32700` parse error) answer the envelope's top-level
-`error` object, while a tool that RUNS and fails is a `result` with
-`isError: true`; a request without `id` is a notification
+invalid params, `-32001` permission denied, `-32700` parse error) answer the
+envelope's top-level `error` object, while a tool that RUNS and fails is a
+`result` with `isError: true`; a request without `id` is a notification
 (`notifications/initialized`) — 202 and no frame; a body the server
 cannot read at all answers an HTTP 400 whose body carries the prescribed
 `id: null` error frame. A session lives 30 minutes, dies with its
-stream, and is dropped the moment its key is revoked.
+stream, and is dropped the moment its key is revoked or expires.
 
 | Tool | Arguments (`*` required) | Result |
 | --- | --- | --- |
@@ -319,8 +320,15 @@ stream, and is dropped the moment its key is revoked.
 | `search_files` | `query`*, `kind`, `offset` (default 0), `limit` (default and cap 500) | files whose name (or original name) matches, scanned page by page |
 
 `tools/list` carries a real JSON Schema `inputSchema` per tool, so a
-client discovers the arguments without guessing. Every call runs with
-the key owner as the acting user — an API key never elevates. The share
+client discovers the arguments without guessing — and it lists only the
+tools the presenting key's permissions cover. The permissions are per
+key and enforced per tool: `read` covers `list_files` / `file_info` /
+`search_files`, `upload` covers `upload_file`, `share` covers
+`get_share_link`. Calling a tool outside the key's set answers the
+JSON-RPC `-32001` error frame (`scope denied: this API key lacks the
+"upload" permission required by tool "upload_file"`) without running
+the tool. Every call runs with the key owner as the acting user — an
+API key never elevates. The share
 URL's origin is `I0721_PUBLIC_ORIGIN` (else the request's `Host`); with
 neither configured `get_share_link` answers an explicit error instead of
 minting a `localhost` link nobody can open.
@@ -329,6 +337,29 @@ minting a `localhost` link nobody can open.
 `/api/rpc`) — the plaintext key is shown exactly ONCE; `keys.list` shows
 only the masked prefix, and `keys.revoke {id}` kills the key and every
 live session it opened.
+
+Every key carries its OWN permissions and an optional expiry, set at
+creation or with `keys.update {id, name, ops, expires_at?}` (a
+whole-record replacement; omit `expires_at` to clear it — omitted,
+`null` or `""` all clear it and never mean "keep the old one"). A key
+needs at least one permission, and a supplied `expires_at` must be RFC
+3339 and in the future; any UTC offset is accepted and the instant is
+stored in its canonical UTC form. Expiry is checked at every handshake AND on every frame: an
+expired key cannot open a stream, and a session whose key lapses
+mid-flight is dropped with a 401. Keys minted before permissions were
+enforced are normalized by the schema migration to the EMPTY permission
+set — grant them with `keys.update`.
+
+### Upgrading
+
+API keys created before per-key permissions existed start with NO
+permissions after the upgrade: their stored permission set was never
+enforced, so the migration normalizes it to the empty set instead of
+guessing a grant. Such a key is listed on the "API keys" page with a "no
+permissions" tag and cannot call any MCP tool until you edit it there and
+grant what it needs. Review every key once after deploying this release —
+an agent holding an ungranted key sees `tools/list` answer an empty array
+and `-32001` on every call.
 
 A copy-pasteable `mcpServers` entry for an SSE-speaking client (Claude
 Code, Cursor and friends) — replace the origin and the key:

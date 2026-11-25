@@ -166,7 +166,20 @@
     "revoked": "Widerrufen",
     "prefix": "Präfix",
     "state": "Status",
-    "active": "Aktiv"
+    "active": "Aktiv",
+    "permissions": "Berechtigungen",
+    "op_read": "Lesen (Liste, Info, Suche)",
+    "op_upload": "Hochladen",
+    "op_share": "Freigabelinks erstellen",
+    "noPermissions": "Keine Berechtigungen — zum Erteilen bearbeiten",
+    "expiry": "Ablauf",
+    "expiryOptional": "Ablauf (optional)",
+    "neverExpires": "Läuft nie ab",
+    "expired": "Abgelaufen",
+    "edit": "API-Schlüssel bearbeiten",
+    "updated": "API-Schlüssel aktualisiert",
+    "opsRequired": "Wählen Sie mindestens eine Berechtigung",
+    "expiryFuture": "Der Ablauf muss in der Zukunft liegen"
   },
   "menu": {
     "account": "Konto"

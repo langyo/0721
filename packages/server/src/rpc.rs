@@ -303,6 +303,109 @@ async fn require_file_owner_or_admin(
     Ok(record)
 }
 
+/// The wire form of `keys.create` / `keys.update` — the three fields a
+/// key's owner writes. `keys.update` is a WHOLE-RECORD replacement, so it
+/// carries the same three; an omitted `expires_at` clears the expiry.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct KeyWriteParams {
+    name: String,
+    ops: Vec<i0721_proto::KeyOp>,
+    #[serde(default)]
+    expires_at: Option<String>,
+}
+
+/// Validate a key write, answering `(trimmed name, ops, canonical
+/// expires_at)`.
+///
+/// Invariants (shared by create and update so the two can never drift):
+/// * the name survives `trim()` non-empty;
+/// * at least ONE permission — a key with no permission can only fail,
+///   and granting none is what `keys.revoke` is for;
+/// * a supplied `expires_at` is RFC 3339 and STRICTLY in the future, so
+///   "create a key that is already dead" cannot be expressed;
+/// * the stored form is the canonical instant (`…Z`), not the caller's
+///   spelling of it.
+///
+/// Every failure is the repo's existing invalid-params shape
+/// (`ApiError::bad_request` → `-32602`), the same one `settings.put` and
+/// `files.move` answer.
+fn validate_key_write(
+    write: &KeyWriteParams,
+) -> Result<(String, Vec<i0721_proto::KeyOp>, Option<String>), JsonRpcError> {
+    let name = write.name.trim().to_owned();
+    if name.is_empty() {
+        return Err(api_err(ApiError::bad_request("name must not be empty")));
+    }
+    if write.ops.is_empty() {
+        return Err(api_err(ApiError::bad_request(
+            "at least one permission is required",
+        )));
+    }
+    let now = jiff::Timestamp::now();
+    let expires_at = match write.expires_at.as_deref().map(str::trim) {
+        // An explicitly empty string is the webui's "no expiry" input.
+        None | Some("") => None,
+        Some(raw) => {
+            let instant = raw.parse::<jiff::Timestamp>().map_err(|err| {
+                api_err(ApiError::bad_request(format!(
+                    "expires_at must be an RFC 3339 instant: {err}"
+                )))
+            })?;
+            if instant <= now {
+                return Err(api_err(ApiError::bad_request(
+                    "expires_at must be in the future",
+                )));
+            }
+            Some(instant.to_string())
+        }
+    };
+    Ok((name, write.ops.clone(), expires_at))
+}
+
+/// The ONE ownership gate for the `keys.*` lanes that act on an existing
+/// key (`keys.revoke`, `keys.update`).
+///
+/// Ownership is decided from the KEY RECORD's own `user_id`, never from
+/// membership in `list_api_keys(caller.id)`: that list is the caller's
+/// OWN keys, so it can only ever answer "mine" — it never loads the
+/// target row for an admin acting on a foreign key, and it cannot tell
+/// "someone else's key" apart from "no such key". Loading the row is what
+/// makes both the owner answer and the admin answer well-defined.
+///
+/// The answers are the ones the lanes have always given:
+/// * no such row → not found (`-32006`);
+/// * a stranger (record owner ≠ caller, caller not admin) → forbidden
+///   `"not your key"` (`-32005`) — the same text for every key that is
+///   not yours, so the surface does not confirm which ids exist;
+/// * a revoked target → not found `"key not found or already revoked"`,
+///   the answer both lanes give when the guarded UPDATE matches no row;
+/// * otherwise the record, for the caller to act on.
+///
+/// # Errors
+///
+/// [`JsonRpcError`] from [`api_err`] / [`store_err`], ready to return.
+async fn require_key_access(
+    state: &AppState,
+    caller: &i0721_proto::UserRecord,
+    id: Uuid,
+) -> Result<i0721_proto::ApiKeyRecord, JsonRpcError> {
+    let record = state
+        .store
+        .find_api_key_by_id(id)
+        .await
+        .map_err(store_err)?
+        .ok_or_else(|| api_err(ApiError::not_found("key not found or already revoked")))?;
+    if record.user_id != caller.id && caller.role != Role::Admin {
+        return Err(api_err(ApiError::forbidden("not your key")));
+    }
+    if record.revoked_at.is_some() {
+        return Err(api_err(ApiError::not_found(
+            "key not found or already revoked",
+        )));
+    }
+    Ok(record)
+}
+
 /// Assemble the RPC router: WS upgrade + POST fallback at `/api/rpc`.
 pub fn router(state: AppState) -> Router {
     build_server(state).mount_at("/api/rpc")
@@ -334,6 +437,7 @@ pub fn build_server(state: AppState) -> RpcServer {
     let state_quota_put = state.clone();
     let state_files_chain = state.clone();
     let state_keys_create = state.clone();
+    let state_keys_update = state.clone();
     let state_keys_list = state.clone();
     let state_keys_revoke = state.clone();
     RpcServer::builder()
@@ -1220,12 +1324,9 @@ pub fn build_server(state: AppState) -> RpcServer {
         })        .method_ctx("keys.create", move |ctx: RpcRequestCtx| {
             let state = state_keys_create.clone();
             async move {
-                #[derive(serde::Deserialize)]
-                struct CreateParams {
-                    name: String,
-                }
-                let args: CreateParams = params(&ctx)?;
+                let args: KeyWriteParams = params(&ctx)?;
                 let caller = user_of(&ctx);
+                let (name, ops, expires_at) = validate_key_write(&args)?;
 
                 let key = crate::mcp::mint_api_key();
                 let hash = crate::mcp::hash_api_key(&key);
@@ -1233,10 +1334,11 @@ pub fn build_server(state: AppState) -> RpcServer {
                 let record = i0721_proto::ApiKeyRecord {
                     id: Uuid::new_v4(),
                     user_id: caller.id,
-                    name: args.name,
+                    name,
                     key_prefix: prefix,
                     key_hash: hash,
-                    scopes: "[]".to_owned(),
+                    scopes: crate::key_scopes::encode_scopes(ops),
+                    expires_at,
                     last_used_at: None,
                     revoked_at: None,
                     created_at: jiff::Timestamp::now(),
@@ -1250,20 +1352,66 @@ pub fn build_server(state: AppState) -> RpcServer {
                 })
             }
         })
+        .method_ctx("keys.update", move |ctx: RpcRequestCtx| {
+            let state = state_keys_update.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct UpdateParams {
+                    id: Uuid,
+                    #[serde(flatten)]
+                    write: KeyWriteParams,
+                }
+                let args: UpdateParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                // Owner-or-admin from the RECORD's own user_id, shared with
+                // `keys.revoke` ([`require_key_access`]). An EXPIRED key may
+                // be edited (renewal is the point); a REVOKED one may not —
+                // dead is dead, and it answers the same not-found
+                // `keys.revoke` answers (the helper's revoked arm).
+                let key = require_key_access(&state, &caller, args.id).await?;
+                // Whole-record replacement: all three fields, and an
+                // omitted `expires_at` CLEARS the expiry.
+                let (name, ops, expires_at) = validate_key_write(&args.write)?;
+                let updated = state
+                    .store
+                    .update_api_key(
+                        key.id,
+                        &name,
+                        &crate::key_scopes::encode_scopes(ops),
+                        expires_at.as_deref(),
+                    )
+                    .await
+                    .map_err(store_err)?;
+                if updated {
+                    Ok(Value::Null)
+                } else {
+                    Err(api_err(ApiError::not_found("key not found or already revoked")))
+                }
+            }
+        })
         .method_ctx("keys.list", move |ctx: RpcRequestCtx| {
             let state = state_keys_list.clone();
             async move {
                 let caller = user_of(&ctx);
+                let now = jiff::Timestamp::now();
                 let rows = state.store.list_api_keys(caller.id).await.map_err(store_err)?;
                 let items: Vec<i0721_proto::ApiKeyPublic> = rows
                     .into_iter()
-                    .map(|r| i0721_proto::ApiKeyPublic {
-                        id: r.id,
-                        name: r.name,
-                        key_prefix: r.key_prefix,
-                        last_used_at: r.last_used_at,
-                        revoked_at: r.revoked_at,
-                        created_at: r.created_at,
+                    .map(|r| {
+                        let set = crate::key_scopes::parse_scopes(&r.scopes);
+                        let expired =
+                            crate::key_scopes::is_live(&r, now) == crate::key_scopes::Live::Expired;
+                        i0721_proto::ApiKeyPublic {
+                            id: r.id,
+                            name: r.name,
+                            key_prefix: r.key_prefix,
+                            ops: crate::key_scopes::ordered_ops(&set),
+                            expires_at: r.expires_at,
+                            expired,
+                            last_used_at: r.last_used_at,
+                            revoked_at: r.revoked_at,
+                            created_at: r.created_at,
+                        }
                     })
                     .collect();
                 to_value(items)
@@ -1278,13 +1426,10 @@ pub fn build_server(state: AppState) -> RpcServer {
                 }
                 let args: RevokeParams = params(&ctx)?;
                 let caller = user_of(&ctx);
-                // Owner-or-admin: the key's owner or an admin may revoke.
-                let keys = state.store.list_api_keys(caller.id).await.map_err(store_err)?;
-                let owns = keys.iter().any(|k| k.id == args.id);
-                if !owns && caller.role != Role::Admin {
-                    return Err(api_err(ApiError::forbidden("not your key")));
-                }
-                let removed = state.store.revoke_api_key(args.id).await.map_err(store_err)?;
+                // Owner-or-admin from the RECORD's own user_id, shared with
+                // `keys.update` ([`require_key_access`]).
+                let key = require_key_access(&state, &caller, args.id).await?;
+                let removed = state.store.revoke_api_key(key.id).await.map_err(store_err)?;
                 if removed {
                     Ok(Value::Null)
                 } else {

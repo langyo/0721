@@ -138,8 +138,11 @@ pub struct ApiKeyModel {
     pub key_prefix: String,
     /// Hash of the full key (never the key itself).
     pub key_hash: String,
-    /// Granted scopes.
+    /// Granted scopes (the `{"ops":[…]}` object; raw JSON, never
+    /// interpreted here).
     pub scopes: serde_json::Value,
+    /// Expiry time (RFC 3339 text); NULL = never expires.
+    pub expires_at: Option<String>,
     /// Last use time (RFC 3339 text); NULL = never used.
     pub last_used_at: Option<String>,
     /// Revocation time (RFC 3339 text); NULL = active.
@@ -285,6 +288,7 @@ pub fn api_key_model_to_record(model: ApiKeyModel) -> i0721_proto::ApiKeyRecord 
         // produced it. No special case — a String arm would strip the
         // quotes and break the round trip for quoted payloads.
         scopes: model.scopes.to_string(),
+        expires_at: model.expires_at,
         last_used_at: model.last_used_at,
         revoked_at: model.revoked_at,
         created_at: model.created_at,

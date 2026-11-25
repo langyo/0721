@@ -803,6 +803,7 @@ async fn pg_api_key_lifecycle_reads_affected_counts() {
         key_prefix: "i0721-lc".to_owned(),
         key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
         scopes: "[]".to_owned(),
+        expires_at: None,
         last_used_at: None,
         revoked_at: None,
         created_at: jiff::Timestamp::now(),
@@ -866,6 +867,7 @@ async fn pg_api_key_scopes_round_trip_and_reject_garbage() {
             key_prefix: "i0721-abcd".to_owned(),
             key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
             scopes: payload.to_owned(),
+            expires_at: None,
             last_used_at: None,
             revoked_at: None,
             created_at: jiff::Timestamp::now(),
@@ -890,6 +892,7 @@ async fn pg_api_key_scopes_round_trip_and_reject_garbage() {
         key_prefix: "i0721-beef".to_owned(),
         key_hash: format!("hash{}", uuid::Uuid::new_v4().simple()),
         scopes: "not-json".to_owned(),
+        expires_at: None,
         last_used_at: None,
         revoked_at: None,
         created_at: jiff::Timestamp::now(),
@@ -899,4 +902,161 @@ async fn pg_api_key_scopes_round_trip_and_reject_garbage() {
         refused.is_err(),
         "an unparseable scopes payload is refused (fail-closed): {refused:?}"
     );
+}
+
+/// ⑩ The permission wave on a real database: the legacy `[]` scopes row
+/// is normalized by the SHARED migration SQL (which the lane re-runs
+/// against a hand-planted legacy shape, so the test does not depend on
+/// which migration version the scratch database is at), and the new
+/// `expires_at` column writes and reads back.
+/// MUT:M8 — gutting the shared SQL's WHERE turns this test red: it is that
+/// SQL the lane exercises, not the migration runner's state.
+#[tokio::test]
+async fn pg_api_key_legacy_scopes_normalize_and_expiry_round_trips() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let legacy_id = uuid::Uuid::new_v4();
+
+    // A row in the PRE-permission-wave shape: the bare `[]` array nobody
+    // executed (the INSERT predates the column, so `expires_at` stays
+    // NULL as well).
+    let plant = lacrymira::Command::Sql {
+        dialect: lacrymira::Dialect::Postgres,
+        text: "INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, scopes) \
+               VALUES ($1, $2, 'planted-legacy', 'i0721-aaaa****', $3, '[]'::jsonb)"
+            .to_owned(),
+        params: vec![
+            lacrymira::Value::Uuid(legacy_id.to_string()),
+            lacrymira::Value::Uuid(user.id.to_string()),
+            lacrymira::Value::Text(format!("legacy{}", uuid::Uuid::new_v4().simple())),
+        ],
+    };
+    store
+        .executor
+        .execute(&plant)
+        .await
+        .expect("plant legacy row");
+
+    // The same normalization the migration runs.
+    let normalize = lacrymira::Command::Sql {
+        dialect: lacrymira::Dialect::Postgres,
+        text: i0721_store::migrate::MIGRATION_0006_NORMALIZE_SQL.to_owned(),
+        params: vec![],
+    };
+    store
+        .executor
+        .execute(&normalize)
+        .await
+        .expect("normalization runs");
+
+    let row = store
+        .list_api_keys(user.id)
+        .await
+        .expect("list")
+        .into_iter()
+        .find(|r| r.id == legacy_id)
+        .expect("the planted row is listed");
+    assert_eq!(
+        row.scopes, r#"{"ops":[]}"#,
+        "a legacy `[]` row normalizes to the EMPTY permission set (fail-closed)"
+    );
+    assert_eq!(row.expires_at, None, "the pre-wave row has no expiry");
+
+    // Re-running is a no-op for an already-normalized row (the test is
+    // re-runnable), and a populated shape is never widened.
+    // MUT:M8 — the same gutted WHERE is caught by the assertion
+    // "an already-normalized row keeps its ops".
+    let populated = format!("hash{}", uuid::Uuid::new_v4().simple());
+    let granted = store
+        .create_api_key(&i0721_proto::ApiKeyRecord {
+            id: uuid::Uuid::new_v4(),
+            user_id: user.id,
+            name: "granted".to_owned(),
+            key_prefix: "i0721-bbbb****".to_owned(),
+            key_hash: populated,
+            scopes: r#"{"ops":["read"]}"#.to_owned(),
+            expires_at: None,
+            last_used_at: None,
+            revoked_at: None,
+            created_at: jiff::Timestamp::now(),
+        })
+        .await
+        .is_ok();
+    assert!(granted, "the granted row inserts");
+    store
+        .executor
+        .execute(&normalize)
+        .await
+        .expect("second normalization run");
+    let granted_row = store
+        .list_api_keys(user.id)
+        .await
+        .expect("list")
+        .into_iter()
+        .find(|r| r.name == "granted")
+        .expect("the granted row is listed");
+    assert_eq!(
+        granted_row.scopes, r#"{"ops":["read"]}"#,
+        "an already-normalized row keeps its ops"
+    );
+
+    // `expires_at` writes and reads back through update_api_key, and an
+    // absent expiry CLEARS it.
+    let expiry = jiff::Timestamp::now() + std::time::Duration::from_secs(3600);
+    let expiry_text = expiry.to_string();
+    assert!(
+        store
+            .update_api_key(
+                legacy_id,
+                "renamed-legacy",
+                r#"{"ops":["read","share"]}"#,
+                Some(&expiry_text)
+            )
+            .await
+            .expect("update"),
+        "the live row matches"
+    );
+    let updated = store
+        .list_api_keys(user.id)
+        .await
+        .expect("list")
+        .into_iter()
+        .find(|r| r.id == legacy_id)
+        .expect("the row is listed");
+    assert_eq!(updated.name, "renamed-legacy");
+    assert_eq!(updated.expires_at.as_deref(), Some(expiry_text.as_str()));
+    assert_eq!(updated.scopes, r#"{"ops":["read","share"]}"#);
+
+    assert!(
+        store
+            .update_api_key(legacy_id, "cleared", r#"{"ops":["read"]}"#, None)
+            .await
+            .expect("update"),
+        "the second update matches"
+    );
+    let cleared = store
+        .list_api_keys(user.id)
+        .await
+        .expect("list")
+        .into_iter()
+        .find(|r| r.id == legacy_id)
+        .expect("the row is listed");
+    assert_eq!(
+        cleared.expires_at, None,
+        "an absent expiry clears the column"
+    );
+    assert_eq!(cleared.scopes, r#"{"ops":["read"]}"#);
+
+    // A revoked key is not updatable (the guard the RPC lane turns into
+    // its not-found answer).
+    store.revoke_api_key(legacy_id).await.expect("revoke");
+    assert!(
+        !store
+            .update_api_key(legacy_id, "too-late", "{}", None)
+            .await
+            .expect("update"),
+        "a revoked row does not match the live-row filter"
+    );
+
+    cleanup_user(&store, user.id).await;
 }

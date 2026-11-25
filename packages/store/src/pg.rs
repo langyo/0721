@@ -509,6 +509,7 @@ impl Store for PgStore {
                     scopes = record.scopes
                 ))
             })?,
+            expires_at: record.expires_at.clone(),
             last_used_at: record.last_used_at.clone(),
             revoked_at: record.revoked_at.clone(),
             created_at: record.created_at,
@@ -556,6 +557,46 @@ impl Store for PgStore {
         Ok(n > 0)
     }
 
+    async fn update_api_key(
+        &self,
+        id: Uuid,
+        name: &str,
+        scopes_json: &str,
+        expires_at: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        // Same fail-closed write contract as `create_api_key`: the raw
+        // text must parse before it can become the JSONB column, and a
+        // bad payload is an ERROR (never a silently emptied permission
+        // set).
+        let scopes = serde_json::from_str::<serde_json::Value>(scopes_json).map_err(|err| {
+            StoreError::Db(format!(
+                "api key scopes must be valid JSON ({err}): {scopes_json:?}"
+            ))
+        })?;
+        let cmd = update_command::<ApiKeyModel>(
+            vec![
+                ("name", Value::Text(name.to_owned())),
+                ("scopes", Value::Json(scopes.to_string())),
+                // `None` CLEARS the expiry: the whole-record edit
+                // replaces every field it owns.
+                (
+                    "expires_at",
+                    expires_at.map_or(Value::Null, |at| Value::Text(at.to_owned())),
+                ),
+            ],
+            ApiKeyColumn::Id
+                .eq(id)
+                .into_inner()
+                .and(ApiKeyColumn::RevokedAt.is_null().into_inner()),
+            false,
+        )?;
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Affected(n) = reply else {
+            return Err(StoreError::Db("expected an affected count".to_owned()));
+        };
+        Ok(n > 0)
+    }
+
     async fn find_api_key_by_hash(
         &self,
         key_hash: &str,
@@ -568,6 +609,27 @@ impl Store for PgStore {
                     .into_inner()
                     .and(ApiKeyColumn::RevokedAt.is_null().into_inner()),
             ),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        Ok(self
+            .query_one::<ApiKeyModel>(cmd)
+            .await?
+            .map(api_key_model_to_record))
+    }
+
+    async fn find_api_key_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ApiKeyModel::TABLE.to_owned(),
+            // By PRIMARY KEY, with NO state filter: ownership decisions
+            // need the row whether it is live, expired or revoked.
+            filter: Some(ApiKeyColumn::Id.eq(id).into_inner()),
             order_by: vec![],
             limit: None,
             offset: None,

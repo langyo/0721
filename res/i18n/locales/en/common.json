@@ -166,7 +166,20 @@
     "revoked": "Revoked",
     "prefix": "Prefix",
     "state": "Status",
-    "active": "Active"
+    "active": "Active",
+    "permissions": "Permissions",
+    "op_read": "Read (list, info, search)",
+    "op_upload": "Upload",
+    "op_share": "Create share links",
+    "noPermissions": "No permissions — edit to grant",
+    "expiry": "Expiry",
+    "expiryOptional": "Expiry (optional)",
+    "neverExpires": "Never expires",
+    "expired": "Expired",
+    "edit": "Edit API key",
+    "updated": "API key updated",
+    "opsRequired": "Select at least one permission",
+    "expiryFuture": "Expiry must be in the future"
   },
   "menu": {
     "account": "Account"

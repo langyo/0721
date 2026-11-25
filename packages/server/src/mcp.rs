@@ -13,7 +13,16 @@
 //! stream ENDS at its `expires_at` instead of squatting on a zombie
 //! keepalive, and every message re-checks that the session's API key is
 //! still live — revoking a key kills the sessions it opened, not just
-//! future handshakes.
+//! future handshakes. "Live" now covers EXPIRY too (`expires_at`): an
+//! expired key cannot open a stream, and a session whose key expires
+//! mid-flight is removed and refused on its next frame.
+//!
+//! Permissions: every key carries a per-key operation set (the
+//! [`crate::key_scopes`] vocabulary — `read`, `upload`, `share`).
+//! `tools/list` advertises only the tools the key is allowed to call, and
+//! `tools/call` refuses a tool outside that set with the JSON-RPC
+//! server-error `-32001` (a PROTOCOL-level refusal, not an `isError`
+//! result: the call never ran). `initialize` is never permission-gated.
 //!
 //! The tool surface (five tools) rides the STORE's existing per-user
 //! permission face: no admin elevation, the key's owner is the acting
@@ -30,7 +39,7 @@
 //! (-32601 unknown method, -32602 unknown tool) ride the envelope's
 //! TOP-LEVEL `error` object, never a `result` payload.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -42,10 +51,11 @@ use sha2::Digest;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use i0721_proto::{FileDto, FileKind, NewShare};
+use i0721_proto::{FileDto, FileKind, KeyOp, NewShare};
 
 use crate::api::upload_core::{run_upload, UploadInput};
 use crate::error::ApiError;
+use crate::key_scopes::{authorize, is_live, parse_scopes, required_op, Denial, Live};
 use crate::state::AppState;
 
 /// Session TTL and cap (chest-matched).
@@ -191,6 +201,20 @@ impl McpSessions {
     fn remove(&self, session_id: &str) {
         self.lock().remove(session_id);
     }
+
+    /// How many sessions the table currently holds (any state).
+    ///
+    /// A TEST-FACING accessor: the integration lane (a separate crate)
+    /// uses it to prove that an expiry or a revocation REMOVED the
+    /// session rather than merely refusing the frame. It is deliberately
+    /// NOT `len` — this is not a collection-sized API, and naming it for
+    /// its one caller keeps `clippy::len_without_is_empty` from pushing a
+    /// dead `is_empty` back into the surface.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn session_count(&self) -> usize {
+        self.lock().len()
+    }
 }
 
 impl Default for McpSessions {
@@ -240,6 +264,32 @@ pub async fn sse(State(state): State<AppState>, headers: HeaderMap) -> Response 
                 .into_response()
         }
     };
+    // Expiry is NOT a lookup filter (`find_api_key_by_hash` only drops
+    // revoked rows — an expired key must stay visible to `keys.list` and
+    // re-openable after a renewal), so the handshake proves the key is live
+    // here. The message lane proves the same thing once per frame.
+    match is_live(&key_record, jiff::Timestamp::now()) {
+        Live::Live => {}
+        Live::Expired => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::CONTENT_TYPE, "application/json")],
+                r#"{"error":"this API key has expired"}"#,
+            )
+                .into_response()
+        }
+        // Unreachable: the lookup already excludes revoked rows. Kept
+        // explicit rather than `_` so a future `Live` variant has to be
+        // decided here instead of silently admitting the session.
+        Live::Revoked => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::CONTENT_TYPE, "application/json")],
+                r#"{"error":"this API key was revoked"}"#,
+            )
+                .into_response()
+        }
+    }
     // The handle the message lane re-verifies this session against.
     let key_hash = hash_api_key(raw_key);
 
@@ -393,16 +443,18 @@ pub async fn message(
     };
 
     // Key re-verification. The session is NOT a permanent credential: a
-    // key revoked after the handshake must stop working NOW, not when the
-    // 30-minute TTL lapses. The session stores the key's hash, so this is
-    // the same unique-indexed lookup the handshake paid — one read per
-    // JSON-RPC frame, far cheaper than the tool dispatch it guards.
+    // key revoked or EXPIRED after the handshake must stop working NOW,
+    // not when the 30-minute TTL lapses. The session stores the key's
+    // hash, so this is the same unique-indexed lookup the handshake paid
+    // — one read per JSON-RPC frame, far cheaper than the tool dispatch
+    // it guards. The record it returns is also the frame's permission
+    // source, so `tools/list` and `tools/call` read one snapshot.
     //
     // A store FAILURE is not a revocation: it fails this request (500)
     // and leaves the session alone, so a database blip does not sign
     // every agent out of its stream.
-    match state.store.find_api_key_by_hash(&session.key_hash).await {
-        Ok(Some(_)) => {}
+    let key_record = match state.store.find_api_key_by_hash(&session.key_hash).await {
+        Ok(Some(record)) => record,
         Ok(None) => {
             // Revoked. Drop the entry: this `Arc` (plus the stream's
             // clone of the sender) is the only holder, so the SSE stream
@@ -417,6 +469,19 @@ pub async fn message(
                 .into_response();
         }
         Err(err) => return ApiError::from(err).into_response(),
+    };
+    // The expiry half: a key that lapses mid-session ends its sessions
+    // exactly like a revocation (removed here, and the stream ends when
+    // the sender falls out of scope) — the wording is the only
+    // difference.
+    if is_live(&key_record, jiff::Timestamp::now()) == Live::Expired {
+        state.mcp_sessions.remove(session_id);
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"error":"this session's API key has expired"}"#,
+        )
+            .into_response();
     }
 
     // Parse and validate the request shape. A body the server cannot even
@@ -452,7 +517,7 @@ pub async fn message(
     let user_id = session.user_id;
     let tx = session.tx.clone();
     tokio::spawn(async move {
-        let outcome = dispatch_tool(&state, user_id, origin, &method, &params).await;
+        let outcome = dispatch_tool(&state, user_id, origin, &key_record, &method, &params).await;
         let _ = tx.send(response_frame(&id, outcome)).await;
     });
 
@@ -486,7 +551,14 @@ fn page_args(args: &Value, cap: u64) -> (u64, u64) {
 /// The five tools, each with a REAL JSON Schema `inputSchema` (an object
 /// with typed `properties` and the `required` list) — a client cannot
 /// build a call from a name and a prose line alone.
-fn tool_specs() -> Value {
+///
+/// This is the UNFILTERED catalogue; [`visible_tools`] narrows it to the
+/// key's permissions. It is public so the lane test can pin it against
+/// [`crate::key_scopes::TOOL_REQUIRED_OP`] in both directions (a tool
+/// added here without a permission mapping — or the reverse — is a bug
+/// that must fail a test, not reach a client).
+#[must_use]
+pub fn tool_specs() -> Value {
     json!([
         {
             "name": "list_files",
@@ -617,16 +689,24 @@ async fn dispatch_tool(
     state: &AppState,
     user_id: Uuid,
     origin: Option<String>,
+    key: &i0721_proto::ApiKeyRecord,
     method: &str,
     params: &Value,
 ) -> Result<Value, RpcFault> {
     match method {
+        // `initialize` is never permission-gated: a client must be able
+        // to negotiate the protocol before it can discover (or be
+        // refused) a tool.
         "initialize" => Ok(json!({
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "0721", "version": env!("CARGO_PKG_VERSION")},
         })),
-        "tools/list" => Ok(json!({"tools": tool_specs()})),
+        // Only the tools this key may actually call: an agent that
+        // cannot upload should not be told `upload_file` exists.
+        "tools/list" => Ok(json!({
+            "tools": visible_tools(&parse_scopes(&key.scopes)),
+        })),
         "tools/call" => {
             let tool = params
                 .get("name")
@@ -637,11 +717,27 @@ async fn dispatch_tool(
                 .cloned()
                 .unwrap_or_else(|| json!({}));
             // An unknown tool is a PROTOCOL error (-32602: the request's
-            // params name something the server does not have); a tool that
-            // runs and fails is a RESULT with `isError` — the two are
-            // different layers and must not share the `result` slot.
-            if !is_known_tool(tool) {
-                return Err(RpcFault::new(-32602, format!("no such tool: {tool:?}")));
+            // params name something the server does not have); a tool the
+            // key lacks the permission for is a different PROTOCOL error
+            // (-32001, see [`SCOPE_DENIED`]); a tool that runs and fails
+            // is a RESULT with `isError` — three different layers that
+            // must not share the `result` slot.
+            //
+            // The decision itself is NOT taken here: the caller already
+            // proved the key live for this frame, so [`authorize`] on that
+            // same (freshly loaded) record is the one interpreter of the
+            // permission set — the inline `scopes.contains` this used to
+            // do made the MCP lane and `key_scopes` two sources of truth.
+            if let Err(denial) = authorize(key, tool) {
+                let code = match denial {
+                    Denial::UnknownTool => -32602,
+                    // Revocation/expiry were settled by the per-frame
+                    // re-check above; reaching them here would mean the
+                    // record changed mid-frame, and a refusal is still the
+                    // right answer.
+                    Denial::Revoked | Denial::Expired | Denial::Scope { .. } => SCOPE_DENIED,
+                };
+                return Err(RpcFault::new(code, denial.message(tool)));
             }
             match call_tool(state, user_id, origin.as_deref(), tool, &args).await {
                 Ok(result) => {
@@ -657,13 +753,34 @@ async fn dispatch_tool(
     }
 }
 
-/// The tool names [`call_tool`] serves (the `-32602` check above and the
-/// dispatcher stay in one place).
-fn is_known_tool(tool: &str) -> bool {
-    matches!(
-        tool,
-        "list_files" | "file_info" | "upload_file" | "get_share_link" | "search_files"
-    )
+/// The JSON-RPC code for "this key lacks the permission the tool needs".
+///
+/// `-32000..=-32099` is the JSON-RPC 2.0 implementation-defined
+/// server-error range; the plana family claims `-32001..-32009` in
+/// [`crate::rpc::rpc_error_codes`], so the MCP lane takes the other end
+/// of the range. It is an error CODE, not a status change: the message
+/// lane still answers 202 and the refusal rides the envelope's
+/// TOP-LEVEL `error` object, exactly like `-32602`.
+const SCOPE_DENIED: i64 = -32001;
+
+/// The tool specifications this key is allowed to call (canonical
+/// `tool_specs()` order preserved).
+fn visible_tools(scopes: &BTreeSet<KeyOp>) -> Vec<Value> {
+    let all = tool_specs();
+    all.as_array()
+        .map(|tools| {
+            tools
+                .iter()
+                .filter(|tool| {
+                    tool["name"]
+                        .as_str()
+                        .and_then(required_op)
+                        .is_some_and(|op| scopes.contains(&op))
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 async fn call_tool(

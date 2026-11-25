@@ -166,7 +166,20 @@
     "revoked": "已撤銷",
     "prefix": "前綴",
     "state": "狀態",
-    "active": "啟用中"
+    "active": "啟用中",
+    "permissions": "權限",
+    "op_read": "讀取（列出、詳情、搜尋）",
+    "op_upload": "上傳",
+    "op_share": "建立分享連結",
+    "noPermissions": "未授予任何權限——請編輯授權",
+    "expiry": "過期時間",
+    "expiryOptional": "過期時間（可選）",
+    "neverExpires": "永不過期",
+    "expired": "已過期",
+    "edit": "編輯 API 密鑰",
+    "updated": "API 密鑰已更新",
+    "opsRequired": "請至少選擇一項權限",
+    "expiryFuture": "過期時間必須晚於目前時間"
   },
   "menu": {
     "account": "帳戶"

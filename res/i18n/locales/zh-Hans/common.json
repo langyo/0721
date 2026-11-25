@@ -166,7 +166,20 @@
     "revoked": "已吊销",
     "prefix": "前缀",
     "state": "状态",
-    "active": "启用中"
+    "active": "启用中",
+    "permissions": "权限",
+    "op_read": "读取（列出、详情、搜索）",
+    "op_upload": "上传",
+    "op_share": "创建分享链接",
+    "noPermissions": "未授予任何权限——请编辑授权",
+    "expiry": "过期时间",
+    "expiryOptional": "过期时间（可选）",
+    "neverExpires": "永不过期",
+    "expired": "已过期",
+    "edit": "编辑 API 密钥",
+    "updated": "API 密钥已更新",
+    "opsRequired": "请至少选择一项权限",
+    "expiryFuture": "过期时间必须晚于现在"
   },
   "menu": {
     "account": "账户"
