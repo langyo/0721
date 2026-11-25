@@ -946,7 +946,52 @@ async fn dispatch_tool(
                 }
                 Precheck::Frame(fault) => return Err(fault),
             };
-            match call_tool(state, user_id, origin.as_deref(), tool, &args, &resolved).await {
+            // §7 pushdown (Q14): the read tools' list is scoped to the
+            // key ∩ user's visible buckets — computed ONCE here, in the
+            // same pass that made the precheck decision (§4's "one
+            // decision" seam; the body never re-derives it).
+            let visible_ids =
+                crate::bucket_acl::visible_bucket_ids(state.store.as_ref(), &state.registry, &user)
+                    .await
+                    .map_err(|err| RpcFault::new(-32603, err.to_string()))?;
+            let key_buckets = parse_scopes_buckets(&key.scopes);
+            let key_bucket_ids = {
+                let mut ids = Vec::new();
+                for bucket in state
+                    .store
+                    .list_storage_buckets()
+                    .await
+                    .map_err(|err| RpcFault::new(-32603, err.to_string()))?
+                {
+                    if key_buckets.contains(&bucket.slug) && visible_ids.contains(&bucket.id) {
+                        ids.push(bucket.id);
+                    }
+                }
+                // A NULL-bucket legacy row reads through the bootstrap
+                // id — keep it listable when the key's buckets allow the
+                // bootstrap slug (the synthetic-row posture).
+                if let Some(bootstrap_slug) = state.registry.bootstrap_slug().map(str::to_owned) {
+                    if key_buckets.contains(&bootstrap_slug) {
+                        if let Ok(id) = state.registry.bootstrap_bucket_id() {
+                            ids.push(id);
+                        }
+                    }
+                }
+                ids.sort();
+                ids.dedup();
+                ids
+            };
+            match call_tool(
+                state,
+                user_id,
+                origin.as_deref(),
+                tool,
+                &args,
+                &resolved,
+                &key_bucket_ids,
+            )
+            .await
+            {
                 Ok(result) => {
                     Ok(json!({"content": [{"type": "text", "text": result.to_string()}]}))
                 }
@@ -997,6 +1042,7 @@ async fn call_tool(
     tool: &str,
     args: &Value,
     resolved: &Option<ResolvedBucket>,
+    key_bucket_ids: &[Uuid],
 ) -> Result<Value, String> {
     match tool {
         "list_files" => {
@@ -1007,7 +1053,14 @@ async fn call_tool(
             let (offset, limit) = page_args(args, LIST_FILES_LIMIT);
             let rows = state
                 .store
-                .list_folder(user_id, folder_id, None, offset, limit)
+                .list_folder(
+                    user_id,
+                    folder_id,
+                    None,
+                    Some(key_bucket_ids),
+                    offset,
+                    limit,
+                )
                 .await
                 .map_err(|e| e.to_string())?;
             let items: Vec<FileDto> = rows.into_iter().map(FileDto::from).collect();
@@ -1180,7 +1233,7 @@ async fn call_tool(
             // page the SCAN — the schema says so.
             let rows = state
                 .store
-                .list_folder(user_id, None, kind, offset, limit)
+                .list_folder(user_id, None, kind, Some(key_bucket_ids), offset, limit)
                 .await
                 .map_err(|e| e.to_string())?;
             let items: Vec<FileDto> = rows

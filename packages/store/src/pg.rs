@@ -287,10 +287,17 @@ fn live_file_by(column: FileColumn, value: impl Into<Value>) -> Command {
 }
 
 /// The live-rows filter shared by the folder listing and its count.
+/// `buckets` is the §7 pushdown (Q14): `Some(set)` keeps only rows whose
+/// `bucket_id` is in the caller's visible set — the SQL is the ONLY
+/// filter site, so a count and its listing can never disagree.
+/// MUT:M3b — dropping this filter (or applying it only to one of the two
+/// lanes) lets invisible-bucket rows leak into either the items or the
+/// total, which reddens the pushdown tests.
 fn folder_filter(
     owner_id: Uuid,
     parent_id: Option<Uuid>,
     kind: Option<String>,
+    buckets: Option<&[Uuid]>,
 ) -> lacrymira::Condition {
     let mut filter = FileColumn::DeletedAt
         .is_null()
@@ -302,6 +309,19 @@ fn folder_filter(
     };
     if let Some(kind) = kind {
         filter = filter.and(FileColumn::Kind.eq(kind).into_inner());
+    }
+    if let Some(set) = buckets {
+        // A NULL-bucket row (rollback-window legacy) resolves through the
+        // bootstrap bucket by the §7 column rules; the visible set is
+        // computed from the registry, so keep NULL-bucket rows when the
+        // bootstrap is in the set. The comparison stays SQL-side (no
+        // post-fetch filtering — that would let `total` leak counts).
+        filter = filter.and(
+            FileColumn::BucketId
+                .in_(set.to_vec())
+                .into_inner()
+                .or(FileColumn::BucketId.is_null().into_inner()),
+        );
     }
     filter
 }
@@ -387,10 +407,22 @@ impl Store for PgStore {
         Ok(removed > 0)
     }
 
-    async fn list_files(&self, offset: u64, limit: u64) -> Result<Vec<FileRecord>, StoreError> {
+    async fn list_files(
+        &self,
+        buckets: Option<&[Uuid]>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError> {
+        let filter = FileColumn::DeletedAt.is_null().into_inner();
+        let filter = match buckets {
+            None => filter,
+            Some(set) => filter
+                .and(FileColumn::BucketId.in_(set.to_vec()).into_inner())
+                .or(FileColumn::BucketId.is_null().into_inner()),
+        };
         let cmd = Command::Select {
             table: FileModel::TABLE.to_owned(),
-            filter: Some(FileColumn::DeletedAt.is_null().into_inner()),
+            filter: Some(filter),
             order_by: vec![("created_at".to_owned(), true)],
             limit: Some(limit),
             offset: Some(offset),
@@ -404,11 +436,15 @@ impl Store for PgStore {
             .collect()
     }
 
-    async fn count_files(&self) -> Result<u64, StoreError> {
-        let count = self
-            .executor
-            .count::<FileModel>(Some(FileColumn::DeletedAt.is_null().into_inner()))
-            .await?;
+    async fn count_files(&self, buckets: Option<&[Uuid]>) -> Result<u64, StoreError> {
+        let filter = FileColumn::DeletedAt.is_null().into_inner();
+        let filter = match buckets {
+            None => filter,
+            Some(set) => filter
+                .and(FileColumn::BucketId.in_(set.to_vec()).into_inner())
+                .or(FileColumn::BucketId.is_null().into_inner()),
+        };
+        let count = self.executor.count::<FileModel>(Some(filter)).await?;
         Ok(count as u64)
     }
 
@@ -1172,8 +1208,9 @@ impl Store for PgStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
     ) -> Result<u64, StoreError> {
-        let filter = folder_filter(owner_id, parent_id, kind);
+        let filter = folder_filter(owner_id, parent_id, kind, buckets);
         let cmd = Command::Count {
             table: FileModel::TABLE.to_owned(),
             filter: Some(filter),
@@ -1192,10 +1229,11 @@ impl Store for PgStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
         offset: u64,
         limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError> {
-        let filter = folder_filter(owner_id, parent_id, kind);
+        let filter = folder_filter(owner_id, parent_id, kind, buckets);
         let cmd = Command::Select {
             table: FileModel::TABLE.to_owned(),
             filter: Some(filter),

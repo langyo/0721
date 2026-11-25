@@ -604,6 +604,12 @@ pub fn build_server(state: AppState) -> RpcServer {
                     /// Optional kind filter ("image", "document", …).
                     #[serde(default)]
                     kind: Option<String>,
+                    /// Optional bucket-slug filter (P2a / Q14): narrows
+                    /// the own-scope tree to ONE visible bucket. An
+                    /// INVISIBLE slug (or one the caller cannot read)
+                    /// makes rows AND total vanish — never an error.
+                    #[serde(default)]
+                    bucket: Option<String>,
                 }
                 let args: ListParams = params(&ctx)?;
                 let user = user_of(&ctx);
@@ -611,6 +617,36 @@ pub fn build_server(state: AppState) -> RpcServer {
                 // Members are pinned to their own tree: the timeline is
                 // the admin-flavored global stream.
                 let scope = if user.role != Role::Admin { "own" } else { scope };
+                // §7 pushdown (Q14): the caller's VISIBLE bucket set
+                // (any grant bit or the signup default) is derived
+                // server-side and pushed INTO the store — a post-fetch
+                // filter would let `total` leak counts. An explicit
+                // slug narrows it further; a slug outside the visible
+                // set simply yields an empty set (rows AND total
+                // vanish; the §7 files.list cell).
+                let mut buckets = crate::bucket_acl::visible_bucket_ids(
+                    state.store.as_ref(),
+                    &state.registry,
+                    &user,
+                )
+                .await
+                .map_err(store_err)?;
+                if let Some(slug) = args.bucket.as_deref() {
+                    // The explicit slug narrows the visible set to THAT
+                    // bucket; an unknown slug or one outside the visible
+                    // set empties it entirely (rows AND total vanish —
+                    // the §7 files.list cell, never an error).
+                    buckets = match state
+                        .store
+                        .get_storage_bucket_by_slug(slug)
+                        .await
+                        .map_err(store_err)?
+                    {
+                        Some(row) if buckets.contains(&row.id) => vec![row.id],
+                        _ => Vec::new(),
+                    };
+                }
+                let buckets_ref: Vec<uuid::Uuid> = buckets;
                 if scope == "own" {
                     let (offset, limit) = PageArgs {
                         offset: args.offset,
@@ -621,12 +657,19 @@ pub fn build_server(state: AppState) -> RpcServer {
                     // pushes offset+limit down to the store.
                     let total = state
                         .store
-                        .count_folder(user.id, args.folder_id, args.kind.clone())
+                        .count_folder(user.id, args.folder_id, args.kind.clone(), Some(&buckets_ref))
                         .await
                         .map_err(store_err)?;
                     let items = state
                         .store
-                        .list_folder(user.id, args.folder_id, args.kind, offset, limit)
+                        .list_folder(
+                            user.id,
+                            args.folder_id,
+                            args.kind,
+                            Some(&buckets_ref),
+                            offset,
+                            limit,
+                        )
                         .await
                         .map_err(store_err)?
                         .into_iter()
@@ -639,10 +682,14 @@ pub fn build_server(state: AppState) -> RpcServer {
                     limit: args.limit,
                 }
                 .sanitize();
-                let total = state.store.count_files().await.map_err(store_err)?;
+                let total = state
+                    .store
+                    .count_files(Some(&buckets_ref))
+                    .await
+                    .map_err(store_err)?;
                 let items = state
                     .store
-                    .list_files(offset, limit)
+                    .list_files(Some(&buckets_ref), offset, limit)
                     .await
                     .map_err(store_err)?
                     .into_iter()
@@ -1716,9 +1763,40 @@ pub fn build_server(state: AppState) -> RpcServer {
             let state = state_storage_buckets_list.clone();
             async move {
                 let caller = user_of(&ctx);
-                require_admin(&caller).await?;
+                // The stage-A surface, extended to VISIBILITY SCOPE (the
+                // §7 files.list cell mandates a selector that lists the
+                // actor's visible buckets with a per-bucket permission
+                // mark — a member-visible enumeration is required for
+                // that, and the key-form picker reads the same lane):
+                // admin keeps ALL buckets; a member gets ONLY their
+                // visible buckets (R-A evaluation: any grant bit or the
+                // signup default; `enabled` does not affect visibility,
+                // Q14). The record shape is unchanged plus one per-row
+                // `my_access` projection of the actor's own bits.
                 let rows = state.store.list_storage_buckets().await.map_err(store_err)?;
-                to_value(rows)
+                let mut out: Vec<Value> = Vec::with_capacity(rows.len());
+                for bucket in rows {
+                    let access =
+                        crate::bucket_acl::resolve_access(state.store.as_ref(), &caller, &bucket)
+                            .await
+                            .map_err(store_err)?;
+                    if caller.role != Role::Admin && !access.any() {
+                        continue;
+                    }
+                    let mut value = to_value(bucket)?;
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert(
+                            "my_access".to_owned(),
+                            serde_json::json!({
+                                "read": access.read,
+                                "write": access.write,
+                                "share": access.share,
+                            }),
+                        );
+                    }
+                    out.push(value);
+                }
+                to_value(out)
             }
         })
         .method_ctx("storage.buckets.upsert", move |ctx: RpcRequestCtx| {

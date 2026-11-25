@@ -303,6 +303,15 @@ impl BlobRegistry {
         self.by_id.get(&id).cloned()
     }
 
+    /// The enabled bootstrap bucket's slug (the NULL-bucket rows'
+    /// resolution target, I4): the §7 pushdown and the key-buckets
+    /// intersection read this to keep those rows listable for a key
+    /// that names the bootstrap slug.
+    #[must_use]
+    pub fn bootstrap_slug(&self) -> Option<&str> {
+        self.bootstrap.as_deref()
+    }
+
     /// The health view of every registered bucket.
     #[must_use]
     pub fn health(&self) -> Vec<BucketHealth> {

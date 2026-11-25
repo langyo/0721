@@ -105,6 +105,42 @@ pub async fn granted_buckets(
     Ok(out)
 }
 
+/// The VISIBLE bucket ids for `actor` — the §7 `files.list` pushdown
+/// source (Q14: visibility = any grant bit or the signup default;
+/// `enabled` does not affect visibility). A NULL-bucket legacy row
+/// resolves through the registry's bootstrap id, so the bootstrap id is
+/// ALWAYS in the set when the registry knows one (the synthesized-row
+/// posture every reader uses for `bucket_id IS NULL`).
+///
+/// # Errors
+///
+/// [`StoreError`] from the underlying reads.
+pub async fn visible_bucket_ids(
+    store: &dyn Store,
+    registry: &crate::blob_registry::BlobRegistry,
+    actor: &UserRecord,
+) -> Result<Vec<Uuid>, StoreError> {
+    let buckets = store.list_storage_buckets().await?;
+    let mut out = Vec::new();
+    for bucket in &buckets {
+        if resolve_access(store, actor, bucket).await?.any() {
+            out.push(bucket.id);
+        }
+    }
+    // The NULL-bucket arm: rows resolve to the bootstrap id (I4), so the
+    // bootstrap must be visible for those rows to stay listable — it
+    // always is for an admin, and for a member whenever the signup
+    // default applies to it (which 0007 guarantees for the CURRENT
+    // backend's bootstrap row). If the store seeded no rows (the fixture
+    // lanes), the registry's own bootstrap id is the whole set.
+    if let Ok(id) = registry.bootstrap_bucket_id() {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
 /// The bucket row for a file's `bucket_id`, resolved from the store's
 /// registry rows; when the store seeds none (the fixture lanes), the
 /// BlobRegistry's id→slug map is the fallback and the row is synthesized

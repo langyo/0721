@@ -188,12 +188,20 @@ impl Store for MemoryStore {
         Ok(inner.users.len() != before)
     }
 
-    async fn list_files(&self, offset: u64, limit: u64) -> Result<Vec<FileRecord>, StoreError> {
+    async fn list_files(
+        &self,
+        buckets: Option<&[Uuid]>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let mut files: Vec<FileRecord> = inner
             .files
             .iter()
-            .filter(|file| file.deleted_at.is_none())
+            .filter(|file| {
+                file.deleted_at.is_none()
+                    && buckets.is_none_or(|set| file.bucket_id.is_none_or(|b| set.contains(&b)))
+            })
             .cloned()
             .collect();
         files.sort_by_key(|file| std::cmp::Reverse(file.created_at));
@@ -221,14 +229,17 @@ impl Store for MemoryStore {
             .count() as u64)
     }
 
-    async fn count_files(&self) -> Result<u64, StoreError> {
+    async fn count_files(&self, buckets: Option<&[Uuid]>) -> Result<u64, StoreError> {
         Ok(self
             .inner
             .lock()
             .map_err(lock_err)?
             .files
             .iter()
-            .filter(|file| file.deleted_at.is_none())
+            .filter(|file| {
+                file.deleted_at.is_none()
+                    && buckets.is_none_or(|set| file.bucket_id.is_none_or(|b| set.contains(&b)))
+            })
             .count() as u64)
     }
 
@@ -738,6 +749,7 @@ impl Store for MemoryStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
     ) -> Result<u64, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let n = inner
@@ -748,6 +760,11 @@ impl Store for MemoryStore {
                     && f.owner_id == owner_id
                     && f.parent_id == parent_id
                     && kind.as_deref().is_none_or(|k| f.kind.as_str() == k)
+                    // §7 pushdown: rows outside the visible set vanish
+                    // from the count (Q14: items AND total shrink).
+                    && buckets.is_none_or(|set| {
+                        f.bucket_id.is_none_or(|b| set.contains(&b))
+                    })
             })
             .count();
         Ok(n as u64)
@@ -758,6 +775,7 @@ impl Store for MemoryStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
         offset: u64,
         limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError> {
@@ -770,6 +788,7 @@ impl Store for MemoryStore {
                     && f.owner_id == owner_id
                     && f.parent_id == parent_id
                     && kind.as_ref().is_none_or(|k| *k == f.kind.as_str())
+                    && buckets.is_none_or(|set| f.bucket_id.is_none_or(|b| set.contains(&b)))
             })
             .cloned()
             .collect();
@@ -1099,7 +1118,7 @@ mod tests {
         let a = store.create_file(new_file(owner.id, "aa")).await.unwrap();
         store.create_file(new_file(owner.id, "bb")).await.unwrap();
 
-        assert_eq!(store.count_files().await.unwrap(), 2);
+        assert_eq!(store.count_files(None).await.unwrap(), 2);
         assert!(
             store.create_file(new_file(owner.id, "aa")).await.is_err(),
             "the same owner's live duplicate hash is rejected"
@@ -1110,7 +1129,7 @@ mod tests {
             !store.soft_delete_file(a.id).await.unwrap(),
             "the guarded update marks 0 rows the second time"
         );
-        assert_eq!(store.count_files().await.unwrap(), 1);
+        assert_eq!(store.count_files(None).await.unwrap(), 1);
         assert!(store.get_file(a.id).await.unwrap().is_none());
         assert!(
             store.create_file(new_file(owner.id, "aa")).await.is_ok(),
@@ -1256,6 +1275,6 @@ mod tests {
         let owner = store.create_user(new_user("u")).await.unwrap();
         store.create_file(new_file(owner.id, "aa")).await.unwrap();
         assert!(store.delete_user(owner.id).await.unwrap());
-        assert_eq!(store.count_files().await.unwrap(), 0);
+        assert_eq!(store.count_files(None).await.unwrap(), 0);
     }
 }

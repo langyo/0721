@@ -3847,6 +3847,7 @@ async fn netdisk_same_layer_duplicate_names_refuse_at_root_and_nested() {
                 .id,
             None,
             None,
+            None,
             0,
             100,
         )
@@ -4754,12 +4755,12 @@ async fn netdisk_memory_list_folder_pagination() {
     }
     let page1 = state
         .store
-        .list_folder(admin_id, None, None, 0, 3)
+        .list_folder(admin_id, None, None, None, 0, 3)
         .await
         .unwrap();
     let page2 = state
         .store
-        .list_folder(admin_id, None, None, 3, 3)
+        .list_folder(admin_id, None, None, None, 3, 3)
         .await
         .unwrap();
     assert_eq!(page1.len(), 3);
@@ -6278,7 +6279,7 @@ async fn mcp_upload_file_refuses_foreign_folder() {
     let folder_id = uuid::Uuid::parse_str(&admin_folder).unwrap();
     let rows = state
         .store
-        .list_folder(admin.id, Some(folder_id), None, 0, 100)
+        .list_folder(admin.id, Some(folder_id), None, None, 0, 100)
         .await
         .unwrap();
     assert!(rows.is_empty(), "the refused upload wrote no row: {rows:?}");
@@ -7951,9 +7952,23 @@ async fn keys_list_reports_ops_and_expiry_in_canonical_order() {
         serde_json::json!(["read", "share"]),
         "an object scopes payload with an extra key still yields its ops: {planted}"
     );
+    // The raw stored payload is never echoed — the list projection is
+    // the PARSED fields only (ops canonical-ordered, buckets parsed and
+    // canonicalized for the「无桶」marker; the stored text itself, with
+    // its out-of-order ops, never survives).
+    assert_eq!(
+        planted["buckets"],
+        serde_json::json!(["b1"]),
+        "the list reports the parsed bucket set, canonicalized: {planted}"
+    );
+    assert_eq!(
+        planted["ops"],
+        serde_json::json!(["read", "share"]),
+        "the ops are re-ordered canonically, not echoed: {planted}"
+    );
     assert!(
-        !serde_json::to_string(&list).unwrap().contains("buckets"),
-        "the raw stored payload is never echoed"
+        planted.get("key_prefix").is_some(),
+        "the projection carries only parsed fields"
     );
 }
 
@@ -8295,13 +8310,17 @@ async fn failing_settings_state() -> AppState {
         }
         async fn list_files(
             &self,
+            b: Option<&[uuid::Uuid]>,
             o: u64,
             l: u64,
         ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
-            self.0.list_files(o, l).await
+            self.0.list_files(b, o, l).await
         }
-        async fn count_files(&self) -> Result<u64, i0721_store::StoreError> {
-            self.0.count_files().await
+        async fn count_files(
+            &self,
+            b: Option<&[uuid::Uuid]>,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_files(b).await
         }
         async fn get_file(
             &self,
@@ -8372,18 +8391,20 @@ async fn failing_settings_state() -> AppState {
             o: uuid::Uuid,
             p: Option<uuid::Uuid>,
             k: Option<String>,
+            b: Option<&[uuid::Uuid]>,
         ) -> Result<u64, i0721_store::StoreError> {
-            self.0.count_folder(o, p, k).await
+            self.0.count_folder(o, p, k, b).await
         }
         async fn list_folder(
             &self,
             o: uuid::Uuid,
             p: Option<uuid::Uuid>,
             k: Option<String>,
+            b: Option<&[uuid::Uuid]>,
             off: u64,
             lim: u64,
         ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
-            self.0.list_folder(o, p, k, off, lim).await
+            self.0.list_folder(o, p, k, b, off, lim).await
         }
         async fn folder_name_taken(
             &self,
@@ -9686,7 +9707,7 @@ async fn upload_through_the_route_refuses_when_no_bucket_can_serve() {
     // (a fallback store would have accepted the bytes and recorded a row).
     let page = state
         .store
-        .count_folder(user_id_of(&state, "admin").await, None, None)
+        .count_folder(user_id_of(&state, "admin").await, None, None, None)
         .await
         .unwrap();
     assert_eq!(page, 0, "the refused upload recorded no file row: {page}");
@@ -9957,6 +9978,161 @@ async fn plant_bucket(
         .expect("the fixture store is the memory store");
     memory.seed_bucket(bucket.clone());
     bucket
+}
+
+/// The stage-A `storage.buckets.list` surface, extended to VISIBILITY
+/// SCOPE: a member gets ONLY their visible buckets (any grant bit or
+/// the signup default), each with a `my_access` projection of their own
+/// bits; the admin keeps every bucket. MUT:B-P2A-LIST-SCOPE — keeping
+/// the admin gate (or dropping the visibility filter) turns the member
+/// arm red; MUT:B-P2A-MY-ACCESS — dropping the `my_access` projection
+/// empties the field and reddens the shape assertion.
+#[tokio::test]
+async fn buckets_list_is_visibility_scoped_with_the_actors_own_bits() {
+    let (state, admin_token) = test_state_with_token().await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "lister".to_owned(),
+            display_name: "lister".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    // A private non-signup bucket the member holds an explicit
+    // read-only row on, plus one the member cannot see at all.
+    plant_bucket(&state, "listed", false, false, true).await;
+    assert!(
+        state
+            .store
+            .get_storage_bucket_by_slug("listed")
+            .await
+            .unwrap()
+            .is_some(),
+        "the planted bucket exists"
+    );
+    let (_status, grant) = rpc(
+        &state,
+        &admin_token,
+        "storage.grants.set",
+        serde_json::json!({"user": member.id, "bucket_slug": "listed", "read": true, "write": false, "share": false}),
+    )
+    .await;
+    assert!(grant.get("error").is_none(), "grant set: {grant}");
+    plant_bucket(&state, "hidden", false, false, true).await;
+
+    // The member sees exactly [bootstrap, listed] — the hidden bucket
+    // (invisible: no row, no signup default) is absent.
+    let (_status, envelope) = rpc(
+        &state,
+        &member_token,
+        "storage.buckets.list",
+        serde_json::Value::Null,
+    )
+    .await;
+    let rows = envelope["result"].as_array().expect("a list: {envelope}");
+    let slugs: Vec<&str> = rows.iter().filter_map(|r| r["slug"].as_str()).collect();
+    assert!(
+        slugs.contains(&"listed") && !slugs.contains(&"hidden"),
+        "the member sees only visible buckets: {slugs:?}"
+    );
+    let listed_row = rows
+        .iter()
+        .find(|r| r["slug"] == "listed")
+        .expect("the granted bucket is listed");
+    assert_eq!(
+        listed_row["my_access"],
+        serde_json::json!({"read": true, "write": false, "share": false}),
+        "my_access is the actor's OWN bits: {listed_row}"
+    );
+    let bootstrap_row = rows
+        .iter()
+        .find(|r| r["slug"] == "bootstrap")
+        .expect("the signup bucket is listed");
+    assert_eq!(
+        bootstrap_row["my_access"],
+        serde_json::json!({"read": true, "write": true, "share": true}),
+        "the signup default reads through: {bootstrap_row}"
+    );
+
+    // The admin still sees every bucket (both planted ones included).
+    let (_status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "storage.buckets.list",
+        serde_json::Value::Null,
+    )
+    .await;
+    let slugs: Vec<&str> = envelope["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["slug"].as_str())
+        .collect();
+    assert!(
+        slugs.contains(&"hidden") && slugs.contains(&"listed"),
+        "the admin sees all buckets: {slugs:?}"
+    );
+}
+
+/// The §7 `files.list` pushdown (Q14 / M3b's landing): an INVISIBLE
+/// bucket slug in the `bucket` param makes rows AND total vanish (never
+/// an error), and a member's own-scope listing stays owner-scoped while
+/// the visible-bucket filter rides INSIDE the store (a post-fetch
+/// filter would leak the count). MUT:B-P2A-LIST-PUSHDOWN — dropping the
+/// store-side filter (or filtering only one of items/total) turns the
+/// total-inequality assertion red.
+#[tokio::test]
+async fn files_list_bucket_param_filters_rows_and_total_together() {
+    let (state, _) = test_state_with_token().await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "pushdown".to_owned(),
+            display_name: "pushdown".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    // One file of the member's in the (signup) bootstrap bucket.
+    let (_, _own) = upload(&state, &member_token, tiny_png(), "mine.png").await;
+
+    // Own scope, no bucket param: the row lists (the signup bucket is
+    // visible through the default).
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.list",
+        serde_json::json!({"scope": "own"}),
+    )
+    .await;
+    let total = envelope["result"]["total"].as_u64().unwrap();
+    assert_eq!(total, 1, "the member's own row lists: {envelope}");
+
+    // An INVISIBLE slug: rows AND total vanish together — HTTP OK, an
+    // empty page (never an error; §7's files.list row).
+    let (_status, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.list",
+        serde_json::json!({"scope": "own", "bucket": "no-such-bucket"}),
+    )
+    .await;
+    assert!(
+        envelope.get("error").is_none(),
+        "an invisible bucket is an empty page, not an error: {envelope}"
+    );
+    let page = &envelope["result"];
+    assert_eq!(page["total"], 0, "the total vanishes: {page}");
+    assert_eq!(
+        page["items"].as_array().unwrap().len(),
+        0,
+        "the rows vanish with it: {page}"
+    );
 }
 
 /// A member reads media from the signup bucket but lists only their OWN
@@ -11421,13 +11597,17 @@ async fn mcp_get_share_link_on_a_store_failure_answers_the_iserror_tool_error() 
         }
         async fn list_files(
             &self,
+            b: Option<&[uuid::Uuid]>,
             o: u64,
             l: u64,
         ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
-            self.0.list_files(o, l).await
+            self.0.list_files(b, o, l).await
         }
-        async fn count_files(&self) -> Result<u64, i0721_store::StoreError> {
-            self.0.count_files().await
+        async fn count_files(
+            &self,
+            b: Option<&[uuid::Uuid]>,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_files(b).await
         }
         async fn get_file(
             &self,
@@ -11501,18 +11681,20 @@ async fn mcp_get_share_link_on_a_store_failure_answers_the_iserror_tool_error() 
             o: uuid::Uuid,
             p: Option<uuid::Uuid>,
             k: Option<String>,
+            b: Option<&[uuid::Uuid]>,
         ) -> Result<u64, i0721_store::StoreError> {
-            self.0.count_folder(o, p, k).await
+            self.0.count_folder(o, p, k, b).await
         }
         async fn list_folder(
             &self,
             o: uuid::Uuid,
             p: Option<uuid::Uuid>,
             k: Option<String>,
+            b: Option<&[uuid::Uuid]>,
             off: u64,
             lim: u64,
         ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
-            self.0.list_folder(o, p, k, off, lim).await
+            self.0.list_folder(o, p, k, b, off, lim).await
         }
         async fn folder_name_taken(
             &self,

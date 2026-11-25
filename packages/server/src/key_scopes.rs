@@ -138,8 +138,11 @@ pub fn ordered_ops(set: &BTreeSet<KeyOp>) -> Vec<KeyOp> {
 pub fn scopes_carry_buckets_array(raw: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(raw)
         .ok()
-        .and_then(|value| value.get("buckets").and_then(serde_json::Value::as_array))
-        .is_some()
+        .is_some_and(|value| {
+            value
+                .get("buckets")
+                .is_some_and(serde_json::Value::is_array)
+        })
 }
 
 /// The `buckets` dimension of a key's scopes (spec Q7): a slug array of

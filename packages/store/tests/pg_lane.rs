@@ -233,7 +233,7 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
         .expect("file b");
 
     // Timeline order: newest first.
-    let page = store.list_files(0, 10).await.expect("list files");
+    let page = store.list_files(None, 0, 10).await.expect("list files");
     let positions: Vec<_> = page
         .iter()
         .filter(|f| f.id == a.id || f.id == b.id)
@@ -575,7 +575,7 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
 
     // All three rows must now have UNIQUE names.
     let files = store
-        .list_folder(user.id, None, None, 0, 100)
+        .list_folder(user.id, None, None, None, 0, 100)
         .await
         .unwrap();
     assert_eq!(files.len(), 3, "all rows live: {files:?}");
@@ -715,7 +715,7 @@ async fn pg_migration_0004_dedupe_survives_three_fold_duplicates() {
     }
 
     let files = store
-        .list_folder(user.id, None, None, 0, 100)
+        .list_folder(user.id, None, None, None, 0, 100)
         .await
         .unwrap();
     assert_eq!(files.len(), 4, "all rows live: {files:?}");
@@ -800,7 +800,7 @@ async fn pg_create_file_honors_parent_id() {
     );
 
     let inside = store
-        .list_folder(user.id, Some(nested.id), None, 0, 10)
+        .list_folder(user.id, Some(nested.id), None, None, 0, 10)
         .await
         .unwrap();
     assert_eq!(inside.len(), 1, "the nested folder lists the file");

@@ -130,10 +130,19 @@ pub trait Store: Send + Sync {
 
     /// List live files by descending upload time (the timeline order),
     /// paged.
-    async fn list_files(&self, offset: u64, limit: u64) -> Result<Vec<FileRecord>, StoreError>;
+    /// Every live file, newest first (the admin timeline). `buckets` is
+    /// the §7 pushdown (`None` = unfiltered; the timeline lane pushes
+    /// the caller's visible set — for an admin that is every bucket).
+    async fn list_files(
+        &self,
+        buckets: Option<&[Uuid]>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError>;
 
-    /// Count live files.
-    async fn count_files(&self) -> Result<u64, StoreError>;
+    /// Count every live file (the timeline's total). `buckets` mirrors
+    /// [`Store::list_files`] so the count and the rows shrink together.
+    async fn count_files(&self, buckets: Option<&[Uuid]>) -> Result<u64, StoreError>;
 
     /// Fetch one live file by id.
     async fn get_file(&self, id: Uuid) -> Result<Option<FileRecord>, StoreError>;
@@ -220,20 +229,27 @@ pub trait Store: Send + Sync {
     // ── netdisk: scoped listing, folders, moves, shares, quota ──────
 
     /// Count the live rows in a folder listing without fetching them.
+    /// `buckets` is the §7 pushdown (Q14): the caller's VISIBLE bucket
+    /// set (`None` = unfiltered — only the lanes that never carry bucket
+    /// semantics use it); rows outside the set vanish from the count.
     async fn count_folder(
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
     ) -> Result<u64, StoreError>;
 
     /// List one folder's live children (own-tree scope): the caller's
-    /// files whose parent is `parent_id` (None = root).
+    /// files whose parent is `parent_id` (None = root), filtered by the
+    /// same §7 visible-bucket pushdown as [`Store::count_folder`] —
+    /// items AND the total must shrink together.
     async fn list_folder(
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
         offset: u64,
         limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError>;
