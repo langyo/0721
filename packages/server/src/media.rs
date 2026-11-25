@@ -336,6 +336,12 @@ pub async fn download(
             out
         }
     };
+    // R-J: the serving row is the first by `id ASC` WITHIN
+    // authorized_rows — the set's construction order (witnesses first)
+    // must not decide; the id does.
+    let mut authorized = authorized;
+    authorized.sort_by_key(|row| row.id);
+    authorized.dedup();
     let face = if let Some(row) = serving_row(&state, &authorized).await {
         Face::Serve(row.id)
     } else if matches!(actor, MediaActor::Anonymous) {
