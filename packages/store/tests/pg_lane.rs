@@ -909,6 +909,8 @@ async fn pg_api_key_scopes_round_trip_and_reject_garbage() {
 /// against a hand-planted legacy shape, so the test does not depend on
 /// which migration version the scratch database is at), and the new
 /// `expires_at` column writes and reads back.
+/// MUT:M8 — gutting the shared SQL's WHERE turns this test red: it is that
+/// SQL the lane exercises, not the migration runner's state.
 #[tokio::test]
 async fn pg_api_key_legacy_scopes_normalize_and_expiry_round_trips() {
     let Some(store) = db().await else { return };
@@ -962,6 +964,8 @@ async fn pg_api_key_legacy_scopes_normalize_and_expiry_round_trips() {
 
     // Re-running is a no-op for an already-normalized row (the test is
     // re-runnable), and a populated shape is never widened.
+    // MUT:M8 — the same gutted WHERE is caught by the assertion
+    // "an already-normalized row keeps its ops".
     let populated = format!("hash{}", uuid::Uuid::new_v4().simple());
     let granted = store
         .create_api_key(&i0721_proto::ApiKeyRecord {

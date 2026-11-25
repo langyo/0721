@@ -33,6 +33,7 @@ describe("canonicalOps", () => {
     // The literal array is the runtime mirror of `KeyOp`; a variant added
     // to the generated type without landing here would silently never be
     // selectable in the dialog.
+    // MUT:M17 — dropping an op from KEY_OPS turns both tests red.
     expect(KEY_OPS).toEqual(["read", "upload", "share"]);
   });
 });
@@ -59,6 +60,7 @@ describe("fieldToInstant", () => {
 
   it("maps an empty field to undefined (no expiry)", () => {
     // This is the whole "clear the expiry" lane: absent, never "".
+    // MUT:M18 — an empty field that invents a date turns this test red.
     expect(fieldToInstant("")).toBeUndefined();
     expect(fieldToInstant("   ")).toBeUndefined();
   });
@@ -68,6 +70,7 @@ describe("fieldToInstant", () => {
     expect(fieldToInstant("2027-03-04")).toBeUndefined();
     // The `Date` constructor ROLLS OVER out-of-range parts; a typo must
     // not silently become a different expiry the user never chose.
+    // MUT:M19 — removing both rollover guards turns this test red.
     expect(fieldToInstant("2027-03-04T99:99")).toBeUndefined();
     expect(fieldToInstant("2027-02-31T10:00")).toBeUndefined();
     expect(fieldToInstant("2027-13-01T10:00")).toBeUndefined();

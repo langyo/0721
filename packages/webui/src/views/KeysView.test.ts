@@ -29,7 +29,10 @@ import { defineComponent, h } from "vue";
  *
  * A key now carries `ops` (read / upload / share, at least one) and an
  * optional `expires_at`, and the create/edit dialogs are one form. What
- * these cases pin:
+ * these cases pin (the proof of each bullet is a mutation that turns its
+ * test red; the rows are in the PR's mutation table: M9 payload,
+ * M20 / M21 / M11 roster, M12 no-permission tag, M14 edit clears the
+ * expiry, M22 refusal message):
  *  - the create payload carries EXACTLY the toggled ops (in canonical
  *    order) and the expiry, and cannot be submitted with no permission or
  *    a blank name;
@@ -47,6 +50,8 @@ import { defineComponent, h } from "vue";
  * in-page notices), and the copy-once card is the create window's SECOND
  * step — the minted key appears inside the dialog where the action
  * happened, never as a block grown at the top of the page.
+ * MUT:M24 — a copy-once card grown at the top of the page turns the
+ * clipboard tests red.
  */
 
 /** Every mounted toast outlet — cleanup owns their lifetime. */
@@ -101,6 +106,7 @@ function keyRow(overrides: Partial<ApiKeyPublic> = {}): ApiKeyPublic {
     key_prefix: "i0721-abcd",
     ops: ["read"],
     // Note: no `expires_at` at all — the "never expires" shape.
+    // MUT:M21 — blanking the "never expires" text turns the roster test red.
     expired: false,
     last_used_at: undefined,
     revoked_at: undefined,
@@ -545,6 +551,7 @@ describe("KeysView roster columns (permissions + expiry)", () => {
     const future = new Date(Date.now() + 365 * 24 * 3600_000).toISOString();
     listKeysMock.mockResolvedValue([
       // A past instant the server does NOT flag: must NOT show the tag.
+      // MUT:M11 — deriving the tag from the browser clock shows it here.
       keyRow({ id: "k1", name: "live", ops: ["read"], expires_at: past, expired: false }),
       // A future instant the server DOES flag: must show the tag.
       keyRow({ id: "k2", name: "dead", ops: ["read"], expires_at: future, expired: true }),
@@ -566,6 +573,7 @@ describe("KeysView roster columns (permissions + expiry)", () => {
     // EMPTY permission set, so this is the common state right after the
     // upgrade — and such a key can do nothing on the MCP surface. It must
     // read as a loud, actionable state, never as a blank cell.
+    // MUT:M12 — inverting or removing the tag condition turns this test red.
     listKeysMock.mockResolvedValue([
       keyRow({ id: "legacy", name: "legacy", ops: [] }),
       keyRow({ id: "granted", name: "granted", ops: ["read"] }),
@@ -639,6 +647,14 @@ describe("KeysView edit flow", () => {
     await clickTestId("edit-key-k1");
     // The form opens PRE-FILLED from the row.
     expect((byTestId("edit-key-name") as HTMLInputElement).value).toBe("agent");
+    // No credential WHILE THE DIALOG IS OPEN — the only place it could be
+    // invented: the key is stored hashed, so an edit dialog has no plaintext
+    // to show and must not dress the masked prefix up as one. Checked HERE,
+    // not only after Save: a successful save closes the dialog, so a later
+    // query finds nothing regardless of what the dialog rendered.
+    // MUT:M23
+    expect(document.querySelector("[data-testid='plaintext-key']")).toBeNull();
+    expect(document.querySelector("[data-testid='copy-once-card']")).toBeNull();
     const expiryField = byTestId("edit-key-expiry") as HTMLInputElement;
     expect(expiryField.getAttribute("type")).toBe("datetime-local");
     // The stored UTC instant, re-read as the user's LOCAL wall clock (the
@@ -666,8 +682,9 @@ describe("KeysView edit flow", () => {
     expect(new Date(payload.expires_at!).getTime()).toBe(
       new Date(localFieldValue(72)).getTime(),
     );
-    // No credential anywhere: the key is stored hashed and the dialog
-    // does not invent one.
+    // No credential anywhere after the save either — the same invariant as
+    // the pre-save check above (which is the half that can actually catch a
+    // dialog that invents one). MUT:M23
     expect(document.querySelector("[data-testid='plaintext-key']")).toBeNull();
     expect(document.querySelector("[data-testid='copy-once-card']")).toBeNull();
     // Success is a toast on this view's own slot.
@@ -679,6 +696,7 @@ describe("KeysView edit flow", () => {
     // The way to say "this key never expires again": submit the record
     // with no `expires_at` at all. The server reads an absent field as
     // "no expiry", so the payload must DROP the key rather than send "".
+    // MUT:M14 — sending "" when the field is emptied turns this test red.
     listKeysMock.mockResolvedValue([
       keyRow({ id: "k1", name: "agent", ops: ["read"], expires_at: "2027-01-02T03:04:00Z" }),
     ]);
@@ -747,6 +765,7 @@ describe("KeysView edit flow", () => {
   it("falls back to a non-empty message for a message-less rejection", async () => {
     // `errorText`'s never-empty contract: a rejection carrying nothing
     // must still raise a toast (the shared factory's fallback).
+    // MUT:M22 — toasting the raw (empty) rejection message turns this test red.
     listKeysMock.mockResolvedValue([keyRow({ id: "k1", name: "agent", ops: ["read"] })]);
     updateKeyMock.mockRejectedValue(undefined);
     const wrapper = mountView();

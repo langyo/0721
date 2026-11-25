@@ -7725,6 +7725,7 @@ async fn keys_update_is_owner_or_admin_and_replaces_the_whole_record() {
         "the admin replaced the foreign key's expiry: {after}"
     );
     // ...and the admin's own list still does not describe it as theirs.
+    // MUT:M15 — a store whose list ignores the owner turns this assertion red.
     let (_, admin_list) = rpc(&state, &admin_token, "keys.list", serde_json::Value::Null).await;
     assert!(
         !admin_list["result"]
@@ -7820,6 +7821,8 @@ async fn keys_update_is_owner_or_admin_and_replaces_the_whole_record() {
 /// ⑨ `keys.list` reports the new fields and the canonical op order,
 /// whatever shape the stored row has (a legacy or hand-written scopes
 /// payload is parsed, never echoed).
+/// MUT:M16 — a list lane that answers every row with the full op set
+/// turns this test red.
 #[tokio::test]
 async fn keys_list_reports_ops_and_expiry_in_canonical_order() {
     let (state, token) = test_state_with_token().await;
