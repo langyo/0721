@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::{CreateUser, Store, StoreError};
 use i0721_proto::ShareRecord;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Inner {
     users: Vec<UserRecord>,
     files: Vec<FileRecord>,
@@ -36,6 +36,23 @@ struct Inner {
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     inner: Mutex<Inner>,
+}
+
+// A snapshot Clone for test fixtures: a cloned handle starts from the
+// SAME rows the original held at clone time (a wrapper mock wrapping a
+// cloned handle sees the rows the fixture seeded through the original;
+// later writes diverge, which is what a fixture wants).
+impl Clone for MemoryStore {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Mutex::new(
+                self.inner
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            ),
+        }
+    }
 }
 
 impl MemoryStore {

@@ -312,6 +312,27 @@ mod tests {
         assert_eq!(granted, ["open".to_owned()].into());
     }
 
+    /// MUT:R-A-ADMIN-SET — `granted_buckets` answering SIGNUP-ONLY
+    /// buckets for admin (losing the non-signup ones) turns this red.
+    /// The admin arm is ALL buckets: a bucket no signup default and no
+    /// grant row covers must still be in the set (the `keys.create`
+    /// materialization source and the R-T snapshot oracle both consume
+    /// this function).
+    #[tokio::test]
+    async fn granted_buckets_admin_covers_non_signup_buckets() {
+        let memory = i0721_store::MemoryStore::new();
+        memory.seed_bucket(bucket("open", true));
+        memory.seed_bucket(bucket("private", false));
+        let store: Arc<dyn Store> = Arc::new(memory);
+        let admin = user(&store, Role::Admin).await;
+        let granted = granted_buckets(&store, &admin).await.unwrap();
+        assert_eq!(
+            granted,
+            ["open".to_owned(), "private".to_owned()].into(),
+            "admin's set covers EVERY bucket, signup-open or not"
+        );
+    }
+
     /// `revoking_access_writes_an_explicit_deny_row`: the grant surface
     /// writes the all-false ROW (no row deletion exists), and that row
     /// is what keeps the access off even on a signup bucket.
