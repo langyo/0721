@@ -16,7 +16,6 @@ vi.mock("@/api", () => ({
 const listBucketsMock = vi.fn();
 vi.mock("@/api/buckets", () => ({
   listBuckets: (...args: unknown[]) => listBucketsMock(...args),
-  readableBuckets: (rows: unknown[]) => rows,
 }));
 
 import KeysView from "./KeysView";
@@ -939,6 +938,10 @@ describe("KeysView bucket picker (Q7)", () => {
     await flushPromises();
     expect(byTestId("key-no-buckets-legacy")).not.toBeNull();
     expect(byTestId("key-no-buckets-legacy").textContent).toContain("no buckets");
+    // MUT:p2a-key-no-buckets-marker — the sharper half of the pin: when
+    // the marker shows, the row's bucket LIST span must be absent (the
+    // blank-row mutant survives an assertion on the marker alone).
+    expect(document.querySelector('[data-testid="key-buckets-legacy"]')).toBeNull();
     wrapper.unmount();
   });
 

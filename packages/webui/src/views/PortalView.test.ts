@@ -15,7 +15,6 @@ vi.mock("@/api", () => ({
 const listBucketsMock = vi.fn();
 vi.mock("@/api/buckets", () => ({
   listBuckets: (...args: unknown[]) => listBucketsMock(...args),
-  readableBuckets: (rows: unknown[]) => rows,
 }));
 
 import PortalView from "./PortalView";

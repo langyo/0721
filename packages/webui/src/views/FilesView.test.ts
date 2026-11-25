@@ -31,7 +31,6 @@ vi.mock("@/api", () => ({
 const listBucketsMock = vi.fn().mockResolvedValue({ buckets: [] });
 vi.mock("@/api/buckets", () => ({
   listBuckets: (...a: unknown[]) => listBucketsMock(...a),
-  readableBuckets: (rows: unknown[]) => rows,
 }));
 vi.mock("@/api/files", () => ({
   listFolder: (...a: unknown[]) => listFolderMock(...a),

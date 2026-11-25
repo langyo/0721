@@ -35,7 +35,6 @@ vi.mock("@/api/buckets", () => ({
   getDefaultBucket: (...a: unknown[]) => getDefaultBucketMock(...a),
   setDefaultBucket: (...a: unknown[]) => setDefaultBucketMock(...a),
   setGrant: (...a: unknown[]) => setGrantMock(...a),
-  readableBuckets: (rows: unknown[]) => rows,
 }));
 vi.mock("@/api", () => ({
   listUsers: (...a: unknown[]) => listUsersMock(...a),

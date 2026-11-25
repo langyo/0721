@@ -34,12 +34,6 @@ export interface BucketListResponse {
   buckets: StorageBucket[];
 }
 
-/** The actor's readable buckets: visible (Q14 any-bit) but without the
- *  read bit — these stay in the selectors marked「无读取权限」. */
-export function readableBuckets(rows: StorageBucket[]): StorageBucket[] {
-  return rows.filter((b) => b.my_access?.read === true);
-}
-
 export function listBuckets(): Promise<BucketListResponse> {
   return wsCall<BucketListResponse>("storage.buckets.list");
 }
