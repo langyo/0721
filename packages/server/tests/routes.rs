@@ -9277,3 +9277,188 @@ async fn reclaim_refcounts_are_per_bucket() {
         "the thumbnail refcount is per bucket too"
     );
 }
+
+/// The R-J serving-row rule when the bootstrap bucket CANNOT serve: the
+/// serving row must come from a Ready bucket and every byte must come
+/// from THAT bucket. Fixture: the bootstrap bucket is Disabled, a second
+/// bucket is Ready and holds DIFFERENT bytes at the same key, and the
+/// disabled row is forced to sort FIRST by `id ASC` — so a fallback to
+/// `rows.first()`, a "wrong store" read, or a predicate that ignores
+/// readiness all change the observable answer.
+/// MUT:M-A8 / MUT:M-A3 / MUT:M-A11 drive those three wrong shapes.
+#[tokio::test]
+async fn media_serves_from_the_first_ready_row_not_the_bootstrap_bucket() {
+    let (base_state, _admin) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    let (status, dto) = upload(&base_state, &token, tiny_png(), "served.png").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let bootstrap_bytes = base_state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the bootstrap store holds the uploaded bytes");
+
+    // Bootstrap Disabled, satellite Ready with its own store.
+    let (state, second_id, second_store) = plant_second_bucket(&base_state, "satellite", false);
+    let satellite_bytes = b"satellite-bucket-bytes-not-the-bootstrap-ones".to_vec();
+    second_store
+        .put(i0721_server::blob::BlobSlot::Media, &key, &satellite_bytes)
+        .await
+        .unwrap();
+
+    // The satellite row: same key, born in the Ready bucket.
+    let owner = state
+        .store
+        .create_user(CreateUser {
+            username: "satellite-owner".to_owned(),
+            display_name: "Satellite".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let satellite_row = state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: Some(second_id),
+            parent_id: None,
+            owner_id: owner.id,
+            name: "satellite.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: satellite_bytes.len() as i64,
+            sha256: key.clone(),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: "satellite.png".to_owned(),
+        })
+        .await
+        .unwrap();
+
+    // Force the DISABLED (bootstrap) rows to sort first: the uploaded row
+    // already sorts by its own id, so add bootstrap-bucket rows with the
+    // same key until one has a SMALLER id than the satellite row. A
+    // `rows.first()` fallback then hits a bucket that cannot serve.
+    let mut smallest: Option<uuid::Uuid> = None;
+    for attempt in 0..64 {
+        // The `(owner, sha256)` live-unique index forbids a second row for
+        // the same content under one owner, so every probe row gets its own
+        // account (a deleted owner would cascade the row away).
+        let probe_owner = state
+            .store
+            .create_user(CreateUser {
+                username: format!("probe-{attempt}"),
+                display_name: format!("Probe {attempt}"),
+                role: Role::Member,
+                password_hash: None,
+            })
+            .await
+            .unwrap();
+        let probe = state
+            .store
+            .create_file(i0721_proto::NewFile {
+                bucket_id: Some(state.registry.bootstrap_bucket_id().unwrap()),
+                parent_id: None,
+                owner_id: probe_owner.id,
+                name: format!("bootstrap-probe-{attempt}.png"),
+                kind: i0721_proto::FileKind::Image,
+                mime: "image/webp".to_owned(),
+                size: bootstrap_bytes.len() as i64,
+                sha256: key.clone(),
+                storage_backend: "local".to_owned(),
+                storage_key: key.clone(),
+                thumbnail_key: None,
+                original_name: "probe.png".to_owned(),
+            })
+            .await
+            .unwrap();
+        smallest = Some(smallest.map_or(probe.id, |current| current.min(probe.id)));
+        if smallest.is_some_and(|id| id < satellite_row.id) {
+            break;
+        }
+    }
+    assert!(
+        smallest.is_some_and(|id| id < satellite_row.id),
+        "fixture: a disabled row must sort before the satellite row"
+    );
+
+    // Correct behaviour: 200 with the SATELLITE bucket's bytes.
+    let response = ServiceExt::oneshot(
+        app(&state),
+        Request::builder()
+            .uri(format!("/media/{key}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a Ready bucket holds the key, so the media is served"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        satellite_bytes.as_slice(),
+        "the bytes come from the SERVING row's bucket (the Ready one), not the disabled bootstrap store"
+    );
+    assert_ne!(
+        body.as_ref(),
+        bootstrap_bytes.as_ref(),
+        "and certainly not from the bucket that cannot serve"
+    );
+}
+
+/// The no-fallback upload guard must hold on the REAL request path, not
+/// only when the resolver is called directly: with the bootstrap bucket
+/// Disabled, `POST /api/v1/files` must refuse and no store may receive
+/// the bytes (a fallback to a fresh in-memory store would silently accept
+/// the upload into a bucket that is not registered).
+/// MUT:M-B5 introduces exactly that fallback.
+#[tokio::test]
+async fn upload_through_the_route_refuses_when_no_bucket_can_serve() {
+    let (base_state, _admin) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    // Bootstrap Disabled; the satellite bucket exists but is Ready for a
+    // DIFFERENT purpose — the resolver must not silently pick it either,
+    // so the fixture keeps it out of the upload path by disabling nothing
+    // else: the resolved target is the bootstrap bucket, which cannot
+    // serve.
+    let (state, _second_id, second_store) = plant_second_bucket(&base_state, "satellite", false);
+    let (status, body) = upload(&state, &token, tiny_png(), "refused.png").await;
+    assert!(
+        !status.is_success(),
+        "an upload with no usable bucket is an error, not a fallback: {status} {body}"
+    );
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "the resolver failure surfaces as a server error (the bucket cannot serve)"
+    );
+    // Nothing was written: the account has no file rows after the refusal
+    // (a fallback store would have accepted the bytes and recorded a row).
+    let page = state
+        .store
+        .count_folder(user_id_of(&state, "admin").await, None, None)
+        .await
+        .unwrap();
+    assert_eq!(page, 0, "the refused upload recorded no file row: {page}");
+    let _ = &second_store;
+}
+
+/// The admin account's id (the upload test needs it to count rows).
+async fn user_id_of(state: &AppState, username: &str) -> uuid::Uuid {
+    state
+        .store
+        .get_user_by_username(username)
+        .await
+        .unwrap()
+        .expect("the seeded admin exists")
+        .id
+}

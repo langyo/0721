@@ -1899,3 +1899,92 @@ async fn pg_0007_seats_the_bootstrap_bucket_with_its_identity_fields() {
     assert_eq!(bootstrap.endpoint_ref, "legacy_local_env");
     assert_eq!(bootstrap.location, "i0721-bwave-lane");
 }
+/// The PG-side cross-bucket guard: `set_parent` must refuse a folder in
+/// another bucket on the REAL store, not only in the in-memory one.
+/// MUT:M-A2a / MUT:M-A2b / MUT:M-A2c drive the wrong PG shapes (root
+/// escape / always-allow / inverted comparison).
+#[tokio::test]
+async fn pg_set_parent_refuses_a_cross_bucket_parent() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let buckets = store.list_storage_buckets().await.unwrap();
+    let local = buckets
+        .iter()
+        .find(|b| b.slug == "bootstrap-local")
+        .expect("the lane's bootstrap bucket");
+    // A second bucket row, inserted directly (P2a's RPC is not in this
+    // slice) — the guard cares about ids, not about the RPC that made it.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
+                   endpoint_ref, anonymous_read, grant_on_signup, enabled, is_bootstrap) \
+                   VALUES (gen_random_uuid(), $1, 'other', 'local', 'other-root', \
+                   'legacy_local_env', FALSE, FALSE, TRUE, FALSE)"
+                .to_owned(),
+            params: vec![lacrymira::Value::Text(format!(
+                "bwave-other-{}",
+                uuid::Uuid::new_v4().simple()
+            ))],
+        })
+        .await
+        .unwrap();
+    let other_slug: String = {
+        let reply = store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "SELECT slug FROM storage_buckets WHERE display_name = 'other' \
+                       ORDER BY created_at DESC LIMIT 1"
+                    .to_owned(),
+                params: vec![],
+            })
+            .await
+            .unwrap();
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("rows expected");
+        };
+        match &rows[0][0] {
+            lacrymira::Value::Text(text) => text.clone(),
+            other => panic!("text expected, got {other:?}"),
+        }
+    };
+    let other = store
+        .get_storage_bucket_by_slug(&other_slug)
+        .await
+        .unwrap()
+        .expect("the second bucket row");
+
+    let folder_a = store
+        .create_folder(user.id, None, "in-local", Some(local.id))
+        .await
+        .expect("folder in the local bucket");
+    let folder_b = store
+        .create_folder(user.id, None, "in-other", Some(other.id))
+        .await
+        .expect("folder in the other bucket");
+    let child = store
+        .create_folder(user.id, Some(folder_a.id), "child", Some(local.id))
+        .await
+        .expect("child in the local bucket");
+
+    // Cross-bucket: refused, and the row's parent stays where it was.
+    let refused = store.set_parent(child.id, Some(folder_b.id)).await;
+    assert!(
+        refused.is_err(),
+        "a cross-bucket parent is refused by the store guard: {refused:?}"
+    );
+    // Same-bucket: allowed.
+    store
+        .set_parent(child.id, Some(folder_a.id))
+        .await
+        .expect("a same-bucket parent is fine");
+    // Root (None) is always allowed.
+    store
+        .set_parent(child.id, None)
+        .await
+        .expect("moving to the root is always fine");
+
+    cleanup_user(&store, user.id).await;
+}

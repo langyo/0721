@@ -634,14 +634,18 @@ impl Store for MemoryStore {
             .find(|f| f.id == id && f.deleted_at.is_none())
             .map(|f| f.bucket_id)
             .ok_or_else(|| conflict("file not found".to_owned()))?;
-        let parent_bucket = parent_id.and_then(|pid| {
-            inner
+        let parent_bucket = match parent_id {
+            Some(pid) => inner
                 .files
                 .iter()
                 .find(|f| f.id == pid && f.deleted_at.is_none())
                 .map(|f| f.bucket_id)
-        });
-        if parent_bucket != Some(row_bucket) {
+                .ok_or_else(|| conflict("the target folder does not exist".to_owned()))?,
+            // Root: the tree is per bucket, so a row moved to its own
+            // root keeps the bucket it already lives in.
+            None => row_bucket,
+        };
+        if parent_bucket != row_bucket {
             return Err(conflict(
                 "cannot move a row into a folder in another bucket".to_owned(),
             ));
