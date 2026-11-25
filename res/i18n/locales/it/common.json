@@ -35,11 +35,12 @@
     "failed": "Nome utente o password non validi",
     "passwordDisabled": "L'accesso con password è disabilitato — scegli un altro canale.",
     "noMethods": "Nessun metodo di accesso disponibile: un amministratore deve attivare un provider o il login con password.",
-    "passwordChannel": "Password",
+    "accountChannel": "Account",
     "submit": "Accedi",
     "celestiaChannel": "Celestia ID",
     "ssoChannel": "Accesso unico",
-    "orContinue": "oppure continua con"
+    "orContinue": "oppure continua con",
+    "orProvider": "oppure continua con un metodo collegato"
   },
   "portal": {
     "title": "Immagini",

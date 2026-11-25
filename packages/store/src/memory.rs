@@ -370,6 +370,22 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn oauth_providers_for_user(&self, user_id: Uuid) -> Result<Vec<String>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let mut providers: Vec<String> = inner
+            .oauth_identities
+            .iter()
+            .filter(|(_, _, id)| *id == user_id)
+            .map(|(provider, _, _)| provider.clone())
+            .collect();
+        // Two subjects of one provider are two rows but ONE method: the
+        // fact the caller wants is "this provider is bound", not how many
+        // identities it holds.
+        providers.sort();
+        providers.dedup();
+        Ok(providers)
+    }
+
     async fn count_live_files_by_thumbnail_key(
         &self,
         bucket_id: Option<Uuid>,

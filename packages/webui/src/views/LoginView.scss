@@ -23,6 +23,18 @@
     width: min(24rem, 100%);
   }
 
+  // The verify step's remaining sign-in paths (the account's linked
+  // providers). They ride HkLoginFlow's `below` slot — outside the step
+  // transition — so they keep the card's own rhythm: the same gap the
+  // card uses between its blocks, no extra framing (HkAuthChannelList
+  // rows already carry their own borders).
+  .login-verify-alternatives {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
   .login-footer {
     display: flex;
     align-items: center;

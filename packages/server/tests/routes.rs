@@ -8219,6 +8219,12 @@ async fn health_reports_unreadable_settings_instead_of_default() {
         ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
             self.0.get_user_by_username(u).await
         }
+        async fn oauth_providers_for_user(
+            &self,
+            user_id: uuid::Uuid,
+        ) -> Result<Vec<String>, i0721_store::StoreError> {
+            self.0.oauth_providers_for_user(user_id).await
+        }
         async fn create_user(
             &self,
             u: i0721_store::CreateUser,
@@ -8497,6 +8503,35 @@ async fn health_reports_unreadable_settings_instead_of_default() {
         "a store read failure is its OWN state, never 'default': {json}"
     );
     assert!(json["buckets"].is_array(), "{json}");
+}
+// ── the account-first ladder's discovery endpoint ──────────────────────
+
+/// A raw `POST /api/v1/auth/account-methods` — status plus the decoded
+/// body (the error document is a body too: a parity check must be able to
+/// compare REFUSALS, not only answers).
+async fn account_methods_raw(
+    state: &AppState,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/account-methods")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+    )
 }
 
 /// `legacy_backend_rows_are_disabled_and_explained_in_health`: a
@@ -9461,4 +9496,201 @@ async fn user_id_of(state: &AppState, username: &str) -> uuid::Uuid {
         .unwrap()
         .expect("the seeded admin exists")
         .id
+}
+
+async fn account_methods(state: &AppState, username: &str) -> serde_json::Value {
+    let (status, json) =
+        account_methods_raw(state, serde_json::json!({ "username": username })).await;
+    assert_eq!(status, StatusCode::OK, "unexpected refusal: {json}");
+    json
+}
+
+/// Plant a member account directly (the ladder probes any name).
+async fn plant_member(state: &AppState, username: &str, password: Option<&str>) -> uuid::Uuid {
+    let hash = password.map(|plain| hash_password(plain).unwrap());
+    state
+        .store
+        .create_user(CreateUser {
+            username: username.to_owned(),
+            display_name: username.to_owned(),
+            role: Role::Member,
+            password_hash: hash,
+        })
+        .await
+        .unwrap()
+        .id
+}
+
+/// The anti-enumeration pin, at the HTTP layer where an attacker reads:
+/// an unknown name and a password-carrying account must be the SAME
+/// response — same status, same body — with one erp provider registered
+/// (so a naive "join the global provider list" implementation would show
+/// the difference immediately).
+#[tokio::test]
+async fn account_methods_answers_unknown_names_exactly_like_password_accounts() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    let _known = plant_member(&state, "known", Some("known-password")).await;
+
+    let unknown = account_methods(&state, "no-such-account-at-all").await;
+    let known = account_methods(&state, "known").await;
+    assert_eq!(
+        unknown, known,
+        "MUT:enumeration-parity — the two documents must be identical"
+    );
+    assert_eq!(
+        unknown,
+        serde_json::json!({
+            "factors": [{"kind": "password"}],
+            "password": true,
+        }),
+        "and both must be the documented password-account shape"
+    );
+
+    // The same name in another case / with padding is still "unknown" and
+    // still answers the same shape (no case-insensitive oracle).
+    assert_eq!(account_methods(&state, "KNOWN").await, unknown);
+    assert_eq!(
+        account_methods(&state, "  no-such-account-at-all  ").await,
+        unknown
+    );
+}
+
+/// An OAuth-only account (NULL password hash, one linked identity)
+/// announces exactly its provider — and keeps the deployment-level
+/// `password` flag, which is the same for every caller.
+#[tokio::test]
+async fn account_methods_lists_the_linked_providers_of_a_passwordless_account() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    let id = plant_member(&state, "sso-only", None).await;
+    state
+        .store
+        .link_oauth_identity("stub", "subject-1", id)
+        .await
+        .unwrap();
+
+    let json = account_methods(&state, "sso-only").await;
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "factors": [{"kind": "oauth", "provider": "stub", "label": "Stub SSO"}],
+            "password": true,
+        }),
+        "no password hash → no password factor, whatever the switch says"
+    );
+
+    // A password account with the SAME link announces both — the ladder's
+    // "pick any one of these" list, password first.
+    let both = plant_member(&state, "both", Some("both-password")).await;
+    state
+        .store
+        .link_oauth_identity("stub", "subject-2", both)
+        .await
+        .unwrap();
+    assert_eq!(
+        account_methods(&state, "both").await["factors"],
+        serde_json::json!([
+            {"kind": "password"},
+            {"kind": "oauth", "provider": "stub", "label": "Stub SSO"},
+        ])
+    );
+}
+
+/// A disabled provider must not be offered: its row is filtered out of the
+/// label ORACLE as well, so a linked-but-disabled identity names itself by
+/// id and the flow entry refuses — the same treatment the login page gets.
+#[tokio::test]
+async fn account_methods_never_labels_a_disabled_provider() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    // Disable the stub row.
+    let mut rows = state
+        .store
+        .get_setting("oauth_providers")
+        .await
+        .unwrap()
+        .unwrap();
+    rows[0]["enabled"] = serde_json::json!(false);
+    state
+        .store
+        .set_setting("oauth_providers", rows)
+        .await
+        .unwrap();
+
+    let id = plant_member(&state, "sso-only", None).await;
+    state
+        .store
+        .link_oauth_identity("stub", "subject-1", id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        account_methods(&state, "sso-only").await["factors"],
+        serde_json::json!([{"kind": "oauth", "provider": "stub", "label": "stub"}]),
+        "the account's real option survives, but a disabled row never \
+         supplies its display name"
+    );
+}
+
+/// The kill-switch turns the password factor off deployment-wide — and it
+/// is the ONLY thing that changes between two accounts, so the shape stays
+/// a function of the DEPLOYMENT, never of the name.
+#[tokio::test]
+async fn account_methods_password_switch_only_changes_the_password_factor() {
+    let (state, _stub, _base, admin) = oauth_test_state_with_stub().await;
+    let _known = plant_member(&state, "known", Some("known-password")).await;
+    let admin_token = state.signer.sign(admin.id, Timestamp::now());
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "auth.password.put",
+        serde_json::json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+
+    let known = account_methods(&state, "known").await;
+    let unknown = account_methods(&state, "ghost").await;
+    assert_eq!(
+        known, unknown,
+        "still indistinguishable with the switch off"
+    );
+    assert_eq!(
+        known,
+        serde_json::json!({"factors": [{"kind": "password"}], "password": false}),
+        "the baseline survives the switch (an empty list would become the \
+         one shape that means 'no such account')"
+    );
+}
+
+/// The endpoint is a public guess surface: it shares the login budget, so
+/// six probes from one address are refused — and the refusal is the same
+/// for a known and an unknown name (a difference would itself be an
+/// oracle).
+#[tokio::test]
+async fn account_methods_shares_the_per_ip_login_budget() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    let _known = plant_member(&state, "known", Some("known-password")).await;
+
+    for _ in 0..i0721_server::auth::LOGIN_ATTEMPT_LIMIT {
+        let (status, json) =
+            account_methods_raw(&state, serde_json::json!({"username": "known"})).await;
+        assert_eq!(status, StatusCode::OK, "{json}");
+    }
+    let (status, refused_known) =
+        account_methods_raw(&state, serde_json::json!({"username": "known"})).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let (status, refused_unknown) =
+        account_methods_raw(&state, serde_json::json!({"username": "ghost"})).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        refused_known, refused_unknown,
+        "the 429 document must not differ by name either"
+    );
+
+    // The budget is the LOGIN budget: a login attempt from the same
+    // address is refused too (one shared log, not a second allowance).
+    let response = app(&state)
+        .oneshot(login_request("known", "known-password"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 }

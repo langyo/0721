@@ -141,7 +141,17 @@ describe("TimelineView (master-detail)", () => {
   it("on a narrow viewport the pane is a drawer that only exists while open", async () => {
     // The family contract: below the split the roster owns the full
     // width and the detail mounts ONLY while a detail is open.
-    window.innerWidth = 800;
+    // MUT:setup-timing — set the width BEFORE any component instance
+    // exists. `useBreakpoint` reads `window.innerWidth` at SETUP, so a
+    // width assigned after the mount never reaches the split (the
+    // harness's own resize listener only re-reads on a real resize
+    // event). Nothing may mount between this line and `mountTimeline`.
+    //
+    // 700, not 800: hikari 0.55.488 moved HkMasterDetail's default
+    // `splitAt` from **1100** to **768** (the family phone breakpoint), so
+    // the narrow form starts BELOW 768 — a width in 768..1100, which used
+    // to be narrow, is the wide console now.
+    window.innerWidth = 700;
     listTimelineMock.mockResolvedValue({ total: 1, offset: 0, limit: 40, items: [file("a")] });
     const { wrapper: w } = mountTimeline();
     wrapper = w;
@@ -151,11 +161,22 @@ describe("TimelineView (master-detail)", () => {
 
     await w.findAll(".tile-btn")[0]!.trigger("click");
     await flushPromises();
-    expect(w.text()).toContain("a-original.webp");
+    // hikari 0.55.488 splits the narrow form in two: a host that binds
+    // `@close` (this view does) gets the WINDOW overlay, which teleports
+    // to the body — so the detail lives in the DOCUMENT, not inside this
+    // wrapper's subtree. The roster stays in place behind it.
+    expect(document.body.textContent).toContain("a-original.webp");
+    expect(w.find(".hk-master-detail").attributes("data-open")).toBe("true");
+    expect(w.findAll(".tile-btn").length).toBe(1);
 
-    const close = w.find(`button[aria-label="${i18n.global.t("common.actions.cancel")}"]`);
-    await close.trigger("click");
+    // Closing the window routes through the host's own listener, which
+    // drops the selection: the overlay unmounts and the name is gone.
+    const close = Array.from(document.body.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label") === i18n.global.t("common.actions.cancel"),
+    );
+    expect(close, "the narrow window carries a close affordance").toBeTruthy();
+    close!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushPromises();
-    expect(w.text()).not.toContain("a-original.webp");
+    expect(document.body.textContent).not.toContain("a-original.webp");
   });
 });

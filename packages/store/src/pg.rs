@@ -666,6 +666,30 @@ impl Store for PgStore {
         }
     }
 
+    async fn oauth_providers_for_user(&self, user_id: Uuid) -> Result<Vec<String>, StoreError> {
+        let cmd = Command::Select {
+            table: OAuthIdentityModel::TABLE.to_owned(),
+            filter: Some(OAuthIdentityColumn::UserId.eq(user_id).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        // Dedupe in Rust rather than SQL (`SELECT DISTINCT`) so both lanes
+        // run the same reduction: one provider holding two subjects is one
+        // method, not two.
+        let mut providers: Vec<String> = self
+            .query_all::<OAuthIdentityModel>(cmd)
+            .await?
+            .into_iter()
+            .map(|model| model.provider)
+            .collect();
+        providers.sort();
+        providers.dedup();
+        Ok(providers)
+    }
+
     async fn count_live_files_by_thumbnail_key(
         &self,
         bucket_id: Option<Uuid>,

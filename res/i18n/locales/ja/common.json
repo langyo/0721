@@ -35,11 +35,12 @@
     "failed": "ユーザー名またはパスワードが違います",
     "passwordDisabled": "パスワードログインは無効です — 別のログイン方法を選んでください。",
     "noMethods": "利用できるログイン方法がありません——管理者がプロバイダーまたはパスワードログインを有効にする必要があります。",
-    "passwordChannel": "パスワード",
+    "accountChannel": "アカウント",
     "submit": "サインイン",
     "celestiaChannel": "Celestia ID",
     "ssoChannel": "シングルサインオン",
-    "orContinue": "または次で続行"
+    "orContinue": "または次で続行",
+    "orProvider": "または連携済みの方法で続行"
   },
   "portal": {
     "title": "画像",
