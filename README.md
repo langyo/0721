@@ -57,8 +57,10 @@ bucket migration, and ignored afterwards. The migration registers one
 bootstrap bucket for the chosen backend and seats every file row in it;
 from then on bytes are routed by each row's own bucket. All backends
 implement the same put/get/delete surface; thumbnails (the Cache slot)
-follow the same backend as their row's bucket. Per-bucket registration,
-credentials and management RPC arrive with a later wave.
+follow the same backend as their row's bucket. Per-bucket registration
+and credential management arrive with a later wave; the registry and
+management RPCs (`storage.buckets.*`, `storage.grants.set`,
+`storage.defaults.*`) are live.
 
 | Backend | Env | Notes |
 | --- | --- | --- |
@@ -86,7 +88,7 @@ afterwards. Each row keeps its own bucket forever; rows whose
 DISABLED legacy bootstrap bucket, and `/api/health` reports that
 bucket's state (and the reason it cannot serve) instead of pretending
 the data is lost. To serve such rows, register that bucket's
-credentials in a later wave's bucket management.
+credentials in the bucket management surface.
 
 **Security note**: `I0721_S3_ENDPOINT` with `http://` sends credentials
 in cleartext — this is safe ONLY for internal-network MinIO (the
