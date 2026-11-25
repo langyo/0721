@@ -208,6 +208,35 @@ impl BlobRegistry {
         })
     }
 
+    /// A registry assembled from explicit entries (the multi-bucket test
+    /// fixtures; production assembles through [`BlobRegistry::build`]).
+    #[must_use]
+    pub fn from_entries(
+        entries: Vec<(uuid::Uuid, BucketEntry)>,
+        bootstrap_id: uuid::Uuid,
+        bootstrap_backend: BucketBackend,
+    ) -> Arc<Self> {
+        let map: HashMap<String, BucketEntry> = entries
+            .iter()
+            .map(|(_, entry)| (entry.slug.clone(), clone_entry(entry)))
+            .collect();
+        let by_id: HashMap<uuid::Uuid, String> = entries
+            .iter()
+            .map(|(id, entry)| (*id, entry.slug.clone()))
+            .collect();
+        let bootstrap_slug = by_id
+            .get(&bootstrap_id)
+            .cloned()
+            .unwrap_or_else(|| "bootstrap".to_owned());
+        Arc::new(Self {
+            entries: map,
+            by_id,
+            bootstrap: Some(bootstrap_slug),
+            bootstrap_backend: Some(bootstrap_backend),
+            bootstrap_id: Some(bootstrap_id),
+        })
+    }
+
     /// Resolve a slug to its store. NEVER substitutes another bucket.
     ///
     /// # Errors
@@ -623,5 +652,16 @@ mod tests {
         let registry = BlobRegistry::build(vec![b], |_| None).unwrap();
         let health = registry.health();
         assert_eq!(health[0].state, "disabled");
+    }
+}
+
+/// Clone a registry entry (the multi-bucket fixture seam; entries are
+/// immutable once built).
+fn clone_entry(entry: &BucketEntry) -> BucketEntry {
+    BucketEntry {
+        slug: entry.slug.clone(),
+        state: entry.state,
+        reason: entry.reason.clone(),
+        store: entry.store.clone(),
     }
 }

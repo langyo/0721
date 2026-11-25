@@ -8919,16 +8919,46 @@ async fn a_share_reads_only_bytes_from_its_own_rows_bucket() {
         .expect("the row's bucket holds its bytes");
 
     // Plant the second Ready bucket with DIFFERENT bytes at the same
-    // key: a share routed "by storage key, any row" could pick the decoy
-    // — the served bytes must still be the file row's OWN bucket's.
-    let (state, _second_id, second_store) =
+    // key AND a same-key row in it (another owner's): a share routed
+    // "by storage key, any row" could pick the decoy row — the served
+    // bytes must still be the share's file row's OWN bucket's.
+    let (state, second_id, second_store) =
         plant_second_bucket(&base_state, "satellite", true);
+    use i0721_server::blob::BlobStore as _;
     second_store
         .put(
             i0721_server::blob::BlobSlot::Media,
             &key,
             b"decoy-bytes-from-the-other-bucket",
         )
+        .await
+        .unwrap();
+    let other = state
+        .store
+        .create_user(CreateUser {
+            username: "satellite-owner".to_owned(),
+            display_name: "Satellite".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: Some(second_id),
+            parent_id: None,
+            owner_id: other.id,
+            name: "decoy.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: bytes.len() as i64,
+            sha256: key.clone(),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: "decoy.png".to_owned(),
+        })
         .await
         .unwrap();
     let (status, envelope) = rpc(
