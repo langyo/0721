@@ -77,7 +77,11 @@ pub const DEFAULT_BUCKET_SETTINGS_KEY: &str = "storage_defaults";
 /// never a silent fallback — I2).
 async fn default_bucket_slug(state: &AppState) -> Result<Option<String>, ApiError> {
     use i0721_store::SettingsState;
-    match state.store.settings_state(DEFAULT_BUCKET_SETTINGS_KEY).await? {
+    match state
+        .store
+        .settings_state(DEFAULT_BUCKET_SETTINGS_KEY)
+        .await?
+    {
         SettingsState::Absent => Ok(None),
         SettingsState::Value(value) => match value.as_str() {
             Some(slug) if !slug.is_empty() => Ok(Some(slug.to_owned())),
@@ -103,7 +107,14 @@ async fn resolve_target_bucket(
     state: &AppState,
     user: &UserRecord,
     override_slug: Option<&str>,
-) -> Result<(Uuid, i0721_proto::BucketBackend, Arc<dyn crate::blob::BlobStore>), ApiError> {
+) -> Result<
+    (
+        Uuid,
+        i0721_proto::BucketBackend,
+        Arc<dyn crate::blob::BlobStore>,
+    ),
+    ApiError,
+> {
     use crate::bucket_acl::resolve_access;
     let default_slug = default_bucket_slug(state).await?;
     let effective = override_slug.or(default_slug.as_deref());
@@ -243,7 +254,8 @@ pub async fn run_upload(
     //   (b) cross-bucket probe: the SAME content live in ANOTHER of the
     //       owner's buckets → the explicit `-32007` conflict naming no
     //       bucket ("delete it there first").
-    let (bucket_id, backend_tag, bucket_store) = resolve_target_bucket(state, user, bucket.as_deref()).await?;
+    let (bucket_id, backend_tag, bucket_store) =
+        resolve_target_bucket(state, user, bucket.as_deref()).await?;
     let storage_backend = backend_tag.as_str().to_owned();
     if let Some(existing) = state
         .store

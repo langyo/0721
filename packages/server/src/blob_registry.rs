@@ -389,7 +389,8 @@ impl BlobRegistry {
             .entries
             .get(&slug)
             .ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() })
-            .and_then(|entry| Ok(self.backend_of_entry(entry).ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() })?))?;
+            .map(|entry| self.backend_of_entry(entry))
+            .and_then(|tag| tag.ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() }))?;
         let store = self.resolve(&slug)?;
         Ok((id, backend, store))
     }

@@ -296,16 +296,12 @@ async fn files_chain_bucket_gate(
     // A NULL-bucket row reads through the bootstrap bucket (I4's
     // resolution, R-H): unresolvable → storage unavailable.
     let Some(bucket_id) = bucket_id else {
-        return state
-            .registry
-            .bootstrap_store()
-            .map(|_| ())
-            .map_err(|err| {
-                JsonRpcError::new(
-                    rpc_error_codes::STORAGE_UNAVAILABLE,
-                    format!("storage backend unavailable: {err}"),
-                )
-            });
+        return state.registry.bootstrap_store().map(|_| ()).map_err(|err| {
+            JsonRpcError::new(
+                rpc_error_codes::STORAGE_UNAVAILABLE,
+                format!("storage backend unavailable: {err}"),
+            )
+        });
     };
     let Some(bucket) =
         crate::bucket_acl::bucket_row_for_id(state.store.as_ref(), &state.registry, bucket_id)
@@ -314,8 +310,9 @@ async fn files_chain_bucket_gate(
     else {
         return Err(api_err(ApiError::not_found("folder not found")));
     };
-    let access =
-        resolve_access(state.store.as_ref(), user, &bucket).await.map_err(store_err)?;
+    let access = resolve_access(state.store.as_ref(), user, &bucket)
+        .await
+        .map_err(store_err)?;
     if !access.any() {
         return Err(api_err(ApiError::not_found("folder not found")));
     }
@@ -324,12 +321,16 @@ async fn files_chain_bucket_gate(
             "you do not have read access to this bucket",
         )));
     }
-    state.registry.resolve(&bucket.slug).map(|_| ()).map_err(|err| {
-        JsonRpcError::new(
-            rpc_error_codes::STORAGE_UNAVAILABLE,
-            format!("storage backend unavailable: {err}"),
-        )
-    })
+    state
+        .registry
+        .resolve(&bucket.slug)
+        .map(|_| ())
+        .map_err(|err| {
+            JsonRpcError::new(
+                rpc_error_codes::STORAGE_UNAVAILABLE,
+                format!("storage backend unavailable: {err}"),
+            )
+        })
 }
 
 /// R-B's key-reference guard: `BUCKET_KEY_REFERENCE_SQL` — spec-verbatim —

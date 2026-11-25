@@ -357,10 +357,7 @@ pub trait Store: Send + Sync {
     /// Count a bucket's LIVE file rows (folders count — R-B treats a
     /// folder tree as live content). `bucket_id = None` counts the
     /// legacy NULL rows the same way.
-    async fn count_live_files_by_bucket(
-        &self,
-        bucket_id: Option<Uuid>,
-    ) -> Result<u64, StoreError>;
+    async fn count_live_files_by_bucket(&self, bucket_id: Option<Uuid>) -> Result<u64, StoreError>;
 
     /// The owner's live dedupe probe WITH the bucket dimension (R-C):
     /// `Some(row)` when this owner already holds this content in THIS
@@ -416,10 +413,7 @@ pub trait Store: Send + Sync {
     /// `Corrupt` (a row whose payload does not parse as JSON), `Unreadable`
     /// (the store itself failed) or `Value` (a parsed payload). Callers
     /// fail closed on everything but `Value`.
-    async fn settings_state(
-        &self,
-        key: &str,
-    ) -> Result<SettingsState, StoreError>;
+    async fn settings_state(&self, key: &str) -> Result<SettingsState, StoreError>;
 
     // ── API keys (the MCP wave) ──────────────────────────────────────
     /// Create an API key row.

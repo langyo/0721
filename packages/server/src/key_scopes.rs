@@ -168,7 +168,10 @@ pub fn parse_scopes_buckets(raw: &str) -> BTreeSet<String> {
 /// `keys.create` / `keys.update` write path; round-trips through
 /// [`parse_scopes`] and [`parse_scopes_buckets`] unchanged.
 #[must_use]
-pub fn encode_scopes_with_buckets(ops: impl IntoIterator<Item = KeyOp>, buckets: &[String]) -> String {
+pub fn encode_scopes_with_buckets(
+    ops: impl IntoIterator<Item = KeyOp>,
+    buckets: &[String],
+) -> String {
     let set: BTreeSet<KeyOp> = ops.into_iter().collect();
     let ordered: Vec<&str> = KeyOp::ALL
         .into_iter()
@@ -446,17 +449,16 @@ mod tests {
     fn encode_scopes_with_buckets_is_canonical_and_round_trips() {
         let text = encode_scopes_with_buckets(
             [KeyOp::Share, KeyOp::Read],
-            &[
-                "zeta".to_owned(),
-                "alpha".to_owned(),
-                "zeta".to_owned(),
-            ],
+            &["zeta".to_owned(), "alpha".to_owned(), "zeta".to_owned()],
         );
         assert_eq!(
             text, r#"{"buckets":["alpha","zeta"],"ops":["read","share"]}"#,
             "buckets sorted + deduped; ops canonical; both live in one object"
         );
-        assert_eq!(parse_scopes(&text), BTreeSet::from([KeyOp::Read, KeyOp::Share]));
+        assert_eq!(
+            parse_scopes(&text),
+            BTreeSet::from([KeyOp::Read, KeyOp::Share])
+        );
         assert_eq!(
             parse_scopes_buckets(&text),
             ["alpha".to_owned(), "zeta".to_owned()].into()

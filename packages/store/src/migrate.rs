@@ -449,22 +449,13 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
         ),
     ];
 
-    // 0008 (the P2a slice) runs on EVERY database — it needs no
-    // bootstrap facts: it only materializes `scopes.buckets` onto the
-    // K-era keys from data already present since 0007. It sorts after
-    // 0007 by version, so it may precede 0007 in the list only when 0007
-    // itself is pending; the runner applies them in version order, which
-    // keeps the grants/buckets tables present before the UPDATE runs.
-    out.push(Migration::new(
-        "20261122000008",
-        "materialize scopes.buckets onto every live K-era key (R-T snapshot of granted_buckets)",
-        MIGRATION_0008_KEY_BUCKETS_SQL.to_owned(),
-    ));
-
     // 0007 (the bucket wave) is appended ONLY when the caller resolved
     // the bootstrap facts — the R-U wiring: a missing
     // `I0721_STORAGE_BACKEND` while 0007 is pending must fail the start
     // BEFORE any migration runs, never run the migration half-built.
+    // 0008 rides WITH 0007 in the same decision (its UPDATE needs the
+    // 0007 tables; a database without the facts stays untouched —
+    // the caller refuses to start instead).
     let Some(bootstrap) = bootstrap else {
         return out;
     };
@@ -493,6 +484,17 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
             dedupe_index = FILES_OWNER_BUCKET_SHA256_LIVE_KEY_SQL,
             bucket_key_index = FILES_BUCKET_STORAGE_KEY_INDEX_SQL,
         ),
+    ));
+
+    // 0008 (the P2a slice) runs on EVERY database — it needs no
+    // bootstrap facts: it only materializes `scopes.buckets` onto the
+    // K-era keys from data already present since 0007. It sorts after
+    // 0007 and is pushed AFTER it here, so a database always has the
+    // grants/buckets tables before the UPDATE runs.
+    out.push(Migration::new(
+        "20261122000008",
+        "materialize scopes.buckets onto every live K-era key (R-T snapshot of granted_buckets)",
+        MIGRATION_0008_KEY_BUCKETS_SQL.to_owned(),
     ));
     out
 }
@@ -656,7 +658,7 @@ mod tests {
             without.iter().all(|m| m.version != "20261122000007"),
             "0007 is only appended when the bootstrap facts are known"
         );
-        assert_eq!(without.len(), 7);
+        assert_eq!(without.len(), 6);
         assert_eq!(all.len(), 8);
     }
 
@@ -721,16 +723,19 @@ mod tests {
                 .filter(|m| m.version.as_str() >= "20261122000008")
                 .count()
                 == 1
-                && all
-                    .iter()
-                    .any(|m| m.version == "20261122000008"
-                        && m.sql.contains(MIGRATION_0008_KEY_BUCKETS_SQL.trim_end_matches(';'))),
+                && all.iter().any(|m| m.version == "20261122000008"
+                    && m.sql
+                        .contains(MIGRATION_0008_KEY_BUCKETS_SQL.trim_end_matches(';'))),
             "0008 is present, carries the verbatim R-T SQL and runs once"
         );
-        // 0008 needs no bootstrap params — it is in the None list too.
+        // 0008 rides the WITH-bootstrap list (its UPDATE needs the 0007
+        // tables); the without-facts list stops at 0006 — the caller
+        // refuses to start instead of running a half-built migration set.
         assert!(
-            migrations(None).iter().any(|m| m.version == "20261122000008"),
-            "0008 runs on every database, bootstrap facts or not"
+            migrations(None)
+                .iter()
+                .all(|m| m.version.as_str() < "20261122000008"),
+            "0008 never runs before the 0007 tables exist"
         );
         // The shape constant is the one the normalization writes and the
         // column default carries — one source of truth, no drift.

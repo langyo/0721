@@ -8555,7 +8555,7 @@ async fn health_reports_unreadable_settings_instead_of_default() {
         }
         async fn settings_state(
             &self,
-            key: &str,
+            _key: &str,
         ) -> Result<i0721_store::SettingsState, i0721_store::StoreError> {
             // THE deliberate failure: every settings read is Unreadable —
             // the lane's reason this mock exists.
@@ -9795,6 +9795,7 @@ async fn account_methods_shares_the_per_ip_login_budget() {
 
 /// Grant a member a bucket through `storage.grants.set`; fails loudly
 /// when refused (the admin-only surface).
+#[allow(dead_code)]
 async fn set_grant(
     state: &AppState,
     admin_token: &str,
@@ -9824,7 +9825,7 @@ async fn plant_bucket(
     grant_on_signup: bool,
     enabled: bool,
 ) -> i0721_proto::StorageBucketRecord {
-    let mut bucket = i0721_proto::StorageBucketRecord {
+    let bucket = i0721_proto::StorageBucketRecord {
         id: uuid::Uuid::new_v4(),
         slug: slug.to_owned(),
         display_name: slug.to_owned(),
@@ -9874,14 +9875,24 @@ async fn a_member_reads_media_from_the_signup_bucket_but_lists_only_their_own_ro
     let (_, admin_file) = upload(&state, &admin_token, png_of(5, 4), "theirs.png").await;
 
     // The member's list carries ONLY their own rows.
-    let (_, list) = rpc(&state, &member_token, "files.list", serde_json::json!({"scope": "own"})).await;
+    let (_, list) = rpc(
+        &state,
+        &member_token,
+        "files.list",
+        serde_json::json!({"scope": "own"}),
+    )
+    .await;
     let items = list["result"]["items"].as_array().unwrap();
     assert!(
-        items.iter().any(|f| f["id"].as_str() == Some(own_id.as_str())),
+        items
+            .iter()
+            .any(|f| f["id"].as_str() == Some(own_id.as_str())),
         "the member sees their own file: {list}"
     );
     assert!(
-        !items.iter().any(|f| f["id"].as_str() == Some(admin_file["id"].as_str().unwrap())),
+        !items
+            .iter()
+            .any(|f| f["id"].as_str() == Some(admin_file["id"].as_str().unwrap())),
         "the member does NOT see the admin's file: {list}"
     );
 
@@ -9918,14 +9929,7 @@ async fn bucket_scope_denials_are_jsonrpc_frames_not_tool_errors() {
 
     // A key whose buckets EXPLICITLY excludes the file's bucket (the
     // bootstrap bucket): the share tool's R-L arm ② fires → frame -32001.
-    let (_, key) = mcp_api_key_with_at(
-        &state,
-        &admin_token,
-        "no-buckets",
-        all_ops(),
-        None,
-    )
-    .await;
+    let (_, key) = mcp_api_key_with_at(&state, &admin_token, "no-buckets", all_ops(), None).await;
     // Rewrite the key's scopes with an explicit EMPTY buckets array (the
     // RPC materializes granted_buckets when the field is omitted).
     let record = state
@@ -9934,11 +9938,16 @@ async fn bucket_scope_denials_are_jsonrpc_frames_not_tool_errors() {
         .await
         .unwrap()
         .unwrap();
-    let explicit_empty = format!(r#"{{"ops":["read","upload","share"],"buckets":[]}}"#);
+    let explicit_empty = r#"{"ops":["read","upload","share"],"buckets":[]}"#.to_owned();
     let _ = admin_id;
     state
         .store
-        .update_api_key(record.id, record.name.as_str(), &explicit_empty, record.expires_at.as_deref())
+        .update_api_key(
+            record.id,
+            record.name.as_str(),
+            &explicit_empty,
+            record.expires_at.as_deref(),
+        )
         .await
         .unwrap();
 
@@ -10081,10 +10090,15 @@ fn grant_surface_method_table_is_exactly_set() {
     // method table is static, so the assertion reads the source of
     // truth directly (the registered method_ctx names).
     let registered = ["storage.grants.set"];
-    for method in ["storage.grants.set", "storage.grants.delete", "storage.grants.get"] {
+    for method in [
+        "storage.grants.set",
+        "storage.grants.delete",
+        "storage.grants.get",
+    ] {
         let known = registered.contains(&method);
         assert_eq!(
-            known, (method == "storage.grants.set"),
+            known,
+            (method == "storage.grants.set"),
             "{method}: the grants surface is exactly {registered:?}"
         );
     }
@@ -10193,7 +10207,10 @@ async fn reupload_to_another_bucket_is_refused_by_the_dedupe_probe() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/files?bucket=satellite")
-                .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={boundary}"))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
                 .body(Body::from(raw))
                 .unwrap(),
             &token,
@@ -10205,13 +10222,12 @@ async fn reupload_to_another_bucket_is_refused_by_the_dedupe_probe() {
         StatusCode::CONFLICT,
         "the cross-bucket probe refuses"
     );
-    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
     let text = body["error"].as_str().unwrap_or_default();
-    assert!(
-        text.contains("another bucket"),
-        "the R-C text: {text}"
-    );
+    assert!(text.contains("another bucket"), "the R-C text: {text}");
     assert!(
         !text.contains("bootstrap") && !text.contains("satellite"),
         "the conflict names NO bucket: {text}"
@@ -10248,7 +10264,10 @@ async fn an_invisible_bucket_in_the_upload_query_answers_404() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/files?bucket=hidden")
-                .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={boundary}"))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
                 .body(Body::from(raw))
                 .unwrap(),
             &member_token,
@@ -10278,10 +10297,7 @@ async fn same_name_different_content_in_the_same_folder_keeps_the_name_conflict_
     assert_eq!(status, StatusCode::CONFLICT, "{second}");
     let second: serde_json::Value = serde_json::from_str(&second).unwrap();
     let text = second["error"].as_str().unwrap_or_default();
-    assert!(
-        text.contains("name"),
-        "the NAME conflict: {text}"
-    );
+    assert!(text.contains("name"), "the NAME conflict: {text}");
 }
 
 /// R-F: the strict `storage.buckets.upsert` — an omitted field refuses,

@@ -19,9 +19,9 @@ use i0721_proto::{NewShare, ShareRecord};
 use crate::entity::{
     api_key_model_to_record, file_model_from_new, file_model_to_record, share_model_to_record,
     storage_bucket_model_to_record, user_model_from_new, user_model_to_record, ApiKeyColumn,
-    ApiKeyModel, BucketGrantColumn, BucketGrantModel, FileColumn, FileModel,
-    OAuthIdentityColumn, OAuthIdentityModel, SettingColumn, SettingModel, ShareColumn, ShareModel,
-    StorageBucketColumn, StorageBucketModel, UserColumn, UserModel,
+    ApiKeyModel, BucketGrantColumn, BucketGrantModel, FileColumn, FileModel, OAuthIdentityColumn,
+    OAuthIdentityModel, SettingColumn, SettingModel, ShareColumn, ShareModel, StorageBucketColumn,
+    StorageBucketModel, UserColumn, UserModel,
 };
 use crate::{migrations, BootstrapBucketParams, CreateUser, Store, StoreError};
 
@@ -718,7 +718,9 @@ impl Store for PgStore {
             distinct: false,
         };
         match self.query_one::<SettingModel>(cmd).await {
-            Err(err) => Ok(crate::SettingsState::Unreadable { err: err.to_string() }),
+            Err(err) => Ok(crate::SettingsState::Unreadable {
+                err: err.to_string(),
+            }),
             Ok(None) => Ok(crate::SettingsState::Absent),
             Ok(Some(model)) => Ok(crate::SettingsState::Value(model.value)),
         }

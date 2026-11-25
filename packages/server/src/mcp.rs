@@ -55,7 +55,9 @@ use i0721_proto::{FileDto, FileKind, KeyOp, NewShare};
 
 use crate::api::upload_core::{run_upload, UploadInput};
 use crate::error::ApiError;
-use crate::key_scopes::{authorize, is_live, parse_scopes, parse_scopes_buckets, required_op, Denial, Live};
+use crate::key_scopes::{
+    authorize, is_live, parse_scopes, parse_scopes_buckets, required_op, Denial, Live,
+};
 use crate::state::AppState;
 
 /// Session TTL and cap (chest-matched).
@@ -758,7 +760,7 @@ async fn precheck_tool(
             // ① ops (K's gate, already run) ② the bucket must be IN the
             // key's `buckets` → `-32001` naming the bucket; ③ the USER
             // must hold access → `-32005` naming the bucket.
-            if !key_buckets.contains(&slug.to_owned()) {
+            if !key_buckets.contains(slug) {
                 return Precheck::Frame(RpcFault::new(
                     SCOPE_DENIED,
                     format!(
@@ -860,7 +862,10 @@ async fn precheck_tool(
                     format!("you do not have share access to bucket {slug:?}"),
                 ));
             }
-            Precheck::Allow(Some(ResolvedBucket { id: bucket.id, slug }))
+            Precheck::Allow(Some(ResolvedBucket {
+                id: bucket.id,
+                slug,
+            }))
         }
         _ => Precheck::Allow(None),
     }

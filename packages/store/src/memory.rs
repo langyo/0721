@@ -435,8 +435,7 @@ impl Store for MemoryStore {
         let inner = self.inner.lock().map_err(lock_err)?;
         Ok(inner.api_keys.iter().any(|key| {
             key.revoked_at.is_none()
-                && scopes_buckets(&key.scopes)
-                    .is_some_and(|set| set.contains(&slug.to_owned()))
+                && scopes_buckets(&key.scopes).is_some_and(|set| set.contains(slug))
         }))
     }
 

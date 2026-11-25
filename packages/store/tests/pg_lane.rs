@@ -2021,7 +2021,7 @@ async fn key_buckets_of(store: &PgStore, key_id: uuid::Uuid) -> Vec<String> {
         panic!("rows expected");
     };
     match &rows[0][0] {
-        lacrymira::Value::Json(text) => serde_json::from_str::<Vec<String>>(&text)
+        lacrymira::Value::Json(text) => serde_json::from_str::<Vec<String>>(text)
             .unwrap_or_else(|err| panic!("the buckets array decodes: {err} — {text:?}")),
         lacrymira::Value::Text(text) => serde_json::from_str::<Vec<String>>(text)
             .unwrap_or_else(|err| panic!("the buckets array decodes: {err} — {text:?}")),
@@ -2031,19 +2031,15 @@ async fn key_buckets_of(store: &PgStore, key_id: uuid::Uuid) -> Vec<String> {
 
 /// Plant an api_keys row with ARBITRARY raw scopes (the K-era shapes the
 /// typed lane refuses to write — e.g. a scopes text without `buckets`).
-async fn plant_key(
-    store: &PgStore,
-    user_id: uuid::Uuid,
-    name: &str,
-    scopes: &str,
-) -> uuid::Uuid {
+async fn plant_key(store: &PgStore, user_id: uuid::Uuid, name: &str, scopes: &str) -> uuid::Uuid {
     let id = uuid::Uuid::new_v4();
     store
         .executor
         .execute(&lacrymira::Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
             text: "INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, scopes) \
-                   VALUES ($1, $2, $3, $4, $5, $6::jsonb)".to_owned(),
+                   VALUES ($1, $2, $3, $4, $5, $6::jsonb)"
+                .to_owned(),
             params: vec![
                 lacrymira::Value::Uuid(id.to_string()),
                 lacrymira::Value::Uuid(user_id.to_string()),
@@ -2084,7 +2080,8 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
                 dialect: lacrymira::Dialect::Postgres,
                 text: "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
                        endpoint_ref, anonymous_read, grant_on_signup, enabled, is_bootstrap) \
-                       VALUES ($1, $2, $2, 'local', 'lane', 'lane', TRUE, $3, TRUE, FALSE)".to_owned(),
+                       VALUES ($1, $2, $2, 'local', 'lane', 'lane', TRUE, $3, TRUE, FALSE)"
+                    .to_owned(),
                 params: vec![
                     lacrymira::Value::Uuid(id.to_string()),
                     lacrymira::Value::Text(slug.to_owned()),
@@ -2103,7 +2100,8 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
         .execute(&lacrymira::Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
             text: "INSERT INTO bucket_grants (user_id, bucket_id, can_read, can_write, can_share) \
-                   VALUES ($1, $2, FALSE, FALSE, FALSE)".to_owned(),
+                   VALUES ($1, $2, FALSE, FALSE, FALSE)"
+                .to_owned(),
             params: vec![
                 lacrymira::Value::Uuid(member_a.id.to_string()),
                 lacrymira::Value::Uuid(open.to_string()),
@@ -2117,7 +2115,8 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
         .execute(&lacrymira::Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
             text: "INSERT INTO bucket_grants (user_id, bucket_id, can_read, can_write, can_share) \
-                   VALUES ($1, $2, FALSE, TRUE, FALSE)".to_owned(),
+                   VALUES ($1, $2, FALSE, TRUE, FALSE)"
+                .to_owned(),
             params: vec![
                 lacrymira::Value::Uuid(member_a.id.to_string()),
                 lacrymira::Value::Uuid(closed.to_string()),
@@ -2153,12 +2152,15 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
             .executor
             .execute(&lacrymira::Command::Sql {
                 dialect: lacrymira::Dialect::Postgres,
-                text: "SELECT id, grant_on_signup FROM storage_buckets WHERE is_bootstrap".to_owned(),
+                text: "SELECT id, grant_on_signup FROM storage_buckets WHERE is_bootstrap"
+                    .to_owned(),
                 params: vec![],
             })
             .await
             .unwrap();
-        let lacrymira::Reply::Rows { rows, .. } = reply else { panic!("rows") };
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("rows")
+        };
         match &rows[0][0] {
             lacrymira::Value::Uuid(t) => uuid::Uuid::parse_str(t).unwrap(),
             other => panic!("uuid expected, got {other:?}"),
@@ -2187,7 +2189,9 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
         })
         .await
         .unwrap();
-    let lacrymira::Reply::Rows { rows, .. } = bootstrap_slug_reply else { panic!("rows") };
+    let lacrymira::Reply::Rows { rows, .. } = bootstrap_slug_reply else {
+        panic!("rows")
+    };
     let bootstrap_slug = match &rows[0][0] {
         lacrymira::Value::Text(t) => t.clone(),
         other => panic!("text expected, got {other:?}"),
@@ -2201,7 +2205,10 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
     let mut expected_b_sorted = expected_b.clone();
     expected_a_sorted.sort();
     expected_b_sorted.sort();
-    assert_eq!(got_a, expected_a_sorted, "member A: the deny row excludes the signup bucket");
+    assert_eq!(
+        got_a, expected_a_sorted,
+        "member A: the deny row excludes the signup bucket"
+    );
     assert_eq!(got_b, expected_b_sorted, "admin B: all buckets");
     assert_eq!(got_c, expected_c, "member C: exactly the signup buckets");
 
@@ -2262,7 +2269,8 @@ async fn revoked_keys_are_untouched_by_0008() {
         .executor
         .execute(&lacrymira::Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
-            text: "UPDATE api_keys SET revoked_at = '2026-01-01T00:00:00Z' WHERE id = $1".to_owned(),
+            text: "UPDATE api_keys SET revoked_at = '2026-01-01T00:00:00Z' WHERE id = $1"
+                .to_owned(),
             params: vec![lacrymira::Value::Uuid(id.to_string())],
         })
         .await
@@ -2277,7 +2285,9 @@ async fn revoked_keys_are_untouched_by_0008() {
         })
         .await
         .unwrap();
-    let lacrymira::Reply::Rows { rows, .. } = reply else { panic!("rows") };
+    let lacrymira::Reply::Rows { rows, .. } = reply else {
+        panic!("rows")
+    };
     let untouched = match &rows[0][0] {
         lacrymira::Value::Bool(b) => *b,
         lacrymira::Value::Text(t) => t.trim().parse().unwrap_or(false),

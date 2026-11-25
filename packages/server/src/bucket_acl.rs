@@ -18,8 +18,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use i0721_proto::{Role, StorageBucketRecord, UserRecord};
-use uuid::Uuid;
 use i0721_store::{Store, StoreError};
+use uuid::Uuid;
 
 /// The three authorization bits for one user × bucket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,19 +123,21 @@ pub async fn bucket_row_for_id(
     {
         return Ok(Some(row));
     }
-    Ok(registry.slug_for_bucket_id(bucket_id).map(|slug| StorageBucketRecord {
-        id: bucket_id,
-        slug,
-        display_name: String::new(),
-        backend: i0721_proto::BucketBackend::Local,
-        location: String::new(),
-        endpoint_ref: String::new(),
-        anonymous_read: true,
-        grant_on_signup: true,
-        enabled: true,
-        is_bootstrap: false,
-        created_at: jiff::Timestamp::MIN,
-    }))
+    Ok(registry
+        .slug_for_bucket_id(bucket_id)
+        .map(|slug| StorageBucketRecord {
+            id: bucket_id,
+            slug,
+            display_name: String::new(),
+            backend: i0721_proto::BucketBackend::Local,
+            location: String::new(),
+            endpoint_ref: String::new(),
+            anonymous_read: true,
+            grant_on_signup: true,
+            enabled: true,
+            is_bootstrap: false,
+            created_at: jiff::Timestamp::MIN,
+        }))
 }
 
 #[cfg(test)]
@@ -180,7 +182,9 @@ mod tests {
         let store: Arc<dyn Store> = Arc::new(i0721_store::MemoryStore::new());
         let member = user(&store, Role::Member).await;
         let private = bucket("private", false);
-        let access = resolve_access(store.as_ref(), &member, &private).await.unwrap();
+        let access = resolve_access(store.as_ref(), &member, &private)
+            .await
+            .unwrap();
         assert_eq!(access, BucketAccess::NONE);
         assert!(!access.any());
     }
@@ -192,7 +196,9 @@ mod tests {
         let store: Arc<dyn Store> = Arc::new(i0721_store::MemoryStore::new());
         let member = user(&store, Role::Member).await;
         let open = bucket("open", true);
-        let access = resolve_access(store.as_ref(), &member, &open).await.unwrap();
+        let access = resolve_access(store.as_ref(), &member, &open)
+            .await
+            .unwrap();
         assert_eq!(access, BucketAccess::SIGNUP);
     }
 
@@ -207,7 +213,9 @@ mod tests {
             .set_bucket_grant(member.id, open.id, true, false, false)
             .await
             .unwrap();
-        let access = resolve_access(store.as_ref(), &member, &open).await.unwrap();
+        let access = resolve_access(store.as_ref(), &member, &open)
+            .await
+            .unwrap();
         assert_eq!(
             access,
             BucketAccess {
@@ -234,7 +242,9 @@ mod tests {
         // The bucket flips signup ON (it already is) — the deny row must
         // still hold. Also verify the flip the other way: the row was
         // written while the bucket was open; the deny survives.
-        let access = resolve_access(store.as_ref(), &member, &open).await.unwrap();
+        let access = resolve_access(store.as_ref(), &member, &open)
+            .await
+            .unwrap();
         assert_eq!(access, BucketAccess::NONE, "the explicit deny row wins");
     }
 
@@ -245,7 +255,9 @@ mod tests {
         let store: Arc<dyn Store> = Arc::new(i0721_store::MemoryStore::new());
         let admin = user(&store, Role::Admin).await;
         let private = bucket("private", false);
-        let access = resolve_access(store.as_ref(), &admin, &private).await.unwrap();
+        let access = resolve_access(store.as_ref(), &admin, &private)
+            .await
+            .unwrap();
         assert_eq!(access, BucketAccess::SIGNUP, "admin = all buckets");
     }
 
@@ -260,8 +272,16 @@ mod tests {
         memory.seed_bucket(bucket("partial", false));
         let store: Arc<dyn Store> = Arc::new(memory);
         let member = user(&store, Role::Member).await;
-        let private = store.get_storage_bucket_by_slug("private").await.unwrap().unwrap();
-        let partial = store.get_storage_bucket_by_slug("partial").await.unwrap().unwrap();
+        let private = store
+            .get_storage_bucket_by_slug("private")
+            .await
+            .unwrap()
+            .unwrap();
+        let partial = store
+            .get_storage_bucket_by_slug("partial")
+            .await
+            .unwrap()
+            .unwrap();
         store
             .set_bucket_grant(member.id, private.id, false, false, false)
             .await
@@ -322,7 +342,9 @@ mod tests {
             !row.can_read && !row.can_write && !row.can_share,
             "the row is the explicit deny"
         );
-        let access = resolve_access(store.as_ref(), &member, &open).await.unwrap();
+        let access = resolve_access(store.as_ref(), &member, &open)
+            .await
+            .unwrap();
         assert_eq!(access, BucketAccess::NONE);
     }
 
@@ -338,7 +360,9 @@ mod tests {
             .set_bucket_grant(member.id, bootstrap.id, false, false, false)
             .await
             .unwrap();
-        let access = resolve_access(store.as_ref(), &member, &bootstrap).await.unwrap();
+        let access = resolve_access(store.as_ref(), &member, &bootstrap)
+            .await
+            .unwrap();
         assert_eq!(access, BucketAccess::NONE);
     }
 }
