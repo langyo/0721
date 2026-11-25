@@ -10376,3 +10376,35 @@ async fn files_chain_answers_the_section7_shapes() {
     .await;
     assert_eq!(rpc_error_code(&envelope), -32006, "{envelope}");
 }
+
+/// Q7's materialization boundary: an EXPLICIT `buckets: []` is the
+/// caller's pick (an empty authorized set) — the create path must NOT
+/// silently replace it with `granted_buckets(owner)`. MUT:M-P2A7 —
+/// ignoring the explicit array turns this red.
+#[tokio::test]
+async fn keys_create_respects_an_explicit_empty_buckets_array() {
+    let (state, token) = test_state_with_token().await;
+    // The admin HAS authorized buckets (the fixture bootstrap bucket) —
+    // materialization would pick them up; the explicit [] must win.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "empty-buckets", "ops": ["read"], "buckets": []}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let key = envelope["result"]["key"].as_str().unwrap().to_owned();
+    let record = state
+        .store
+        .find_api_key_by_hash(&mcp_test_helper::hash(&key))
+        .await
+        .unwrap()
+        .expect("the row exists");
+    let value: serde_json::Value = serde_json::from_str(&record.scopes).unwrap();
+    assert_eq!(
+        value["buckets"],
+        serde_json::json!([]),
+        "the explicit empty array is the caller's pick, not a request to materialize: {value}"
+    );
+}
