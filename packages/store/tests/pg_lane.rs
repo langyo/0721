@@ -129,6 +129,7 @@ async fn pg_entity_layer_carries_a_new_nullable_uuid_column() {
             mime: "image/webp".to_owned(),
             size: 1,
             sha256: format!("a1{}", uuid::Uuid::new_v4().simple()),
+            bucket_id: None,
             storage_backend: "local".to_owned(),
             storage_key: format!("a1{}", uuid::Uuid::new_v4().simple()),
             thumbnail_key: None,
@@ -215,6 +216,7 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
         mime: "image/webp".to_owned(),
         size: 42,
         sha256: sha.to_owned(),
+        bucket_id: None,
         storage_backend: "local".to_owned(),
         storage_key: sha.to_owned(),
         thumbnail_key: None,
@@ -266,7 +268,7 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
     assert_eq!(shared.storage_key, a.storage_key);
     assert_eq!(
         store
-            .count_live_files_by_storage_key(&a.storage_key)
+            .count_live_files_by_storage_key(None, &a.storage_key)
             .await
             .expect("storage key census"),
         2
@@ -285,7 +287,7 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
     assert!(store.get_file(a.id).await.expect("get").is_none());
     assert_eq!(
         store
-            .count_live_files_by_storage_key(&a.storage_key)
+            .count_live_files_by_storage_key(None, &a.storage_key)
             .await
             .expect("census after delete"),
         1,
@@ -370,14 +372,14 @@ async fn pg_folder_check_and_root_name_uniqueness() {
 
     // A folder row passes the CHECK (kind='folder').
     let f1 = store
-        .create_folder(user.id, None, "docs")
+        .create_folder(user.id, None, "docs", None)
         .await
         .expect("first folder");
     assert_eq!(f1.kind, FileKind::Folder);
 
     // Root-level duplicate: the unique index (COALESCE-folded NULL
     // parent) rejects — surfacing as a Conflict from the store.
-    let dup = store.create_folder(user.id, None, "docs").await;
+    let dup = store.create_folder(user.id, None, "docs", None).await;
     assert!(
         matches!(dup, Err(StoreError::Conflict(_))),
         "root duplicate: {dup:?}"
@@ -386,11 +388,13 @@ async fn pg_folder_check_and_root_name_uniqueness() {
     // Same name in a DIFFERENT folder is fine (the index keys include
     // the parent).
     let nested = store
-        .create_folder(user.id, Some(f1.id), "docs")
+        .create_folder(user.id, Some(f1.id), "docs", None)
         .await
         .expect("same name, different layer");
     // And a duplicate in THAT layer refuses.
-    let dup2 = store.create_folder(user.id, Some(f1.id), "docs").await;
+    let dup2 = store
+        .create_folder(user.id, Some(f1.id), "docs", None)
+        .await;
     assert!(
         matches!(dup2, Err(StoreError::Conflict(_))),
         "nested duplicate: {dup2:?}"
@@ -427,11 +431,17 @@ async fn pg_recursive_ancestors_and_subtree() {
         .expect("user");
 
     // a → b → c (a=root child).
-    let a = store.create_folder(user.id, None, "a").await.unwrap();
+    let a = store.create_folder(user.id, None, "a", None).await.unwrap();
     eprintln!("DEBUG: folder a = {a:?}");
-    let b = store.create_folder(user.id, Some(a.id), "b").await.unwrap();
+    let b = store
+        .create_folder(user.id, Some(a.id), "b", None)
+        .await
+        .unwrap();
     eprintln!("DEBUG: folder b = {b:?}");
-    let c = store.create_folder(user.id, Some(b.id), "c").await.unwrap();
+    let c = store
+        .create_folder(user.id, Some(b.id), "c", None)
+        .await
+        .unwrap();
     eprintln!("DEBUG: folder c = {c:?}");
 
     // Ancestors of c: b, a (nearest first — order may vary, membership is
@@ -603,7 +613,7 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
     }
 
     // The index enforces.
-    let dup = store.create_folder(user.id, None, "cat.png").await;
+    let dup = store.create_folder(user.id, None, "cat.png", None).await;
     assert!(
         matches!(dup, Err(StoreError::Conflict(_))),
         "the index enforces same-layer uniqueness: {dup:?}"
@@ -752,9 +762,12 @@ async fn pg_create_file_honors_parent_id() {
         .await
         .unwrap();
 
-    let folder = store.create_folder(user.id, None, "docs").await.unwrap();
+    let folder = store
+        .create_folder(user.id, None, "docs", None)
+        .await
+        .unwrap();
     let nested = store
-        .create_folder(user.id, Some(folder.id), "2026")
+        .create_folder(user.id, Some(folder.id), "2026", None)
         .await
         .unwrap();
     assert_eq!(
@@ -772,6 +785,7 @@ async fn pg_create_file_honors_parent_id() {
             mime: "application/octet-stream".to_owned(),
             size: 7,
             sha256: format!("pf{}", uuid::Uuid::new_v4().simple()),
+            bucket_id: None,
             storage_backend: "local".to_owned(),
             storage_key: format!("pf{}", uuid::Uuid::new_v4().simple()),
             thumbnail_key: None,
@@ -815,6 +829,7 @@ async fn pg_find_share_by_file_is_owner_scoped() {
         mime: "application/octet-stream".to_owned(),
         size: 3,
         sha256: format!("sh{}", uuid::Uuid::new_v4().simple()),
+        bucket_id: None,
         storage_backend: "local".to_owned(),
         storage_key: format!("sh{}", uuid::Uuid::new_v4().simple()),
         thumbnail_key: None,
@@ -1161,7 +1176,7 @@ async fn pg_api_key_legacy_scopes_normalize_and_expiry_round_trips() {
 // the runner's bookkeeping.
 
 use i0721_store::migrate::{
-    bootstrap_sql, FILES_BUCKET_STORAGE_KEY_INDEX_SQL, FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL,
+    FILES_BUCKET_STORAGE_KEY_INDEX_SQL, FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL,
     FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL, MIGRATION_0007_BOOTSTRAP_SQL, MIGRATION_0007_SCHEMA_SQL,
 };
 
@@ -1526,7 +1541,10 @@ async fn rows_are_backfilled_by_their_storage_backend_label() {
 async fn folders_and_unlabelled_rows_follow_the_current_backend() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
-    let folder = store.create_folder(user.id, None, "docs").await.unwrap();
+    let folder = store
+        .create_folder(user.id, None, "docs", None)
+        .await
+        .unwrap();
     plant_file(&store, user.id, "bogus.png", "gcs", None).await;
     // Simulate a "folder row with no label": clear its storage_backend
     // to '' (the column is NOT NULL, so '' is the closest shape).

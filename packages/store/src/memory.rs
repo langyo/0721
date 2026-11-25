@@ -144,14 +144,20 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError> {
+    async fn count_live_files_by_storage_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError> {
         Ok(self
             .inner
             .lock()
             .map_err(lock_err)?
             .files
             .iter()
-            .filter(|file| file.deleted_at.is_none() && file.storage_key == key)
+            .filter(|file| {
+                file.deleted_at.is_none() && file.bucket_id == bucket_id && file.storage_key == key
+            })
             .count() as u64)
     }
 
@@ -265,7 +271,7 @@ impl Store for MemoryStore {
             mime: file.mime,
             size: file.size,
             sha256: file.sha256,
-            bucket_id: None,
+            bucket_id: file.bucket_id,
             storage_backend: file.storage_backend,
             storage_key: file.storage_key,
             thumbnail_key: file.thumbnail_key,
@@ -364,12 +370,20 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError> {
+    async fn count_live_files_by_thumbnail_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         Ok(inner
             .files
             .iter()
-            .filter(|f| f.deleted_at.is_none() && f.thumbnail_key.as_deref() == Some(key))
+            .filter(|f| {
+                f.deleted_at.is_none()
+                    && f.bucket_id == bucket_id
+                    && f.thumbnail_key.as_deref() == Some(key)
+            })
             .count() as u64)
     }
 
@@ -558,6 +572,7 @@ impl Store for MemoryStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         name: &str,
+        bucket_id: Option<Uuid>,
     ) -> Result<FileRecord, StoreError> {
         let mut inner = self.inner.lock().map_err(lock_err)?;
         if inner.files.iter().any(|f| {
@@ -570,6 +585,19 @@ impl Store for MemoryStore {
                 "name {name:?} already exists in this folder"
             )));
         }
+        // R-G: a child inherits its parent's bucket — a caller passing a
+        // different bucket than the parent's is refused, not silently
+        // re-seated (the same refusal `set_parent` gives a move).
+        if let Some(parent_id) = parent_id {
+            let parent_bucket = inner
+                .files
+                .iter()
+                .find(|f| f.id == parent_id && f.deleted_at.is_none())
+                .map(|f| f.bucket_id);
+            if parent_bucket != Some(bucket_id) {
+                return Err(conflict("cannot create a folder across buckets".to_owned()));
+            }
+        }
         let record = FileRecord {
             id: Uuid::new_v4(),
             owner_id,
@@ -579,7 +607,7 @@ impl Store for MemoryStore {
             mime: "inode/directory".to_owned(),
             size: 0,
             sha256: format!("dir:{}", Uuid::new_v4().simple()),
-            bucket_id: None,
+            bucket_id,
             storage_backend: "local".to_owned(),
             storage_key: String::new(),
             thumbnail_key: None,
@@ -593,6 +621,28 @@ impl Store for MemoryStore {
 
     async fn set_parent(&self, id: Uuid, parent_id: Option<Uuid>) -> Result<(), StoreError> {
         let mut inner = self.inner.lock().map_err(lock_err)?;
+        // R-G: the folder tree is per bucket. A move whose target parent
+        // sits in another bucket is refused here — the ONE guard every
+        // move path shares (the RPC lane has no second bypass). Computed
+        // BEFORE the mutable borrow so the locks do not conflict.
+        let row_bucket = inner
+            .files
+            .iter()
+            .find(|f| f.id == id && f.deleted_at.is_none())
+            .map(|f| f.bucket_id)
+            .ok_or_else(|| conflict("file not found".to_owned()))?;
+        let parent_bucket = parent_id.and_then(|pid| {
+            inner
+                .files
+                .iter()
+                .find(|f| f.id == pid && f.deleted_at.is_none())
+                .map(|f| f.bucket_id)
+        });
+        if parent_bucket != Some(row_bucket) {
+            return Err(conflict(
+                "cannot move a row into a folder in another bucket".to_owned(),
+            ));
+        }
         let row = inner
             .files
             .iter_mut()
@@ -770,6 +820,7 @@ mod tests {
 
     fn new_file(owner: Uuid, sha: &str) -> NewFile {
         NewFile {
+            bucket_id: None,
             parent_id: None,
             owner_id: owner,
             name: sha.to_owned(),
@@ -842,14 +893,20 @@ mod tests {
         assert_ne!(first.id, second.id);
         assert_eq!(first.storage_key, second.storage_key);
         assert_eq!(
-            store.count_live_files_by_storage_key("aa").await.unwrap(),
+            store
+                .count_live_files_by_storage_key(None, "aa")
+                .await
+                .unwrap(),
             2
         );
 
         // Soft-deleting one row leaves the blob referenced by the other.
         assert!(store.soft_delete_file(first.id).await.unwrap());
         assert_eq!(
-            store.count_live_files_by_storage_key("aa").await.unwrap(),
+            store
+                .count_live_files_by_storage_key(None, "aa")
+                .await
+                .unwrap(),
             1
         );
         assert!(
@@ -857,7 +914,10 @@ mod tests {
             "the last live row can go too"
         );
         assert_eq!(
-            store.count_live_files_by_storage_key("aa").await.unwrap(),
+            store
+                .count_live_files_by_storage_key(None, "aa")
+                .await
+                .unwrap(),
             0
         );
     }

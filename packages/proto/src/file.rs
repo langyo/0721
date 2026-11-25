@@ -225,6 +225,10 @@ pub struct NewFile {
     pub size: i64,
     /// Hex SHA-256 of the stored blob.
     pub sha256: String,
+    /// The bucket this row is born into (`None` only in test fixtures
+    /// whose registry has no concrete bootstrap row — production
+    /// uploads always carry the resolved bucket's id).
+    pub bucket_id: Option<Uuid>,
     /// Storage backend tag.
     pub storage_backend: String,
     /// Blob key.

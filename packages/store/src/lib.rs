@@ -20,8 +20,8 @@ pub mod pg;
 
 pub use memory::MemoryStore;
 pub use migrate::{
-    migrations, BootstrapBucketParams, MIGRATION_0007_BOOTSTRAP_SQL, MIGRATION_0007_SCHEMA_SQL,
-    ZERO_UUID_SQL,
+    migrations, validate_bootstrap_location, BootstrapBucketParams, MIGRATION_0007_BOOTSTRAP_SQL,
+    MIGRATION_0007_SCHEMA_SQL, ZERO_UUID_SQL,
 };
 pub use pg::PgStore;
 
@@ -121,20 +121,6 @@ pub trait Store: Send + Sync {
         sha256: &str,
     ) -> Result<Option<FileRecord>, StoreError>;
 
-    /// Fetch a live file by its public storage key. STAGE-A SHIM over
-    /// [`Store::list_live_rows_by_storage_key`] — the real call sites
-    /// re-route per row (I4) in the B-P1 stage-B slice; this keeps the
-    /// lane compiling meanwhile and its behavior deterministic (the
-    /// row list is `id ASC`, so the shim's "first row" no longer
-    /// depends on table scan order).
-    async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError> {
-        Ok(self
-            .list_live_rows_by_storage_key(key)
-            .await?
-            .into_iter()
-            .next())
-    }
-
     /// ALL live rows sharing a storage key, `id ASC` — the set the
     /// `/media` lane's serving-row decision and the share lane's
     /// per-row routing consume (spec R-J: the determination is a set
@@ -145,13 +131,24 @@ pub trait Store: Send + Sync {
 
     /// Count live rows sharing a storage key — the caller's blob-reclaim
     /// probe (a blob goes away only with its last live row; full GC is a
-    /// netdisk-wave concern).
-    async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError>;
+    /// netdisk-wave concern). B-P1 onward the count is scoped to ONE
+    /// bucket: `media/` and `cache/` namespaces are per bucket, and
+    /// reclaiming in bucket A must never consult bucket B's rows.
+    async fn count_live_files_by_storage_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError>;
 
     /// Live rows referencing a thumbnail key (the Cache-slot blob's
     /// liveness signal — distinct from storage_key because thumbnails
-    /// are shared across owners whose blobs dedupe by content).
-    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError>;
+    /// are shared across owners whose blobs dedupe by content), scoped
+    /// to one bucket (see [`Store::count_live_files_by_storage_key`]).
+    async fn count_live_files_by_thumbnail_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError>;
 
     /// Record a freshly uploaded file; `(owner_id, sha256)` must be
     /// unique among that owner's live files ([`StoreError::Conflict`]
@@ -217,15 +214,25 @@ pub trait Store: Send + Sync {
         exclude: Option<Uuid>,
     ) -> Result<bool, StoreError>;
 
-    /// Create a folder row (sha256 = `dir:` placeholder).
+    /// Create a folder row (sha256 = `dir:` placeholder) in `bucket_id`.
+    ///
+    /// The bucket comes from the caller: a child inherits its parent's
+    /// bucket, a root folder takes the resolved target bucket (the
+    /// bootstrap bucket in this slice). `parent_id = Some(parent)` with
+    /// a parent in another bucket is a `Conflict` (R-G's cross-bucket
+    /// guard; the same refusal `set_parent` gives a move).
     async fn create_folder(
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         name: &str,
+        bucket_id: Option<Uuid>,
     ) -> Result<FileRecord, StoreError>;
 
     /// Move a row to a new parent (caller pre-validates name/cycles).
+    /// Refuses a target parent whose `bucket_id` differs from the
+    /// moved row's own (R-G: the folder tree is per bucket; every
+    /// move path shares this one guard). `Conflict` on refusal.
     async fn set_parent(&self, id: Uuid, parent_id: Option<Uuid>) -> Result<(), StoreError>;
 
     /// The chain of ancestors of `id` (nearest first, excluding self).

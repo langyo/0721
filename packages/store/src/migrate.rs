@@ -476,13 +476,44 @@ pub fn bootstrap_sql(bootstrap: &BootstrapBucketParams) -> String {
     bootstrap_sql_statements(bootstrap).join(";\n")
 }
 
+/// The `$`-guard on the bootstrap bucket's `location`.
+///
+/// The location is dollar-quoted as `$loc$…$loc$` data inside the 0007
+/// bootstrap SQL. A value carrying a `$` immediately followed by a
+/// letter or underscore would open a spurious dollar-quote — the
+/// statement text (and `split_statements`' tag scan) would mis-parse it
+/// and the migration would fail half-built or, worse, quote past the
+/// literal. Refuse such values fail-closed (the caller surfaces it as a
+/// startup failure) instead of trying to escape them.
+///
+/// # Errors
+///
+/// A descriptive message when the value cannot ride the dollar-quoting.
+pub fn validate_bootstrap_location(location: &str) -> Result<(), String> {
+    let risky = location
+        .as_bytes()
+        .windows(2)
+        .any(|w| w[0] == b'$' && (w[1].is_ascii_alphanumeric() || w[1] == b'_'));
+    if risky {
+        Err(format!(
+            "the storage location must not contain a `$` followed by a letter or underscore \
+             (dollar-quoted SQL would mis-parse it): {location:?}"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// The bootstrap half as SEPARATE statements (the PG lane's
 /// `Command::Sql` executes one statement per prepared call and cannot
 /// carry the `DO $$` block inside a multi-command text; the runner's
 /// raw lane splits on the same boundaries).
-pub fn bootstrap_sql_statements(
-    bootstrap: &BootstrapBucketParams,
-) -> Vec<String> {
+pub fn bootstrap_sql_statements(bootstrap: &BootstrapBucketParams) -> Vec<String> {
+    // Fail-closed on a location that cannot ride the `$loc$` quoting:
+    // refuse the value rather than emit mis-parsed SQL.
+    if let Err(reason) = validate_bootstrap_location(&bootstrap.location) {
+        panic!("{reason}");
+    }
     let formatted = MIGRATION_0007_BOOTSTRAP_SQL
         .replace("$1", &format!("'{}'::uuid", bootstrap.id))
         .replace("$2", &format!("$loc${}$loc$", bootstrap.location))
@@ -552,8 +583,6 @@ fn split_statements(text: &str) -> Vec<String> {
     }
     out.into_iter().filter(|s| !s.is_empty()).collect()
 }
-
-
 
 #[cfg(test)]
 mod tests {

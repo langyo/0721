@@ -1069,9 +1069,17 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     let file_id = dto["id"].as_str().unwrap().to_owned();
 
     // Arm the interleave: the "upload" lands its live row exactly when the
-    // delete handler reaches the unlink.
+    // delete handler reaches the unlink. The racing row shares the
+    // admin row's bucket (the same bootstrap bucket) so its refcount
+    // protects the blob.
     *racy.payload.lock().unwrap() = Some((
         i0721_proto::NewFile {
+            bucket_id: state
+                .store
+                .get_file(uuid::Uuid::parse_str(file_id.as_str()).unwrap())
+                .await
+                .unwrap()
+                .and_then(|r| r.bucket_id),
             parent_id: None,
             owner_id: other.id,
             name: "raced.png".to_owned(),
@@ -4086,7 +4094,7 @@ async fn netdisk_upload_into_folder_gates_ownership() {
         .unwrap();
     let member_folder = state
         .store
-        .create_folder(member.id, None, "theirs")
+        .create_folder(member.id, None, "theirs", None)
         .await
         .unwrap();
 
@@ -4126,6 +4134,7 @@ async fn netdisk_upload_into_folder_gates_ownership() {
                 .id,
             None,
             "mine",
+            None,
         )
         .await
         .unwrap();
@@ -4158,7 +4167,7 @@ async fn netdisk_folder_list_scope_and_timeline() {
     // Admin's own tree.
     let _folder = state
         .store
-        .create_folder(admin_id, None, "mine")
+        .create_folder(admin_id, None, "mine", None)
         .await
         .unwrap();
     let (_, dto) = upload(&state, &token, tiny_png(), "own.png").await;
@@ -4177,7 +4186,7 @@ async fn netdisk_folder_list_scope_and_timeline() {
         .unwrap();
     state
         .store
-        .create_folder(member.id, None, "theirs")
+        .create_folder(member.id, None, "theirs", None)
         .await
         .unwrap();
     let member_token = state.signer.sign(member.id, Timestamp::now());
@@ -4241,7 +4250,12 @@ async fn netdisk_folder_delete_cascades_and_reclaims_blobs() {
     // rows exist — tiny_png dedupes per owner).
     let f = state
         .store
-        .create_folder(admin_id, None, "f")
+        .create_folder(
+            admin_id,
+            None,
+            "f",
+            state.registry.bootstrap_bucket_id().ok(),
+        )
         .await
         .unwrap();
     let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
@@ -4255,7 +4269,7 @@ async fn netdisk_folder_delete_cascades_and_reclaims_blobs() {
         .unwrap();
     let sub = state
         .store
-        .create_folder(admin_id, Some(f.id), "sub")
+        .create_folder(admin_id, Some(f.id), "sub", f.bucket_id)
         .await
         .unwrap();
     let mut other_png = tiny_png();
@@ -4441,7 +4455,12 @@ async fn netdisk_cascade_reclaims_thumbnail_cache_slot() {
 
     let f = state
         .store
-        .create_folder(admin_id, None, "photos")
+        .create_folder(
+            admin_id,
+            None,
+            "photos",
+            state.registry.bootstrap_bucket_id().ok(),
+        )
         .await
         .unwrap();
     let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
@@ -4639,12 +4658,12 @@ async fn netdisk_memory_store_rename_refuses_same_layer_duplicate() {
 
     let a = state
         .store
-        .create_folder(admin_id, None, "alpha")
+        .create_folder(admin_id, None, "alpha", None)
         .await
         .unwrap();
     let b = state
         .store
-        .create_folder(admin_id, None, "beta")
+        .create_folder(admin_id, None, "beta", None)
         .await
         .unwrap();
 
@@ -4672,7 +4691,7 @@ async fn netdisk_memory_list_folder_pagination() {
     for i in 0..5 {
         state
             .store
-            .create_folder(admin_id, None, &format!("p{i}"))
+            .create_folder(admin_id, None, &format!("p{i}"), None)
             .await
             .unwrap();
     }
@@ -4766,7 +4785,12 @@ async fn c1_cross_owner_thumbnail_survives_cascade() {
     // bytes (shared blob, per-owner rows, own thumbnail).
     let f = state
         .store
-        .create_folder(admin_id, None, "mine")
+        .create_folder(
+            admin_id,
+            None,
+            "mine",
+            state.registry.bootstrap_bucket_id().ok(),
+        )
         .await
         .unwrap();
     let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
@@ -4814,12 +4838,12 @@ async fn c1_memory_rename_precheck_friendly_conflict() {
         .id;
     let a = state
         .store
-        .create_folder(admin_id, None, "one")
+        .create_folder(admin_id, None, "one", None)
         .await
         .unwrap();
     let b = state
         .store
-        .create_folder(admin_id, None, "two")
+        .create_folder(admin_id, None, "two", None)
         .await
         .unwrap();
     let result = state.store.rename_file(b.id, "one").await;
@@ -8234,15 +8258,17 @@ async fn health_reports_unreadable_settings_instead_of_default() {
         }
         async fn count_live_files_by_storage_key(
             &self,
+            b: Option<uuid::Uuid>,
             k: &str,
         ) -> Result<u64, i0721_store::StoreError> {
-            self.0.count_live_files_by_storage_key(k).await
+            self.0.count_live_files_by_storage_key(b, k).await
         }
         async fn count_live_files_by_thumbnail_key(
             &self,
+            b: Option<uuid::Uuid>,
             k: &str,
         ) -> Result<u64, i0721_store::StoreError> {
-            self.0.count_live_files_by_thumbnail_key(k).await
+            self.0.count_live_files_by_thumbnail_key(b, k).await
         }
         async fn create_file(
             &self,
@@ -8307,8 +8333,9 @@ async fn health_reports_unreadable_settings_instead_of_default() {
             o: uuid::Uuid,
             p: Option<uuid::Uuid>,
             n: &str,
+            b: Option<uuid::Uuid>,
         ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
-            self.0.create_folder(o, p, n).await
+            self.0.create_folder(o, p, n, b).await
         }
         async fn set_parent(
             &self,

@@ -315,7 +315,7 @@ pub fn file_model_from_new(id: Uuid, file: &NewFile, created_at: Timestamp) -> F
         mime: file.mime.clone(),
         size: file.size,
         sha256: file.sha256.clone(),
-        bucket_id: None,
+        bucket_id: file.bucket_id,
         storage_backend: file.storage_backend.clone(),
         storage_key: file.storage_key.clone(),
         thumbnail_key: file.thumbnail_key.clone(),

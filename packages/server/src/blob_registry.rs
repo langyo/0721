@@ -119,6 +119,8 @@ pub struct BlobRegistry {
     /// Slug of the earliest-CREATED enabled bootstrap bucket — the rows
     /// whose `bucket_id` is NULL resolve here.
     bootstrap: Option<String>,
+    /// The bootstrap bucket's id (fresh rows' `bucket_id` value).
+    bootstrap_id: Option<uuid::Uuid>,
 }
 
 impl std::fmt::Debug for BucketEntry {
@@ -160,44 +162,34 @@ impl BlobRegistry {
             .iter()
             .filter(|row| row.is_bootstrap && row.enabled)
             .min_by_key(|row| (row.created_at, row.slug.clone()))
-            .map(|row| (row.slug.clone(), row.backend));
-        let (bootstrap, bootstrap_backend) = match bootstrap {
-            Some((slug, backend)) => (Some(slug), Some(backend)),
-            None => (None, None),
+            .map(|row| (row.slug.clone(), row.backend, row.id));
+        let (bootstrap, bootstrap_backend, bootstrap_id) = match bootstrap {
+            Some((slug, backend, id)) => (Some(slug), Some(backend), Some(id)),
+            None => (None, None, None),
         };
         Ok(Self {
             entries,
             by_id,
             bootstrap,
             bootstrap_backend,
+            bootstrap_id,
         })
     }
 
     /// A single-entry registry (test fixtures): everything routes to
-    /// `store`, rows with or without a bucket alike.
+    /// `store`, rows with or without a bucket alike. The fixture lane
+    /// mints a synthetic bootstrap id so `resolve_upload_bucket` /
+    /// fresh rows carry a bucket id that resolves back to this store.
     #[must_use]
     pub fn single(store: Arc<dyn BlobStore>) -> Arc<Self> {
-        let entries = HashMap::from([(
-            "bootstrap".to_owned(),
-            BucketEntry {
-                slug: "bootstrap".to_owned(),
-                state: BucketState::Ready,
-                reason: None,
-                store: Some(store),
-            },
-        )]);
-        Arc::new(Self {
-            entries,
-            by_id: HashMap::new(),
-            bootstrap: Some("bootstrap".to_owned()),
-            bootstrap_backend: Some(BucketBackend::Local),
-        })
+        Self::single_tagged(store, BucketBackend::Local)
     }
 
     /// A single-entry registry with an explicit backend tag (the
     /// fixture lane where the tag must follow a chosen backend).
     #[must_use]
     pub fn single_tagged(store: Arc<dyn BlobStore>, backend: BucketBackend) -> Arc<Self> {
+        let id = uuid::Uuid::new_v4();
         let entries = HashMap::from([(
             "bootstrap".to_owned(),
             BucketEntry {
@@ -209,9 +201,10 @@ impl BlobRegistry {
         )]);
         Arc::new(Self {
             entries,
-            by_id: HashMap::new(),
+            by_id: HashMap::from([(id, "bootstrap".to_owned())]),
             bootstrap: Some("bootstrap".to_owned()),
             bootstrap_backend: Some(backend),
+            bootstrap_id: Some(id),
         })
     }
 
@@ -299,6 +292,42 @@ impl BlobRegistry {
     /// [`BlobError::NoBootstrap`] when no enabled bootstrap bucket exists.
     pub fn bootstrap_backend_tag(&self) -> Result<BucketBackend, BlobError> {
         self.bootstrap_backend.ok_or(BlobError::NoBootstrap)
+    }
+
+    /// The bootstrap bucket's id — the value fresh rows carry in
+    /// `bucket_id` so they route by row from birth.
+    ///
+    /// # Errors
+    ///
+    /// [`BlobError::NoBootstrap`] when no enabled bootstrap bucket exists.
+    pub fn bootstrap_bucket_id(&self) -> Result<uuid::Uuid, BlobError> {
+        self.bootstrap_id.ok_or(BlobError::NoBootstrap)
+    }
+
+    /// R-I's upload-target outlet (the ONLY source `run_upload` reads).
+    ///
+    /// P1 form: the override is always `None` (the `?bucket=` / MCP
+    /// `bucket` parameter arrives with P2a), so the target is the
+    /// enabled bootstrap bucket. A resolution failure is an ERROR —
+    /// never a fallback to another bucket (I2; the guard test
+    /// `upload_without_override_never_falls_back_to_the_bootstrap_bucket`
+    /// pins this and MUT:M-B3 makes the fallback red).
+    ///
+    /// Returns `(bucket_id, backend tag, store)` — the row's `bucket_id`
+    /// value, its `storage_backend` tag and the store the bytes go to.
+    ///
+    /// # Errors
+    ///
+    /// [`BlobError::NoBootstrap`] when no enabled bootstrap bucket exists
+    /// (the caller surfaces it as an error, never a fallback).
+    pub fn resolve_upload_bucket(
+        &self,
+        _override: Option<&str>,
+    ) -> Result<(uuid::Uuid, BucketBackend, Arc<dyn BlobStore>), BlobError> {
+        let id = self.bootstrap_id.ok_or(BlobError::NoBootstrap)?;
+        let backend = self.bootstrap_backend.ok_or(BlobError::NoBootstrap)?;
+        let store = self.bootstrap_store()?;
+        Ok((id, backend, store))
     }
 }
 

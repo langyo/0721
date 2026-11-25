@@ -79,27 +79,41 @@ pub async fn download(
         }
     }
 
-    let record = state
-        .store
-        .get_file_by_storage_key(&key)
-        .await?
+    // R-J's P1 form: the determination is a SET predicate over ALL live
+    // rows with this key (never a short-circuit to the first row), and
+    // the serving row is the first one by `id ASC` whose bucket is
+    // Ready AND enabled. No live row → 404; live rows but no usable
+    // serving row → 404 (P1 has anonymous requests only — the 503/403
+    // session branches are P2b). The Referer 403 / malformed-Referer
+    // 400 above stay exactly as they were.
+    let rows = state.store.list_live_rows_by_storage_key(&key).await?;
+    let serving = rows
+        .iter()
+        .find(|row| state.registry.for_row(row).is_ok())
         .ok_or_else(|| ApiError::not_found("media not found"))?;
 
+    // Every byte — original and thumbnail, cached or lazily regenerated
+    // — comes from the SERVING ROW's own bucket (I4).
+    let store = state
+        .registry
+        .for_row(serving)
+        .map_err(|err| ApiError::not_found(format!("media not available: {err}")))?;
+
     let (mime, bytes) = if args.thumbnail.unwrap_or(false) {
-        if let Some(thumb_key) = record.thumbnail_key.as_deref() {
-            if let Some(cached) = state.blobs.get(BlobSlot::Cache, thumb_key).await? {
+        if let Some(thumb_key) = serving.thumbnail_key.as_deref() {
+            if let Some(cached) = store.get(BlobSlot::Cache, thumb_key).await? {
                 ("image/webp".to_owned(), cached)
             } else {
-                regenerate_thumbnail(&state, &record.storage_key, thumb_key).await?
+                regenerate_thumbnail(&store, &serving.storage_key, thumb_key).await?
             }
         } else {
             // No thumbnail recorded (non-image): serve the original.
-            let bytes = read_blob(&state, &record.storage_key).await?;
-            (record.mime.clone(), bytes)
+            let bytes = read_blob(&store, &serving.storage_key).await?;
+            (serving.mime.clone(), bytes)
         }
     } else {
-        let bytes = read_blob(&state, &record.storage_key).await?;
-        (record.mime.clone(), bytes)
+        let bytes = read_blob(&store, &serving.storage_key).await?;
+        (serving.mime.clone(), bytes)
     };
 
     let mut response = ([(header::CONTENT_TYPE, mime)], bytes).into_response();
@@ -110,27 +124,26 @@ pub async fn download(
     Ok(response)
 }
 
-async fn read_blob(state: &AppState, key: &str) -> Result<Bytes, ApiError> {
-    state
-        .blobs
+async fn read_blob(
+    store: &std::sync::Arc<dyn crate::blob::BlobStore>,
+    key: &str,
+) -> Result<Bytes, ApiError> {
+    store
         .get(BlobSlot::Media, key)
         .await?
         .ok_or_else(|| ApiError::not_found("media blob missing"))
 }
 
 /// The legacy lazy path: no cache entry → regenerate from the original
-/// blob, store it, serve it.
+/// blob, store it, serve it — all inside the serving row's bucket.
 async fn regenerate_thumbnail(
-    state: &AppState,
+    store: &std::sync::Arc<dyn crate::blob::BlobStore>,
     storage_key: &str,
     thumb_key: &str,
 ) -> Result<(String, Bytes), ApiError> {
-    let original = read_blob(state, storage_key).await?;
+    let original = read_blob(store, storage_key).await?;
     let thumbnail = thumbnail_for_media(&original)
         .map_err(|err| ApiError::internal(format!("thumbnail regeneration failed: {err}")))?;
-    state
-        .blobs
-        .put(BlobSlot::Cache, thumb_key, &thumbnail)
-        .await?;
+    store.put(BlobSlot::Cache, thumb_key, &thumbnail).await?;
     Ok(("image/webp".to_owned(), thumbnail))
 }

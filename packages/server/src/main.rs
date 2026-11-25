@@ -39,6 +39,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 0007 is about to run: carry the resolved facts into it.
         (true, Some(backend)) => {
             let params = bootstrap_params_for(backend, &config);
+            // Fail-closed: a location that cannot ride the migration's
+            // dollar-quoting must stop the start here, not break 0007
+            // mid-flight.
+            if let Err(reason) = i0721_store::migrate::validate_bootstrap_location(&params.location)
+            {
+                return Err(reason.into());
+            }
             tracing::info!(
                 backend,
                 "the bucket migration is pending — bootstrapping its registry bucket"

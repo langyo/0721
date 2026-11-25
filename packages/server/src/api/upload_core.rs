@@ -174,21 +174,17 @@ pub async fn run_upload(
     // 9. Same bytes ⇒ same key ⇒ idempotent write even when another owner
     // already placed the blob (write-then-rename underneath).
     //
-    // The bucket axis: fresh uploads go to the resolved upload bucket —
-    // in this slice that is ALWAYS the enabled bootstrap bucket
-    // (`resolve_upload_bucket`'s P1 form; P2a adds the settings default
-    // and `?bucket=`). Resolution failure is an ERROR — never a
-    // fallback to another bucket (I2).
-    let bucket_store = state
+    // The bucket axis (R-I): the upload target comes ONLY from
+    // `resolve_upload_bucket` — in this slice the override is always
+    // `None`, so it resolves to the enabled bootstrap bucket. A
+    // resolution failure is an ERROR; there is no fallback to any other
+    // bucket (I2). `run_upload` never reads `config.storage_backend`:
+    // the row's tag is the resolved bucket's backend.
+    let (bucket_id, backend_tag, bucket_store) = state
         .registry
-        .bootstrap_store()
+        .resolve_upload_bucket(None)
         .map_err(|err| ApiError::internal(format!("storage backend unavailable: {err}")))?;
-    let storage_backend = state
-        .registry
-        .bootstrap_backend_tag()
-        .map_err(|err| ApiError::internal(format!("storage backend unavailable: {err}")))?
-        .as_str()
-        .to_owned();
+    let storage_backend = backend_tag.as_str().to_owned();
     let storage_key = processed.sha256.clone();
     let thumbnail_key = processed
         .thumbnail
@@ -214,6 +210,9 @@ pub async fn run_upload(
         mime: processed.mime.clone(),
         size: processed.data.len() as i64,
         sha256: processed.sha256.clone(),
+        // The row is born INTO the resolved bucket: reads route by this
+        // id from its first request on.
+        bucket_id: Some(bucket_id),
         // The bucket's OWN backend tag — the row and its bytes live in
         // the same bucket from birth.
         storage_backend,

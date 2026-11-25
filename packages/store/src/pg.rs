@@ -414,11 +414,6 @@ impl Store for PgStore {
             .transpose()
     }
 
-    async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError> {
-        let rows = self.list_live_rows_by_storage_key(key).await?;
-        Ok(rows.into_iter().next())
-    }
-
     async fn list_live_rows_by_storage_key(
         &self,
         key: &str,
@@ -548,17 +543,37 @@ impl Store for PgStore {
         Ok(self.query_one::<FileModel>(cmd).await?.is_some())
     }
 
-    async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError> {
-        let count = self
-            .executor
-            .count::<FileModel>(Some(
-                FileColumn::DeletedAt
-                    .is_null()
-                    .into_inner()
-                    .and(FileColumn::StorageKey.eq(key).into_inner()),
-            ))
-            .await?;
-        Ok(count as u64)
+    async fn count_live_files_by_storage_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT COUNT(*) AS n FROM files WHERE deleted_at IS NULL \
+                   AND bucket_id IS NOT DISTINCT FROM $1 AND storage_key = $2"
+                .to_owned(),
+            params: vec![
+                bucket_id
+                    .map(|id| Value::Uuid(id.to_string()))
+                    .unwrap_or(Value::Null),
+                Value::Text(key.to_owned()),
+            ],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a COUNT".to_owned()));
+        };
+        let n = rows
+            .first()
+            .and_then(|row| row.iter().next())
+            .and_then(|v| match v {
+                Value::I64(n) => Some(*n),
+                Value::I32(n) => Some(i64::from(*n)),
+                _ => None,
+            })
+            .unwrap_or(0);
+        Ok(n as u64)
     }
 
     async fn get_oauth_identity(
@@ -618,22 +633,37 @@ impl Store for PgStore {
         }
     }
 
-    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError> {
-        let cmd = Command::Select {
-            table: FileModel::TABLE.to_owned(),
-            filter: Some(
-                FileColumn::DeletedAt
-                    .is_null()
-                    .into_inner()
-                    .and(FileColumn::ThumbnailKey.eq(key).into_inner()),
-            ),
-            order_by: vec![],
-            limit: None,
-            offset: None,
-            lock: None,
-            distinct: false,
+    async fn count_live_files_by_thumbnail_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT COUNT(*) AS n FROM files WHERE deleted_at IS NULL \
+                   AND bucket_id IS NOT DISTINCT FROM $1 AND thumbnail_key = $2"
+                .to_owned(),
+            params: vec![
+                bucket_id
+                    .map(|id| Value::Uuid(id.to_string()))
+                    .unwrap_or(Value::Null),
+                Value::Text(key.to_owned()),
+            ],
         };
-        Ok(self.query_all::<FileModel>(cmd).await?.len() as u64)
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a COUNT".to_owned()));
+        };
+        let n = rows
+            .first()
+            .and_then(|row| row.iter().next())
+            .and_then(|v| match v {
+                Value::I64(n) => Some(*n),
+                Value::I32(n) => Some(i64::from(*n)),
+                _ => None,
+            })
+            .unwrap_or(0);
+        Ok(n as u64)
     }
 
     async fn create_api_key(&self, record: &i0721_proto::ApiKeyRecord) -> Result<(), StoreError> {
@@ -919,6 +949,7 @@ impl Store for PgStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         name: &str,
+        bucket_id: Option<Uuid>,
     ) -> Result<FileRecord, StoreError> {
         if self
             .folder_name_taken(owner_id, parent_id, name, None)
@@ -927,6 +958,17 @@ impl Store for PgStore {
             return Err(StoreError::Conflict(format!(
                 "name {name:?} already exists in this folder"
             )));
+        }
+        // R-G: a child inherits its parent's bucket — a caller passing a
+        // different bucket than the parent's is refused, not silently
+        // re-seated (the same refusal `set_parent` gives a move).
+        if let Some(parent) = parent_id {
+            let parent_row = self.get_file(parent).await?;
+            if parent_row.map(|r| r.bucket_id) != Some(bucket_id) {
+                return Err(StoreError::Conflict(
+                    "cannot create a folder across buckets".to_owned(),
+                ));
+            }
         }
         let model = FileModel {
             id: Uuid::new_v4(),
@@ -937,7 +979,7 @@ impl Store for PgStore {
             mime: "inode/directory".to_owned(),
             size: 0,
             sha256: format!("dir:{}", Uuid::new_v4().simple()),
-            bucket_id: None,
+            bucket_id,
             storage_backend: "local".to_owned(),
             storage_key: String::new(),
             thumbnail_key: None,
@@ -964,6 +1006,19 @@ impl Store for PgStore {
                     "name {:?} already exists in the target folder",
                     current.name
                 )));
+            }
+            // R-G: the folder tree is per bucket. A move whose target
+            // parent sits in another bucket is refused here — the ONE
+            // guard every move path shares (the RPC lane has no second
+            // bypass).
+            let parent_bucket = match parent_id {
+                Some(pid) => self.get_file(pid).await?.map(|r| r.bucket_id),
+                None => Some(None),
+            };
+            if parent_bucket != Some(current.bucket_id) {
+                return Err(StoreError::Conflict(
+                    "cannot move a row into a folder in another bucket".to_owned(),
+                ));
             }
         }
         let cmd = update_command::<FileModel>(
