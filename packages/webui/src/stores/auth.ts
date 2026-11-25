@@ -15,9 +15,10 @@ import type { UserDto } from "@/types";
  * The credential lives in the httpOnly cookie the REST login plants;
  * this store keeps only the USER projection in memory (nothing session-
  * shaped is persisted: no localStorage key, no token the page could
- * leak). A reload restores the session by proving the cookie over the
- * RPC lane (`auth.verify`); a 401 anywhere drops the in-memory state
- * and the router guard lands on /login.
+ * leak). A reload restores the session over the REST lane (`refresh` —
+ * which both proves AND rotates the cookie, so there is no separate
+ * `auth.verify` probe anywhere since R-M①); a 401 anywhere drops the
+ * in-memory state and the router guard lands on /login.
  */
 export const useAuthStore = defineStore("auth", () => {
   const user = ref<UserDto | null>(null);
@@ -44,10 +45,12 @@ export const useAuthStore = defineStore("auth", () => {
     if (user.value !== null) return user.value;
     restoring.value = true;
     try {
-      // Proves the cookie: no token anywhere in this flow.
-      user.value = await api.verify();
+      // Proves the cookie (and rotates it): no token anywhere in this
+      // flow, and no `auth.verify` probe — refresh answers the user too.
+      const session = await api.refresh();
+      user.value = session.user;
       connectTransport();
-      return user.value;
+      return session.user;
     } catch {
       // No cookie / expired cookie: nothing to clear client-side (the
       // cookie is httpOnly); the router guard sends the visitor to
