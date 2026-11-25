@@ -10083,6 +10083,159 @@ async fn bucket_scope_denials_are_jsonrpc_frames_not_tool_errors() {
     );
 }
 
+/// §7's MCP `upload_file` second arm: a key whose `buckets` array does
+/// not include the target bucket answers the `-32001` FRAME naming the
+/// bucket (order: ops → key buckets → user access), never an isError
+/// tool result.
+/// MUT:§7-UP — dropping the key-buckets check from the upload lane's
+/// precheck (mcp.rs) turns this red.
+#[tokio::test]
+async fn mcp_upload_file_with_a_bucket_outside_the_key_answers_the_32001_frame() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    let (state, _second_id, _store) = plant_second_bucket(&base_state, "mcp-target", true);
+    plant_bucket(&state, "mcp-target", true, false, true).await;
+    // The key holds ALL ops but an explicit EMPTY buckets array: the
+    // upload lane's second arm must fire before anything else.
+    let (_, key) = mcp_api_key_with_at(&state, &admin_token, "up-gated", all_ops(), None).await;
+    let record = state
+        .store
+        .find_api_key_by_hash(&mcp_test_helper::hash(&key))
+        .await
+        .unwrap()
+        .unwrap();
+    state
+        .store
+        .update_api_key(
+            record.id,
+            record.name.as_str(),
+            r#"{"ops":["read","upload","share"],"buckets":[]}"#,
+            record.expires_at.as_deref(),
+        )
+        .await
+        .unwrap();
+
+    let (mut sse, session_id) = mcp_handshake(&state, &key).await;
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        1,
+        "tools/call",
+        serde_json::json!({"name": "upload_file", "arguments": {
+            "content_base64": base64_of(&tiny_png()),
+            "name": "gated.png",
+            "bucket": "mcp-target",
+        }}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"error\"").await;
+    let envelope = sse_envelope(&frames);
+    assert_eq!(
+        envelope["error"]["code"], SCOPE_DENIED,
+        "the bucket-outside-the-key denial is a FRAME: {envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("mcp-target"),
+        "the frame names the bucket: {envelope}"
+    );
+    assert!(
+        envelope.get("result").is_none(),
+        "never an isError result: {envelope}"
+    );
+}
+
+/// R-L arm ③ over MCP: the key's buckets INCLUDE the file's bucket but
+/// the USER holds an explicit deny-share grant row → the `-32005` FRAME
+/// naming the bucket (§7's third share arm).
+/// MUT:R-L-MCP — dropping the `Need::Share` frame from
+/// `get_share_link`'s precheck (mcp.rs) turns this red.
+#[tokio::test]
+async fn mcp_get_share_link_without_the_user_share_bit_answers_the_32005_frame() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    let (state, second_id, _store) = plant_second_bucket(&base_state, "share-gated", true);
+    // The store row MUST carry the registry's id (bucket_row_for_id
+    // prefers the store's rows; a mismatched id would fall through to
+    // the registry's synthesized signup-open posture).
+    let memory = state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store");
+    memory.seed_bucket(i0721_proto::StorageBucketRecord {
+        id: second_id,
+        slug: "share-gated".to_owned(),
+        display_name: "share-gated".to_owned(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: "loc".to_owned(),
+        endpoint_ref: "x".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: false,
+        enabled: true,
+        is_bootstrap: false,
+        created_at: Timestamp::now(),
+    });
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    // The explicit deny-share row: visible, writable, but NO share bit.
+    state
+        .store
+        .set_bucket_grant(member.id, second_id, true, true, false)
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    let (_, own) = upload_bucket(&state, &member_token, png_of(4, 4), "mine.png", "share-gated")
+        .await;
+    let file_id = own["id"].as_str().unwrap().to_owned();
+
+    // The member's OWN key: ops include share, buckets include
+    // share-gated — the OPS and key-buckets arms pass, the USER's
+    // missing share bit is what must refuse.
+    let (kid, key) = plant_api_key(
+        &state,
+        member.id,
+        "member-share",
+        r#"{"ops":["read","upload","share"],"buckets":["share-gated"]}"#,
+        None,
+    )
+    .await;
+    let _ = kid;
+
+    let (mut sse, session_id) = mcp_handshake(&state, &key).await;
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        1,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": file_id}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"error\"").await;
+    let envelope = sse_envelope(&frames);
+    assert_eq!(
+        envelope["error"]["code"], -32005,
+        "the missing user share bit is a FRAME: {envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("share-gated"),
+        "the frame names the bucket: {envelope}"
+    );
+}
+
 /// R-B's live-rows guard: a NON-bootstrap bucket holding a live file
 /// row refuses the delete with the conflict shape — empty it first.
 /// MUT:R-B-ROWS — dropping the `count_live_files_by_bucket` guard from
