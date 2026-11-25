@@ -111,6 +111,11 @@ pub const ZERO_UUID_SQL: &str = "'00000000-0000-0000-0000-000000000000'::uuid";
 /// recreates it around hand-planted rows).
 pub const FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL: &str = "files_owner_folder_name_live_key";
 
+/// The bucket-aware same-layer name index's NAME (the PG lane drops /
+/// recreates it around hand-planted rows).
+pub const FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL_SLUG: &str =
+    "files_owner_bucket_folder_name_live_key";
+
 /// The bucket-aware same-layer name index 0007 installs (statement 5).
 pub const FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL: &str =
     "CREATE UNIQUE INDEX files_owner_bucket_folder_name_live_key \
@@ -468,11 +473,87 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
 /// and the location is dollar-quoted as data so an arbitrary env value
 /// cannot break out of the literal.
 pub fn bootstrap_sql(bootstrap: &BootstrapBucketParams) -> String {
-    MIGRATION_0007_BOOTSTRAP_SQL
+    bootstrap_sql_statements(bootstrap).join(";\n")
+}
+
+/// The bootstrap half as SEPARATE statements (the PG lane's
+/// `Command::Sql` executes one statement per prepared call and cannot
+/// carry the `DO $$` block inside a multi-command text; the runner's
+/// raw lane splits on the same boundaries).
+pub fn bootstrap_sql_statements(
+    bootstrap: &BootstrapBucketParams,
+) -> Vec<String> {
+    let formatted = MIGRATION_0007_BOOTSTRAP_SQL
         .replace("$1", &format!("'{}'::uuid", bootstrap.id))
         .replace("$2", &format!("$loc${}$loc$", bootstrap.location))
-        .replace("$3", &format!("'{}'", bootstrap.backend))
+        .replace("$3", &format!("'{}'", bootstrap.backend));
+    split_statements(&formatted)
 }
+
+/// Split a formatted SQL text into single statements on top-level `;`
+/// (a `;` inside dollar quotes is data).
+fn split_statements(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut in_dollar = false;
+    let mut tag = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        current.push(c);
+        if c == '$' {
+            // Possible dollar-quote boundary.
+            if in_dollar {
+                // Closing tag must match the opening one (an empty tag
+                // closes `$$` immediately on the next `$`).
+                let closing: String = chars.clone().take(tag.len()).collect();
+                if closing == tag {
+                    for _ in 0..tag.len() {
+                        if let Some(n) = chars.next() {
+                            current.push(n);
+                        }
+                    }
+                    in_dollar = false;
+                    tag.clear();
+                }
+            } else {
+                // Opening: read the tag until the next `$` (an empty tag
+                // is the valid `$$` form).
+                tag.clear();
+                loop {
+                    match chars.peek().copied() {
+                        Some('$') => {
+                            chars.next();
+                            current.push('$');
+                            in_dollar = true;
+                            break;
+                        }
+                        Some(n) if n.is_alphanumeric() || n == '_' => {
+                            tag.push(n);
+                            chars.next();
+                            current.push(n);
+                        }
+                        _ => {
+                            // Not a dollar quote (e.g. a lone `$` in
+                            // text) — treat as data.
+                            tag.clear();
+                            break;
+                        }
+                    }
+                }
+            }
+        } else if c == ';' && !in_dollar {
+            out.push(current.trim().to_owned());
+            current.clear();
+        }
+    }
+    let tail = current.trim();
+    if !tail.is_empty() {
+        out.push(tail.to_owned());
+    }
+    out.into_iter().filter(|s| !s.is_empty()).collect()
+}
+
+
 
 #[cfg(test)]
 mod tests {

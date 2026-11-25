@@ -516,6 +516,15 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
             params: vec![],
         };
         store.executor.execute(&drop).await.unwrap();
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "DROP INDEX IF EXISTS files_owner_bucket_folder_name_live_key".to_owned(),
+                params: vec![],
+            })
+            .await
+            .unwrap();
 
         for (name, sha, delay_ms) in [
             ("cat.png", "aaaa0000", 0),
@@ -583,9 +592,10 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
             dialect: lacrymira::Dialect::Postgres,
             text: format!(
                 "CREATE UNIQUE INDEX IF NOT EXISTS {} \
-                   ON files (owner_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name) \
+                   ON files (owner_id, COALESCE(bucket_id, '00000000-0000-0000-0000-000000000000'::uuid), \
+                   COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name) \
                    WHERE deleted_at IS NULL",
-                i0721_store::migrate::FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL
+                i0721_store::migrate::FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL_SLUG
             ),
             params: vec![],
         };
@@ -648,6 +658,15 @@ async fn pg_migration_0004_dedupe_survives_three_fold_duplicates() {
             params: vec![],
         };
         store.executor.execute(&drop).await.unwrap();
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "DROP INDEX IF EXISTS files_owner_bucket_folder_name_live_key".to_owned(),
+                params: vec![],
+            })
+            .await
+            .unwrap();
 
         for (i, name) in ["x.bin", "x.bin", "x.bin", "x.bin (2)"]
             .into_iter()
@@ -705,9 +724,10 @@ async fn pg_migration_0004_dedupe_survives_three_fold_duplicates() {
             dialect: lacrymira::Dialect::Postgres,
             text: format!(
                 "CREATE UNIQUE INDEX IF NOT EXISTS {} \
-                   ON files (owner_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name) \
+                   ON files (owner_id, COALESCE(bucket_id, '00000000-0000-0000-0000-000000000000'::uuid), \
+                   COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name) \
                    WHERE deleted_at IS NULL",
-                i0721_store::migrate::FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL
+                i0721_store::migrate::FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL_SLUG
             ),
             params: vec![],
         };
@@ -1215,9 +1235,21 @@ async fn count_null_bucket_rows(store: &PgStore) -> i64 {
 }
 
 /// The migration's statement-3 SQL, formatted with a fresh parameter
-/// set — the exact text the runner executes.
-fn formatted_bootstrap() -> String {
-    bootstrap_sql(&lane_bootstrap())
+/// set — executed statement-by-statement (the lane's `Command::Sql`
+/// carries one command per call; the runner's raw lane splits on the
+/// same boundaries).
+async fn run_bootstrap(store: &PgStore) {
+    for statement in i0721_store::migrate::bootstrap_sql_statements(&lane_bootstrap()) {
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: statement,
+                params: vec![],
+            })
+            .await
+            .expect("bootstrap statement succeeds");
+    }
 }
 
 /// MUT:M1a — gutting the backfill `UPDATE` (statement 3c) leaves
@@ -1232,15 +1264,7 @@ async fn pg_0007_backfill_sql_fills_every_row() {
     plant_file(&store, user.id, "unknown.png", "gcs", None).await;
     assert!(count_null_bucket_rows(&store).await > 0, "precondition");
 
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("the bootstrap half succeeds (upsert + backfill + assertion)");
+    run_bootstrap(&store).await;
     assert_eq!(
         count_null_bucket_rows(&store).await,
         0,
@@ -1258,15 +1282,7 @@ async fn pg_0007_backfill_is_a_fixed_point() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
     plant_file(&store, user.id, "re.png", "local", None).await;
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("first run");
+    run_bootstrap(&store).await;
 
     // Snapshot every row's bucket assignment.
     let before = store
@@ -1281,15 +1297,7 @@ async fn pg_0007_backfill_is_a_fixed_point() {
     let snap_before = format!("{before:?}");
 
     // Second run (re-runnable like the lane always is).
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("second run is a no-op");
+    run_bootstrap(&store).await;
     let after = store
         .executor
         .execute(&lacrymira::Command::Sql {
@@ -1317,15 +1325,7 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
     // Plant one row already carrying a bucket: create a bucket row by
     // running the bootstrap SQL once (it produces bootstrap-local), then
     // reference it.
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("bootstrap first");
+    run_bootstrap(&store).await;
     let bucket_id: uuid::Uuid = {
         let reply = store
             .executor
@@ -1349,15 +1349,7 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
 
     // The backfill runs again — and must not rewrite the owned row's
     // bucket (the WHERE guard).
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("backfill re-runs");
+    run_bootstrap(&store).await;
     let reply = store
         .executor
         .execute(&lacrymira::Command::Sql {
@@ -1410,25 +1402,9 @@ async fn pg_0007_bootstrap_bucket_id_is_stable() {
     };
     // The lane bootstrap already created the row; re-running the SQL
     // with a DIFFERENT minted id must keep the first one.
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("second upsert");
+    run_bootstrap(&store).await;
     let first = read_id().await;
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("third upsert");
+    run_bootstrap(&store).await;
     assert_eq!(read_id().await, first, "the first id stays stable");
 }
 
@@ -1445,15 +1421,7 @@ async fn a_database_migrated_by_0007_has_a_bootstrap_row_per_backend_label() {
     // backend is local (the fixture's).
     plant_file(&store, user.id, "legacy-s3.png", "s3", None).await;
     plant_file(&store, user.id, "legacy-ipfs.png", "ipfs", None).await;
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("bootstrap with legacy labels");
+    run_bootstrap(&store).await;
     let reply = store
         .executor
         .execute(&lacrymira::Command::Sql {
@@ -1503,15 +1471,7 @@ async fn rows_are_backfilled_by_their_storage_backend_label() {
     let user = store.create_user(scratch_user()).await.expect("user");
     plant_file(&store, user.id, "by-s3.png", "s3", None).await;
     plant_file(&store, user.id, "by-local.png", "local", None).await;
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("backfill");
+    run_bootstrap(&store).await;
     let s3_bucket = store
         .get_storage_bucket_by_slug("bootstrap-s3")
         .await
@@ -1579,15 +1539,7 @@ async fn folders_and_unlabelled_rows_follow_the_current_backend() {
         })
         .await
         .unwrap();
-    store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: formatted_bootstrap(),
-            params: vec![],
-        })
-        .await
-        .expect("backfill");
+    run_bootstrap(&store).await;
     let local_bucket = store
         .get_storage_bucket_by_slug("bootstrap-local")
         .await
