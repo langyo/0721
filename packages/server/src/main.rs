@@ -38,8 +38,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match (pending, bootstrap_backend) {
         // 0007 is about to run: carry the resolved facts into it.
         (true, Some(backend)) => {
-            let params = bootstrap_params_for(&backend, &config);
-            tracing::info!(backend, "the bucket migration is pending — bootstrapping its registry bucket");
+            let params = bootstrap_params_for(backend, &config);
+            tracing::info!(
+                backend,
+                "the bucket migration is pending — bootstrapping its registry bucket"
+            );
             i0721_store::PgStore::set_bootstrap_params(params);
             config.storage_backend = None;
         }
@@ -68,17 +71,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The per-bucket registry: DB rows are the authority; a read failure
     // or an EMPTY table fails the start (the registry never invents rows).
     let rows = store.list_storage_buckets().await?;
-    let registry = i0721_server::blob_registry::BlobRegistry::build(
-        rows,
-        |key| std::env::var(key).ok(),
-    )
-    .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+    let registry =
+        i0721_server::blob_registry::BlobRegistry::build(rows, |key| std::env::var(key).ok())
+            .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
     let blobs: Arc<dyn i0721_server::blob::BlobStore> = registry
         .bootstrap_store()
         .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
     let listen = config.listen;
-    let state = AppState::with_registry(Arc::new(store), Arc::new(registry), Arc::new(config), blobs);
+    let state =
+        AppState::with_registry(Arc::new(store), Arc::new(registry), Arc::new(config), blobs);
 
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(
@@ -97,10 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// The bootstrap bucket's migration facts: the backend label the startup
 /// decided plus its location (S3 bucket name / media root / kubo
 /// host:port), read from the SAME env the legacy backend selection used.
-fn bootstrap_params_for(
-    backend: &str,
-    config: &Config,
-) -> i0721_store::BootstrapBucketParams {
+fn bootstrap_params_for(backend: &str, config: &Config) -> i0721_store::BootstrapBucketParams {
     let location = match backend {
         "s3" => std::env::var("I0721_S3_BUCKET").unwrap_or_else(|_| "unknown".to_owned()),
         "ipfs" => std::env::var("I0721_IPFS_API").unwrap_or_else(|_| "unknown".to_owned()),

@@ -1141,9 +1141,8 @@ async fn pg_api_key_legacy_scopes_normalize_and_expiry_round_trips() {
 // the runner's bookkeeping.
 
 use i0721_store::migrate::{
-    bootstrap_sql, FILES_BUCKET_STORAGE_KEY_INDEX_SQL,
-    FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL, FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL,
-    MIGRATION_0007_BOOTSTRAP_SQL, MIGRATION_0007_SCHEMA_SQL,
+    bootstrap_sql, FILES_BUCKET_STORAGE_KEY_INDEX_SQL, FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL,
+    FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL, MIGRATION_0007_BOOTSTRAP_SQL, MIGRATION_0007_SCHEMA_SQL,
 };
 
 /// The lane's bootstrap parameter set (`bootstrap-local`, matching the
@@ -1524,10 +1523,7 @@ async fn rows_are_backfilled_by_their_storage_backend_label() {
         .expect("read")
         .expect("bootstrap-local exists");
     let rows = store
-        .list_live_rows_by_storage_key(&format!(
-            "pf{}",
-            ""
-        ))
+        .list_live_rows_by_storage_key(&format!("pf{}", ""))
         .await
         .ok();
     let _ = rows; // lookup by name instead — storage keys are random.
@@ -1578,8 +1574,7 @@ async fn folders_and_unlabelled_rows_follow_the_current_backend() {
         .executor
         .execute(&lacrymira::Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
-            text: "UPDATE files SET storage_backend = '' WHERE name = 'bogus.png'"
-                .to_owned(),
+            text: "UPDATE files SET storage_backend = '' WHERE name = 'bogus.png'".to_owned(),
             params: vec![],
         })
         .await
@@ -1633,23 +1628,31 @@ async fn folders_and_unlabelled_rows_follow_the_current_backend() {
 #[tokio::test]
 async fn second_ipfs_bucket_is_refused() {
     let Some(store) = db().await else { return };
-    fn insert<'a>(store: &'a PgStore, slug: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<lacrymira::Reply, lacrymira::Error>> + 'a>> {
+    fn insert<'a>(
+        store: &'a PgStore,
+        slug: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<lacrymira::Reply, lacrymira::Error>> + 'a>,
+    > {
         Box::pin(async move {
             store
                 .executor
                 .execute(&lacrymira::Command::Sql {
                     dialect: lacrymira::Dialect::Postgres,
-                    text: "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
+                    text:
+                        "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
                            endpoint_ref, anonymous_read, grant_on_signup, enabled, is_bootstrap) \
                            VALUES (gen_random_uuid(), $1, $1, 'ipfs', '127.0.0.1:5001', \
                            'bucket_ipfs_env', TRUE, FALSE, TRUE, FALSE)"
-                        .to_owned(),
+                            .to_owned(),
                     params: vec![lacrymira::Value::Text(slug.to_owned())],
                 })
                 .await
         })
     }
-    let _ = insert(&store, "ipfs-first").await.expect("first ipfs bucket");
+    let _ = insert(&store, "ipfs-first")
+        .await
+        .expect("first ipfs bucket");
     let refused = insert(&store, "ipfs-second").await;
     assert!(
         refused.is_err(),
@@ -1680,9 +1683,7 @@ async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
             .executor
             .execute(&lacrymira::Command::Sql {
                 dialect: lacrymira::Dialect::Postgres,
-                text: format!(
-                    "SELECT COUNT(*) FROM pg_indexes WHERE indexname LIKE '%{present}%'"
-                ),
+                text: format!("SELECT COUNT(*) FROM pg_indexes WHERE indexname LIKE '%{present}%'"),
                 params: vec![],
             })
             .await
@@ -1705,9 +1706,9 @@ async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
         .executor
         .execute(&lacrymira::Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
-            text: format!(
+            text:
                 "SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'files_bucket_storage_key_idx'"
-            ),
+                    .to_owned(),
             params: vec![],
         })
         .await
@@ -1727,7 +1728,9 @@ async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
     assert!(all.contains("CREATE TABLE storage_buckets"), "{all}");
     assert!(all.contains("CREATE TABLE bucket_grants"), "{all}");
     assert!(
-        all.contains("ALTER TABLE files ADD COLUMN bucket_id UUID REFERENCES storage_buckets (id);"),
+        all.contains(
+            "ALTER TABLE files ADD COLUMN bucket_id UUID REFERENCES storage_buckets (id);"
+        ),
         "the column stays nullable (no SET NOT NULL): {all}"
     );
     assert!(MIGRATION_0007_BOOTSTRAP_SQL.contains("WHERE bucket_id IS NULL"));

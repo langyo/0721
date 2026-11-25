@@ -50,11 +50,7 @@ pub struct AppState {
 impl AppState {
     /// Assemble a state from its parts (tests use this with fakes).
     #[must_use]
-    pub fn new(
-        store: Arc<dyn Store>,
-        blobs: Arc<dyn BlobStore>,
-        config: Arc<Config>,
-    ) -> Self {
+    pub fn new(store: Arc<dyn Store>, blobs: Arc<dyn BlobStore>, config: Arc<Config>) -> Self {
         Self::with_registry(
             store,
             BlobRegistry::single_tagged(

@@ -140,10 +140,8 @@ pub trait Store: Send + Sync {
     /// per-row routing consume (spec R-J: the determination is a set
     /// predicate and the order is a single deterministic key, identical
     /// on both stores).
-    async fn list_live_rows_by_storage_key(
-        &self,
-        key: &str,
-    ) -> Result<Vec<FileRecord>, StoreError>;
+    async fn list_live_rows_by_storage_key(&self, key: &str)
+        -> Result<Vec<FileRecord>, StoreError>;
 
     /// Count live rows sharing a storage key — the caller's blob-reclaim
     /// probe (a blob goes away only with its last live row; full GC is a
@@ -284,7 +282,9 @@ pub trait Store: Send + Sync {
 
     /// Every registered bucket (the registry's startup load and the
     /// health lane's row source).
-    async fn list_storage_buckets(&self) -> Result<Vec<i0721_proto::StorageBucketRecord>, StoreError>;
+    async fn list_storage_buckets(
+        &self,
+    ) -> Result<Vec<i0721_proto::StorageBucketRecord>, StoreError>;
 
     /// One bucket by its stable slug.
     async fn get_storage_bucket_by_slug(

@@ -101,11 +101,7 @@ mod tests {
 
     #[test]
     fn backend_round_trips_tags() {
-        for backend in [
-            BucketBackend::Local,
-            BucketBackend::S3,
-            BucketBackend::Ipfs,
-        ] {
+        for backend in [BucketBackend::Local, BucketBackend::S3, BucketBackend::Ipfs] {
             assert_eq!(BucketBackend::parse(backend.as_str()), Some(backend));
         }
         assert_eq!(BucketBackend::parse("gcs"), None);

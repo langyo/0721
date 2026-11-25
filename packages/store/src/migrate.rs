@@ -242,7 +242,7 @@ END $$;"#;
 ///
 /// The labels are derived IN SQL from the live rows — no Rust-side
 /// pre-scan can be authoritative once the migration starts.
-
+///
 /// The deployment facts 0007's bootstrap half needs, resolved by the
 /// caller (fail-closed: no values here, no migration).
 #[derive(Debug, Clone, PartialEq, Eq)]

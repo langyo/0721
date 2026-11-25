@@ -8135,7 +8135,11 @@ async fn health_reports_bucket_unavailable_with_the_missing_var() {
     assert_eq!(health.len(), 1);
     assert_eq!(health[0].state, "unavailable", "{health:?}");
     assert!(
-        health[0].reason.as_deref().unwrap_or_default().contains("I0721_MEDIA_ROOT"),
+        health[0]
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("I0721_MEDIA_ROOT"),
         "the reason names the missing variable: {:?}",
         health[0].reason
     );
@@ -8168,133 +8172,263 @@ async fn health_reports_unreadable_settings_instead_of_default() {
             Ok(Vec::new())
         }
         // Everything else delegates to the inner memory store.
-        async fn list_users(&self, o: u64, l: u64) -> Result<Vec<i0721_proto::UserRecord>, i0721_store::StoreError> {
+        async fn list_users(
+            &self,
+            o: u64,
+            l: u64,
+        ) -> Result<Vec<i0721_proto::UserRecord>, i0721_store::StoreError> {
             self.0.list_users(o, l).await
         }
         async fn count_users(&self) -> Result<u64, i0721_store::StoreError> {
             self.0.count_users().await
         }
-        async fn get_user(&self, id: uuid::Uuid) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
+        async fn get_user(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
             self.0.get_user(id).await
         }
-        async fn get_user_by_username(&self, u: &str) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
+        async fn get_user_by_username(
+            &self,
+            u: &str,
+        ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
             self.0.get_user_by_username(u).await
         }
-        async fn create_user(&self, u: i0721_store::CreateUser) -> Result<i0721_proto::UserRecord, i0721_store::StoreError> {
+        async fn create_user(
+            &self,
+            u: i0721_store::CreateUser,
+        ) -> Result<i0721_proto::UserRecord, i0721_store::StoreError> {
             self.0.create_user(u).await
         }
         async fn delete_user(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
             self.0.delete_user(id).await
         }
-        async fn list_files(&self, o: u64, l: u64) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        async fn list_files(
+            &self,
+            o: u64,
+            l: u64,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.list_files(o, l).await
         }
         async fn count_files(&self) -> Result<u64, i0721_store::StoreError> {
             self.0.count_files().await
         }
-        async fn get_file(&self, id: uuid::Uuid) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        async fn get_file(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.get_file(id).await
         }
-        async fn get_file_by_owner_and_sha256(&self, o: uuid::Uuid, s: &str) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        async fn get_file_by_owner_and_sha256(
+            &self,
+            o: uuid::Uuid,
+            s: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.get_file_by_owner_and_sha256(o, s).await
         }
-        async fn list_live_rows_by_storage_key(&self, k: &str) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        async fn list_live_rows_by_storage_key(
+            &self,
+            k: &str,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.list_live_rows_by_storage_key(k).await
         }
-        async fn count_live_files_by_storage_key(&self, k: &str) -> Result<u64, i0721_store::StoreError> {
+        async fn count_live_files_by_storage_key(
+            &self,
+            k: &str,
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.count_live_files_by_storage_key(k).await
         }
-        async fn count_live_files_by_thumbnail_key(&self, k: &str) -> Result<u64, i0721_store::StoreError> {
+        async fn count_live_files_by_thumbnail_key(
+            &self,
+            k: &str,
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.count_live_files_by_thumbnail_key(k).await
         }
-        async fn create_file(&self, f: i0721_proto::NewFile) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+        async fn create_file(
+            &self,
+            f: i0721_proto::NewFile,
+        ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
             self.0.create_file(f).await
         }
-        async fn rename_file(&self, id: uuid::Uuid, n: &str) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        async fn rename_file(
+            &self,
+            id: uuid::Uuid,
+            n: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.rename_file(id, n).await
         }
         async fn soft_delete_file(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
             self.0.soft_delete_file(id).await
         }
-        async fn get_oauth_identity(&self, p: &str, s: &str) -> Result<Option<uuid::Uuid>, i0721_store::StoreError> {
+        async fn get_oauth_identity(
+            &self,
+            p: &str,
+            s: &str,
+        ) -> Result<Option<uuid::Uuid>, i0721_store::StoreError> {
             self.0.get_oauth_identity(p, s).await
         }
-        async fn link_oauth_identity(&self, p: &str, s: &str, u: uuid::Uuid) -> Result<(), i0721_store::StoreError> {
+        async fn link_oauth_identity(
+            &self,
+            p: &str,
+            s: &str,
+            u: uuid::Uuid,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.link_oauth_identity(p, s, u).await
         }
-        async fn count_folder(&self, o: uuid::Uuid, p: Option<uuid::Uuid>, k: Option<String>) -> Result<u64, i0721_store::StoreError> {
+        async fn count_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            k: Option<String>,
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.count_folder(o, p, k).await
         }
-        async fn list_folder(&self, o: uuid::Uuid, p: Option<uuid::Uuid>, k: Option<String>, off: u64, lim: u64) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        async fn list_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            k: Option<String>,
+            off: u64,
+            lim: u64,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.list_folder(o, p, k, off, lim).await
         }
-        async fn folder_name_taken(&self, o: uuid::Uuid, p: Option<uuid::Uuid>, n: &str, e: Option<uuid::Uuid>) -> Result<bool, i0721_store::StoreError> {
+        async fn folder_name_taken(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            n: &str,
+            e: Option<uuid::Uuid>,
+        ) -> Result<bool, i0721_store::StoreError> {
             self.0.folder_name_taken(o, p, n, e).await
         }
-        async fn create_folder(&self, o: uuid::Uuid, p: Option<uuid::Uuid>, n: &str) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+        async fn create_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            n: &str,
+        ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
             self.0.create_folder(o, p, n).await
         }
-        async fn set_parent(&self, id: uuid::Uuid, p: Option<uuid::Uuid>) -> Result<(), i0721_store::StoreError> {
+        async fn set_parent(
+            &self,
+            id: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.set_parent(id, p).await
         }
-        async fn ancestor_ids(&self, id: uuid::Uuid) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+        async fn ancestor_ids(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
             self.0.ancestor_ids(id).await
         }
-        async fn subtree_live_ids(&self, id: uuid::Uuid) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+        async fn subtree_live_ids(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
             self.0.subtree_live_ids(id).await
         }
-        async fn soft_delete_many(&self, ids: &[uuid::Uuid]) -> Result<u64, i0721_store::StoreError> {
+        async fn soft_delete_many(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.soft_delete_many(ids).await
         }
-        async fn get_files_by_ids(&self, ids: &[uuid::Uuid]) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        async fn get_files_by_ids(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.get_files_by_ids(ids).await
         }
-        async fn create_share(&self, s: i0721_proto::NewShare) -> Result<i0721_proto::ShareRecord, i0721_store::StoreError> {
+        async fn create_share(
+            &self,
+            s: i0721_proto::NewShare,
+        ) -> Result<i0721_proto::ShareRecord, i0721_store::StoreError> {
             self.0.create_share(s).await
         }
-        async fn get_share(&self, t: &str) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        async fn get_share(
+            &self,
+            t: &str,
+        ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
             self.0.get_share(t).await
         }
-        async fn find_share_by_file(&self, o: uuid::Uuid, f: uuid::Uuid) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        async fn find_share_by_file(
+            &self,
+            o: uuid::Uuid,
+            f: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
             self.0.find_share_by_file(o, f).await
         }
-        async fn list_shares(&self, o: uuid::Uuid) -> Result<Vec<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        async fn list_shares(
+            &self,
+            o: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::ShareRecord>, i0721_store::StoreError> {
             self.0.list_shares(o).await
         }
         async fn delete_share(&self, t: &str) -> Result<bool, i0721_store::StoreError> {
             self.0.delete_share(t).await
         }
-        async fn delete_shares_for_files(&self, f: &[uuid::Uuid]) -> Result<u64, i0721_store::StoreError> {
+        async fn delete_shares_for_files(
+            &self,
+            f: &[uuid::Uuid],
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.delete_shares_for_files(f).await
         }
         async fn sum_live_sizes(&self, o: uuid::Uuid) -> Result<i64, i0721_store::StoreError> {
             self.0.sum_live_sizes(o).await
         }
-        async fn set_user_quota(&self, u: uuid::Uuid, q: Option<i64>) -> Result<(), i0721_store::StoreError> {
+        async fn set_user_quota(
+            &self,
+            u: uuid::Uuid,
+            q: Option<i64>,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.set_user_quota(u, q).await
         }
-        async fn create_api_key(&self, r: &i0721_proto::ApiKeyRecord) -> Result<(), i0721_store::StoreError> {
+        async fn create_api_key(
+            &self,
+            r: &i0721_proto::ApiKeyRecord,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.create_api_key(r).await
         }
-        async fn list_api_keys(&self, u: uuid::Uuid) -> Result<Vec<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        async fn list_api_keys(
+            &self,
+            u: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
             self.0.list_api_keys(u).await
         }
         async fn revoke_api_key(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
             self.0.revoke_api_key(id).await
         }
-        async fn update_api_key(&self, id: uuid::Uuid, n: &str, s: &str, e: Option<&str>) -> Result<bool, i0721_store::StoreError> {
+        async fn update_api_key(
+            &self,
+            id: uuid::Uuid,
+            n: &str,
+            s: &str,
+            e: Option<&str>,
+        ) -> Result<bool, i0721_store::StoreError> {
             self.0.update_api_key(id, n, s, e).await
         }
-        async fn find_api_key_by_hash(&self, h: &str) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        async fn find_api_key_by_hash(
+            &self,
+            h: &str,
+        ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
             self.0.find_api_key_by_hash(h).await
         }
-        async fn find_api_key_by_id(&self, id: uuid::Uuid) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        async fn find_api_key_by_id(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
             self.0.find_api_key_by_id(id).await
         }
         async fn touch_api_key(&self, id: uuid::Uuid) -> Result<(), i0721_store::StoreError> {
             self.0.touch_api_key(id).await
         }
-        async fn set_setting(&self, k: &str, v: serde_json::Value) -> Result<(), i0721_store::StoreError> {
+        async fn set_setting(
+            &self,
+            k: &str,
+            v: serde_json::Value,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.set_setting(k, v).await
         }
     }
@@ -8325,7 +8459,9 @@ async fn health_reports_unreadable_settings_instead_of_default() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), 65536).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(
         json["config_source"], "unreadable",
@@ -8354,7 +8490,8 @@ async fn legacy_backend_rows_are_disabled_and_explained_in_health() {
         is_bootstrap: true,
         created_at: Timestamp::now(),
     };
-    let registry = i0721_server::blob_registry::BlobRegistry::build(vec![legacy], |_| None).unwrap();
+    let registry =
+        i0721_server::blob_registry::BlobRegistry::build(vec![legacy], |_| None).unwrap();
     let health = registry.health();
     assert_eq!(health.len(), 1);
     assert_eq!(health[0].state, "unavailable", "{health:?}");
@@ -8467,8 +8604,7 @@ fn ipfs_api_url_with_basic_auth_fails_startup() {
     let err = BlobRegistry::build(vec![bucket], |k| {
         (k == "I0721_IPFS_API").then(|| "http://user:secret@127.0.0.1:5001".to_owned())
     })
-    .err()
-    .expect("basic-auth userinfo must fail the build");
+    .expect_err("basic-auth userinfo must fail the build");
     assert!(
         matches!(err, RegistryError::IpfsUrlUserinfo { .. }),
         "{err}"

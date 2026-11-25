@@ -253,16 +253,10 @@ impl BlobRegistry {
                 // with both), keeping this O(n) over a small table.
                 self.slug_of_bucket_id(row.bucket_id)
                     .ok_or_else(|| BlobError::UnknownBucket {
-                        slug: row
-                            .bucket_id
-                            .map(|id| id.to_string())
-                            .unwrap_or_default(),
+                        slug: row.bucket_id.map(|id| id.to_string()).unwrap_or_default(),
                     })?
             }
-            None => self
-                .bootstrap
-                .clone()
-                .ok_or(BlobError::NoBootstrap)?,
+            None => self.bootstrap.clone().ok_or(BlobError::NoBootstrap)?,
         };
         self.resolve(&slug)
     }
@@ -459,11 +453,22 @@ mod tests {
     use i0721_proto::StorageBucketRecord;
     use jiff::Timestamp;
 
-    fn bucket(slug: &str, backend: BucketBackend, endpoint_ref: &str, enabled: bool) -> StorageBucketRecord {
+    fn bucket(
+        slug: &str,
+        backend: BucketBackend,
+        endpoint_ref: &str,
+        enabled: bool,
+    ) -> StorageBucketRecord {
         bucket_full(slug, backend, endpoint_ref, enabled, true)
     }
 
-    fn bucket_full(slug: &str, backend: BucketBackend, endpoint_ref: &str, enabled: bool, is_bootstrap: bool) -> StorageBucketRecord {
+    fn bucket_full(
+        slug: &str,
+        backend: BucketBackend,
+        endpoint_ref: &str,
+        enabled: bool,
+        is_bootstrap: bool,
+    ) -> StorageBucketRecord {
         StorageBucketRecord {
             id: uuid::Uuid::new_v4(),
             slug: slug.to_owned(),
@@ -507,7 +512,12 @@ mod tests {
     #[test]
     fn a_null_row_never_resolves_to_an_unrelated_ready_bucket() {
         let ready = bucket_full("other", BucketBackend::Local, "x", true, false);
-        let disabled = bucket("bootstrap-local", BucketBackend::Local, "legacy_local_env", false);
+        let disabled = bucket(
+            "bootstrap-local",
+            BucketBackend::Local,
+            "legacy_local_env",
+            false,
+        );
         let registry = BlobRegistry::build(vec![ready, disabled], |_| None).unwrap();
         assert!(matches!(
             registry.for_row(&row_of(None)),
@@ -542,7 +552,12 @@ mod tests {
     fn health_reports_the_missing_variable_by_name() {
         // MUT:M10 lives in the health lane; this pins the registry half:
         // the reason must name the exact variable.
-        let b = bucket("bootstrap-local", BucketBackend::Local, "legacy_local_env", true);
+        let b = bucket(
+            "bootstrap-local",
+            BucketBackend::Local,
+            "legacy_local_env",
+            true,
+        );
         let registry = BlobRegistry::build(vec![b], |_| None).unwrap();
         let health = registry.health();
         assert_eq!(health.len(), 1);
@@ -560,12 +575,16 @@ mod tests {
 
     #[test]
     fn ipfs_url_with_userinfo_fails_the_build() {
-        let b = bucket("bootstrap-ipfs", BucketBackend::Ipfs, "legacy_ipfs_env", true);
+        let b = bucket(
+            "bootstrap-ipfs",
+            BucketBackend::Ipfs,
+            "legacy_ipfs_env",
+            true,
+        );
         let err = BlobRegistry::build(vec![b], |k| {
             (k == "I0721_IPFS_API").then(|| "http://user:pass@127.0.0.1:5001".to_owned())
         })
-        .err()
-        .expect("userinfo must fail the build");
+        .expect_err("userinfo must fail the build");
         assert!(err.to_string().contains("userinfo"), "{err}");
     }
 

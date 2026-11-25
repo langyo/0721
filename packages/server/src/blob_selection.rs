@@ -64,7 +64,11 @@ pub fn bootstrap_backend_for_startup(
     };
     match value {
         "local" | "s3" | "ipfs" => Ok(Some(
-            VALID_BACKENDS.iter().copied().find(|b| *b == value).unwrap(),
+            VALID_BACKENDS
+                .iter()
+                .copied()
+                .find(|b| *b == value)
+                .unwrap(),
         )),
         other => Err(StartupError::InvalidBackend {
             var: VAR,
@@ -90,11 +94,10 @@ pub fn select_blob_backend(
     env: impl Fn(&str) -> Option<String>,
 ) -> Result<Arc<dyn BlobStore>, String> {
     match config.storage_backend.as_deref() {
-        None => {
-            // The variable's read is the R-U function's job now; a
-            // `None` here means the caller skipped that decision.
-            return Err("no storage backend is selected — the startup decision (bootstrap_backend_for_startup) was not consulted".to_owned());
-        }
+        None => Err(
+            "no storage backend is selected — the startup decision (bootstrap_backend_for_startup) was not consulted"
+                .to_owned(),
+        ),
         Some("local") => {
             let store = crate::blob::LocalBlobStore::open(&config.media_root)
                 .map_err(|err| format!("local blob store open: {err}"))?;

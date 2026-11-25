@@ -17,11 +17,11 @@ use uuid::Uuid;
 use i0721_proto::{NewShare, ShareRecord};
 
 use crate::entity::{
-    api_key_model_to_record, file_model_from_new,
-    file_model_to_record, share_model_to_record, storage_bucket_model_to_record,
-    user_model_from_new, user_model_to_record, ApiKeyColumn, ApiKeyModel, FileColumn, FileModel,
-    OAuthIdentityColumn, OAuthIdentityModel, SettingColumn, SettingModel, ShareColumn, ShareModel,
-    StorageBucketColumn, StorageBucketModel, UserColumn, UserModel,
+    api_key_model_to_record, file_model_from_new, file_model_to_record, share_model_to_record,
+    storage_bucket_model_to_record, user_model_from_new, user_model_to_record, ApiKeyColumn,
+    ApiKeyModel, FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel, SettingColumn,
+    SettingModel, ShareColumn, ShareModel, StorageBucketColumn, StorageBucketModel, UserColumn,
+    UserModel,
 };
 use crate::{migrations, BootstrapBucketParams, CreateUser, Store, StoreError};
 
