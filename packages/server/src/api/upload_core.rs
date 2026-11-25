@@ -173,20 +173,39 @@ pub async fn run_upload(
 
     // 9. Same bytes ⇒ same key ⇒ idempotent write even when another owner
     // already placed the blob (write-then-rename underneath).
+    //
+    // The bucket axis: fresh uploads go to the resolved upload bucket —
+    // in this slice that is ALWAYS the enabled bootstrap bucket
+    // (`resolve_upload_bucket`'s P1 form; P2a adds the settings default
+    // and `?bucket=`). Resolution failure is an ERROR — never a
+    // fallback to another bucket (I2).
+    let bucket_store = state
+        .registry
+        .bootstrap_store()
+        .map_err(|err| ApiError::internal(format!("storage backend unavailable: {err}")))?;
+    let bootstrap = state
+        .store
+        .list_storage_buckets()
+        .await?
+        .into_iter()
+        .filter(|b| b.enabled && b.is_bootstrap)
+        .min_by_key(|b| (b.created_at, b.slug.clone()));
+    let storage_backend = bootstrap
+        .as_ref()
+        .map(|b| b.backend.as_str().to_owned())
+        .ok_or_else(|| ApiError::internal("no bootstrap bucket in the registry"))?;
     let storage_key = processed.sha256.clone();
     let thumbnail_key = processed
         .thumbnail
         .as_ref()
         .map(|_| format!("{storage_key}.webp"));
-    state
-        .blobs
+    bucket_store
         .put(BlobSlot::Media, &storage_key, &processed.data)
         .await?;
     if let (Some(thumbnail), Some(thumb_key)) =
         (processed.thumbnail.as_ref(), thumbnail_key.as_deref())
     {
-        state
-            .blobs
+        bucket_store
             .put(BlobSlot::Cache, thumb_key, thumbnail)
             .await?;
     }
@@ -200,10 +219,9 @@ pub async fn run_upload(
         mime: processed.mime.clone(),
         size: processed.data.len() as i64,
         sha256: processed.sha256.clone(),
-        // The configured backend tag — never a literal: the MCP lane
-        // used to write "local" while the bytes went wherever
-        // `state.blobs` pointed.
-        storage_backend: state.config.storage_backend.clone(),
+        // The bucket's OWN backend tag — the row and its bytes live in
+        // the same bucket from birth.
+        storage_backend,
         storage_key,
         thumbnail_key,
         original_name: source_name.unwrap_or_default(),

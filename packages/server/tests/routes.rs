@@ -57,7 +57,7 @@ fn base_config() -> Config {
         trusted_proxies: Vec::new(),
         public_origin: None,
         cookie_secure: "auto".to_owned(),
-        storage_backend: "local".to_owned(),
+        storage_backend: None,
     }
 }
 
@@ -5214,7 +5214,7 @@ async fn ipfs_stub_state() -> (AppState, std::sync::Arc<KuboStub>) {
     // Rebuild state with the IPFS blob store AND the matching backend tag
     // (the config field feeds the upload's storage_backend column).
     let mut config = state.config.as_ref().clone();
-    config.storage_backend = "ipfs".to_owned();
+    config.storage_backend = Some("ipfs".to_owned());
     let new_state = i0721_server::state::AppState::new(
         state.store.clone(),
         std::sync::Arc::new(store),

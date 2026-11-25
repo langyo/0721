@@ -8,6 +8,7 @@ pub mod api;
 pub mod auth;
 pub mod blob;
 pub mod blob_ipfs;
+pub mod blob_registry;
 pub mod blob_s3;
 pub mod blob_selection;
 pub mod config;

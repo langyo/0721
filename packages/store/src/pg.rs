@@ -97,6 +97,50 @@ impl PgStore {
         }
     }
 
+    /// The recorded (already applied) migration versions on this
+    /// database — the R-U wiring's pending-set source. Empty when the
+    /// bookkeeping table has no rows (a fresh database).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Db`] when the bookkeeping table cannot be read.
+    pub async fn applied_versions(&self) -> Result<Vec<String>, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT version FROM seaql_migrations".to_owned(),
+            params: vec![],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db(
+                "expected rows from the migration bookkeeping table".to_owned(),
+            ));
+        };
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.into_iter().next())
+            .filter_map(|value| match value {
+                Value::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// The versions of [`crate::migrations`] NOT yet recorded on this
+    /// database (the pending set, R-U ②).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Db`] when the bookkeeping table cannot be read.
+    pub async fn pending_versions(&self) -> Result<Vec<String>, StoreError> {
+        let applied = self.applied_versions().await?;
+        Ok(migrations(None)
+            .into_iter()
+            .filter(|migration| !applied.contains(&migration.version))
+            .map(|migration| migration.version)
+            .collect())
+    }
+
     /// Execute a rows-producing command and decode every row into the
     /// entity's model (columns re-ordered by name).
     async fn query_all<E: Entity>(&self, cmd: Command) -> Result<Vec<E::Model>, StoreError> {
