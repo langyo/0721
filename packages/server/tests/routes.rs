@@ -8792,7 +8792,7 @@ async fn media_reads_from_the_rows_bucket() {
     // shape). Serving itself answers 404 in P1 when no usable serving
     // row exists, so the assertion pins the RESOLUTION side through the
     // registry directly plus the decoy shape below.
-    let (state, _second_id, _second_store) = plant_second_bucket(&base_state, "satellite", false);
+    let (state, _second_id, second_store) = plant_second_bucket(&base_state, "satellite", false);
     second_store
         .put(
             i0721_server::blob::BlobSlot::Media,
