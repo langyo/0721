@@ -1339,11 +1339,35 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
 
-    // Plant one row already carrying a bucket: create a bucket row by
-    // running the bootstrap SQL once (it produces bootstrap-local), then
-    // reference it.
+    // Plant one row already carrying a bucket — with its LABEL and its
+    // SEAT deliberately mismatched (label says `s3`, seat says the local
+    // bootstrap bucket): the shape only an earlier run or an operator can
+    // produce. The WHERE guard's whole job is to leave such a row alone
+    // on a re-run; a WHERE-less backfill would re-seat it BY LABEL into
+    // `bootstrap-s3`, which this test observes. (A label/seat agreeing
+    // row makes the mutation a same-value rewrite — invisible, M1b's
+    // SURVIVED lesson.)
     run_bootstrap(&store).await;
-    let bucket_id: uuid::Uuid = {
+    for statement in i0721_store::migrate::bootstrap_sql_statements(
+        &i0721_store::BootstrapBucketParams {
+            id: uuid::Uuid::new_v4(),
+            location: "bwave-s3-lane".to_owned(),
+            backend: "s3".to_owned(),
+        },
+    )
+    .expect("the s3 lane location passes the quoting guard")
+    {
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: statement,
+                params: vec![],
+            })
+            .await
+            .expect("bootstrap statement succeeds");
+    }
+    let local_bucket_id: uuid::Uuid = {
         let reply = store
             .executor
             .execute(&lacrymira::Command::Sql {
@@ -1362,17 +1386,20 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
             other => panic!("uuid expected, got {other:?}"),
         }
     };
-    plant_file(&store, user.id, "pre-owned.png", "local", Some(bucket_id)).await;
+    plant_file(&store, user.id, "pre-owned.png", "s3", Some(local_bucket_id)).await;
 
     // The backfill runs again — and must not rewrite the owned row's
-    // bucket (the WHERE guard).
+    // bucket (the WHERE guard). A WHERE-less backfill re-seats it by
+    // label into `bootstrap-s3`, which the assertion below catches.
     run_bootstrap(&store).await;
     let reply = store
         .executor
         .execute(&lacrymira::Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
-            text: "SELECT bucket_id FROM files WHERE name = 'pre-owned.png'".to_owned(),
-            params: vec![],
+            text: "SELECT bucket_id FROM files WHERE name = 'pre-owned.png' \
+                   AND owner_id = $1"
+                .to_owned(),
+            params: vec![lacrymira::Value::Uuid(user.id.to_string())],
         })
         .await
         .unwrap();
@@ -1383,8 +1410,9 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
         lacrymira::Value::Uuid(text) => {
             assert_eq!(
                 uuid::Uuid::parse_str(text).unwrap(),
-                bucket_id,
-                "the row keeps ITS OWN bucket after the backfill"
+                local_bucket_id,
+                "the row keeps ITS OWN (hand-seeded) bucket after the backfill — \
+                 a WHERE-less backfill would re-seat it by label"
             );
         }
         other => panic!("uuid expected, got {other:?}"),
