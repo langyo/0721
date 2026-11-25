@@ -505,6 +505,17 @@ fn build_store(
     }
 }
 
+/// Clone a registry entry (the multi-bucket fixture seam; entries are
+/// immutable once built).
+fn clone_entry(entry: &BucketEntry) -> BucketEntry {
+    BucketEntry {
+        slug: entry.slug.clone(),
+        state: entry.state,
+        reason: entry.reason.clone(),
+        store: entry.store.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -652,16 +663,5 @@ mod tests {
         let registry = BlobRegistry::build(vec![b], |_| None).unwrap();
         let health = registry.health();
         assert_eq!(health[0].state, "disabled");
-    }
-}
-
-/// Clone a registry entry (the multi-bucket fixture seam; entries are
-/// immutable once built).
-fn clone_entry(entry: &BucketEntry) -> BucketEntry {
-    BucketEntry {
-        slug: entry.slug.clone(),
-        state: entry.state,
-        reason: entry.reason.clone(),
-        store: entry.store.clone(),
     }
 }

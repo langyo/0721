@@ -18,8 +18,8 @@ use sha2::Digest;
 use tower::ServiceExt;
 
 use i0721_server::auth::hash_password;
-use i0721_server::blob::MemoryBlobStore;
 use i0721_server::blob::BlobStore as _;
+use i0721_server::blob::MemoryBlobStore;
 use i0721_server::config::Config;
 use i0721_server::routes;
 use i0721_server::state::AppState;
@@ -8740,9 +8740,10 @@ fn plant_second_bucket(
         } else {
             i0721_server::blob_registry::BucketState::Disabled
         },
-        reason: bootstrap_enabled.then_some(None).flatten().or(Some(
-            "the bucket is disabled in the registry".to_owned(),
-        )),
+        reason: bootstrap_enabled
+            .then_some(None)
+            .flatten()
+            .or(Some("the bucket is disabled in the registry".to_owned())),
         // The state's OWN blob store (the fixture's bootstrap bytes).
         store: bootstrap_enabled.then(|| state.blobs.clone()),
     };
@@ -8791,8 +8792,7 @@ async fn media_reads_from_the_rows_bucket() {
     // shape). Serving itself answers 404 in P1 when no usable serving
     // row exists, so the assertion pins the RESOLUTION side through the
     // registry directly plus the decoy shape below.
-    let (state, second_id, second_store) =
-        plant_second_bucket(&base_state, "satellite", false);
+    let (state, _second_id, _second_store) = plant_second_bucket(&base_state, "satellite", false);
     second_store
         .put(
             i0721_server::blob::BlobSlot::Media,
@@ -8854,8 +8854,7 @@ async fn media_reads_from_the_rows_bucket() {
 
     // With the bootstrap bucket KEPT ENABLED, the same request serves
     // the row's OWN bytes while the decoy sits in the second store.
-    let (state, _second_id, second_store) =
-        plant_second_bucket(&base_state, "satellite", true);
+    let (state, _second_id, second_store) = plant_second_bucket(&base_state, "satellite", true);
     second_store
         .put(
             i0721_server::blob::BlobSlot::Media,
@@ -8922,8 +8921,7 @@ async fn a_share_reads_only_bytes_from_its_own_rows_bucket() {
     // key AND a same-key row in it (another owner's): a share routed
     // "by storage key, any row" could pick the decoy row — the served
     // bytes must still be the share's file row's OWN bucket's.
-    let (state, second_id, second_store) =
-        plant_second_bucket(&base_state, "satellite", true);
+    let (state, second_id, second_store) = plant_second_bucket(&base_state, "satellite", true);
     use i0721_server::blob::BlobStore as _;
     second_store
         .put(
@@ -9031,8 +9029,7 @@ async fn traversal_order_is_identical_across_stores() {
         .list_live_rows_by_storage_key("shared-key")
         .await
         .unwrap();
-    let sorted: Vec<_> = ids.iter().copied().collect();
-    let mut expect = sorted.clone();
+    let mut expect = ids.clone();
     expect.sort();
     assert_eq!(
         rows.iter().map(|r| r.id).collect::<Vec<_>>(),
@@ -9228,8 +9225,7 @@ async fn upload_without_override_never_falls_back_to_the_bootstrap_bucket() {
     // ("fall back to the first Ready bucket") would answer Ok with the
     // foreign bucket.
     let (base_state, _) = test_state().await;
-    let (state, _second_id, _second_store) =
-        plant_second_bucket(&base_state, "satellite", false);
+    let (state, _second_id, _second_store) = plant_second_bucket(&base_state, "satellite", false);
     let resolved = state.registry.resolve_upload_bucket(None);
     assert!(
         resolved.is_err(),
