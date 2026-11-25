@@ -11050,3 +11050,58 @@ async fn keys_create_respects_an_explicit_empty_buckets_array() {
         "the explicit empty array is the caller's pick, not a request to materialize: {value}"
     );
 }
+/// Q7's fail-closed cap on the CREATE lane: a `keys.create` with a
+/// 65-slug `buckets` array (one over the cap). The shipped behavior
+/// (read from the code): the write path stores the caller's array
+/// VERBATIM (`encode_scopes_with_buckets` neither truncates nor
+/// refuses); the fail-closed cap lives in the INTERPRETATION layer —
+/// `parse_scopes_buckets` answers the EMPTY set for anything over 64,
+/// so the stored key's EFFECTIVE authorization set is NO buckets.
+/// MUT:Q7-CAP — lifting `MAX_BUCKETS` in `parse_scopes_buckets`
+/// (key_scopes.rs) so 65 slugs parse turns the effective-set assertion
+/// red (65 buckets in the set instead of none).
+#[tokio::test]
+async fn keys_create_over_the_64_bucket_cap_answers_no_buckets() {
+    let (state, token) = test_state_with_token().await;
+    let buckets: Vec<String> = (0..65).map(|i| format!("cap-{i}")).collect();
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "keys.create",
+        serde_json::json!({"name": "over-cap", "ops": ["read"], "buckets": buckets}),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the create itself succeeds: {envelope}"
+    );
+    let key = envelope["result"]["key"].as_str().unwrap().to_owned();
+    let record = state
+        .store
+        .find_api_key_by_hash(&mcp_test_helper::hash(&key))
+        .await
+        .unwrap()
+        .expect("the row exists");
+    // The EFFECTIVE set — what the enforcement layer reads — is the
+    // fail-closed empty set, never 64, never 65.
+    assert!(
+        i0721_server::key_scopes::parse_scopes_buckets(&record.scopes).is_empty(),
+        "one over the cap answers NO buckets (fail-closed): {}",
+        record.scopes
+    );
+}
+
+/// `storage.defaults.get/set` — the round trip through the RPC face
+/// (the upload lane's consumption is pinned elsewhere; this surface had
+/// NO test at all): an admin sets the default to a VISIBLE bucket slug
+/// and `get` reads the same slug back; setting an UNKNOWN slug refuses
+/// (-32006). A member WITHOUT visibility of the default bucket is
+/// answered by the §7 shape — `-32006` (the "invisible" answer), never
+/// the slug (they must not learn the bucket exists).
+/// MUT:DEF-GET — breaking the get round trip (e.g. answering
+/// `Some(Null)` for a readable Value in `storage.defaults.get`, rpc.rs)
+/// turns the read-back assertion red.
+/// MUT:DEF-SET — skipping the bucket-exists check in
+/// `storage.defaults.set` turns the unknown-slug refusal red.
+#[tokio::test]
