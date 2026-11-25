@@ -621,6 +621,27 @@ impl Store for PgStore {
             .map(api_key_model_to_record))
     }
 
+    async fn find_api_key_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: ApiKeyModel::TABLE.to_owned(),
+            // By PRIMARY KEY, with NO state filter: ownership decisions
+            // need the row whether it is live, expired or revoked.
+            filter: Some(ApiKeyColumn::Id.eq(id).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        Ok(self
+            .query_one::<ApiKeyModel>(cmd)
+            .await?
+            .map(api_key_model_to_record))
+    }
+
     async fn touch_api_key(&self, id: Uuid) -> Result<(), StoreError> {
         let cmd = update_command::<ApiKeyModel>(
             vec![("last_used_at", Value::Text(Timestamp::now().to_string()))],

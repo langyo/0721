@@ -35,6 +35,22 @@ use jiff::Timestamp;
 /// in `mcp.rs` and this mapping are pinned equal by the unit test below,
 /// so a tool added to one without the other fails the build's test lane
 /// instead of silently becoming permission-free.
+///
+/// # The enforcement seam
+///
+/// Permissions are enforced on **MCP tools only**: `key_scopes` says
+/// which [`KeyOp`] a tool needs, and `mcp.rs` is the ONLY surface that
+/// consumes this table (`tools/list` hides the tools a key cannot call,
+/// `tools/call` refuses them through [`authorize`]). The webui's RPC
+/// lane acts as the signed-in USER and never consults these ops.
+///
+/// Therefore: **any future NON-MCP capability guarded by a [`KeyOp`]
+/// (a REST route, a new RPC method, a stream) must add its own mapping
+/// and its own test.** Do not assume `TOOL_REQUIRED_OP` covers it —
+/// nothing outside `mcp.rs` reads this table, and
+/// `every_permission_is_enforced_by_at_least_one_mcp_tool` only proves
+/// that each op gates at least one TOOL, not that a new surface gates
+/// anything at all.
 pub const TOOL_REQUIRED_OP: [(&str, KeyOp); 5] = [
     ("list_files", KeyOp::Read),
     ("file_info", KeyOp::Read),
@@ -394,6 +410,40 @@ mod tests {
             Denial::Expired.message("list_files"),
             "this API key has expired"
         );
+    }
+
+    /// Every permission in the vocabulary is enforced by at least one
+    /// MCP tool. A `KeyOp` that no tool requires would be a permission
+    /// the service advertises (keys.create accepts it, keys.list shows
+    /// it) but never enforces — a permission that does nothing.
+    ///
+    /// This is the MCP-only half of the seam documented on
+    /// [`TOOL_REQUIRED_OP`]: a future non-MCP capability guarded by a
+    /// `KeyOp` needs its own mapping AND its own test.
+    #[test]
+    fn every_permission_is_enforced_by_at_least_one_mcp_tool() {
+        for op in KeyOp::ALL {
+            let tools: Vec<&str> = TOOL_REQUIRED_OP
+                .iter()
+                .filter(|(_, mapped)| *mapped == op)
+                .map(|(name, _)| *name)
+                .collect();
+            assert!(
+                !tools.is_empty(),
+                "{op:?} is a grantable permission no MCP tool requires — \
+                 it would be a permission that does nothing (add its tool to \
+                 TOOL_REQUIRED_OP, or remove it from KeyOp)"
+            );
+            // ...and the mapping is reachable through the public lookup,
+            // which is what the MCP surface actually consults.
+            for tool in tools {
+                assert_eq!(
+                    required_op(tool),
+                    Some(op),
+                    "{tool} must answer its mapped op through required_op"
+                );
+            }
+        }
     }
 
     /// Every tool in the table maps to a distinct name, and the vocabulary

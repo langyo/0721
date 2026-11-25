@@ -202,18 +202,18 @@ impl McpSessions {
         self.lock().remove(session_id);
     }
 
-    /// How many entries the table currently holds (any state). Exposed so
-    /// a test can prove that an expiry/revocation REMOVED the session
-    /// rather than merely refusing the frame.
+    /// How many sessions the table currently holds (any state).
+    ///
+    /// A TEST-FACING accessor: the integration lane (a separate crate)
+    /// uses it to prove that an expiry or a revocation REMOVED the
+    /// session rather than merely refusing the frame. It is deliberately
+    /// NOT `len` — this is not a collection-sized API, and naming it for
+    /// its one caller keeps `clippy::len_without_is_empty` from pushing a
+    /// dead `is_empty` back into the surface.
+    #[doc(hidden)]
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub fn session_count(&self) -> usize {
         self.lock().len()
-    }
-
-    /// Whether the table holds no sessions at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 

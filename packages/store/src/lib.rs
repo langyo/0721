@@ -295,6 +295,19 @@ pub trait Store: Send + Sync {
         key_hash: &str,
     ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError>;
 
+    /// Find a key by id, ANY state (revoked and expired rows included).
+    ///
+    /// This is the ownership handle the `keys.*` lanes need: the acting
+    /// user is compared against the RECORD's own `user_id`, so an admin
+    /// can reach a key they do not own and a member's lookup for someone
+    /// else's key still answers the row (and is then refused) rather than
+    /// silently "not found". It is NOT a credential check — presenting a
+    /// key still goes through [`Store::find_api_key_by_hash`].
+    async fn find_api_key_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError>;
+
     /// Best-effort last_used_at update (never blocks the request path).
     async fn touch_api_key(&self, id: Uuid) -> Result<(), StoreError>;
 

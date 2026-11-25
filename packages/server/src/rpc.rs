@@ -362,6 +362,50 @@ fn validate_key_write(
     Ok((name, write.ops.clone(), expires_at))
 }
 
+/// The ONE ownership gate for the `keys.*` lanes that act on an existing
+/// key (`keys.revoke`, `keys.update`).
+///
+/// Ownership is decided from the KEY RECORD's own `user_id`, never from
+/// membership in `list_api_keys(caller.id)`: that list is the caller's
+/// OWN keys, so it can only ever answer "mine" — it never loads the
+/// target row for an admin acting on a foreign key, and it cannot tell
+/// "someone else's key" apart from "no such key". Loading the row is what
+/// makes both the owner answer and the admin answer well-defined.
+///
+/// The answers are the ones the lanes have always given:
+/// * no such row → not found (`-32006`);
+/// * a stranger (record owner ≠ caller, caller not admin) → forbidden
+///   `"not your key"` (`-32005`) — the same text for every key that is
+///   not yours, so the surface does not confirm which ids exist;
+/// * a revoked target → not found `"key not found or already revoked"`,
+///   the answer both lanes give when the guarded UPDATE matches no row;
+/// * otherwise the record, for the caller to act on.
+///
+/// # Errors
+///
+/// [`JsonRpcError`] from [`api_err`] / [`store_err`], ready to return.
+async fn require_key_access(
+    state: &AppState,
+    caller: &i0721_proto::UserRecord,
+    id: Uuid,
+) -> Result<i0721_proto::ApiKeyRecord, JsonRpcError> {
+    let record = state
+        .store
+        .find_api_key_by_id(id)
+        .await
+        .map_err(store_err)?
+        .ok_or_else(|| api_err(ApiError::not_found("key not found or already revoked")))?;
+    if record.user_id != caller.id && caller.role != Role::Admin {
+        return Err(api_err(ApiError::forbidden("not your key")));
+    }
+    if record.revoked_at.is_some() {
+        return Err(api_err(ApiError::not_found(
+            "key not found or already revoked",
+        )));
+    }
+    Ok(record)
+}
+
 /// Assemble the RPC router: WS upgrade + POST fallback at `/api/rpc`.
 pub fn router(state: AppState) -> Router {
     build_server(state).mount_at("/api/rpc")
@@ -1319,24 +1363,19 @@ pub fn build_server(state: AppState) -> RpcServer {
                 }
                 let args: UpdateParams = params(&ctx)?;
                 let caller = user_of(&ctx);
-                // Owner-or-admin, the same rule as `keys.revoke` (an admin
-                // editing someone else's key is an admin action, not an
-                // escalation of the caller's own rights).
-                let keys = state.store.list_api_keys(caller.id).await.map_err(store_err)?;
-                let owns = keys.iter().any(|k| k.id == args.id);
-                if !owns && caller.role != Role::Admin {
-                    return Err(api_err(ApiError::forbidden("not your key")));
-                }
+                // Owner-or-admin from the RECORD's own user_id, shared with
+                // `keys.revoke` ([`require_key_access`]). An EXPIRED key may
+                // be edited (renewal is the point); a REVOKED one may not —
+                // dead is dead, and it answers the same not-found
+                // `keys.revoke` answers (the helper's revoked arm).
+                let key = require_key_access(&state, &caller, args.id).await?;
                 // Whole-record replacement: all three fields, and an
                 // omitted `expires_at` CLEARS the expiry.
                 let (name, ops, expires_at) = validate_key_write(&args.write)?;
-                // An EXPIRED key may be edited (renewal is the point); a
-                // REVOKED one may not — dead is dead, and it answers the
-                // same not-found `keys.revoke` answers.
                 let updated = state
                     .store
                     .update_api_key(
-                        args.id,
+                        key.id,
                         &name,
                         &crate::key_scopes::encode_scopes(ops),
                         expires_at.as_deref(),
@@ -1387,13 +1426,10 @@ pub fn build_server(state: AppState) -> RpcServer {
                 }
                 let args: RevokeParams = params(&ctx)?;
                 let caller = user_of(&ctx);
-                // Owner-or-admin: the key's owner or an admin may revoke.
-                let keys = state.store.list_api_keys(caller.id).await.map_err(store_err)?;
-                let owns = keys.iter().any(|k| k.id == args.id);
-                if !owns && caller.role != Role::Admin {
-                    return Err(api_err(ApiError::forbidden("not your key")));
-                }
-                let removed = state.store.revoke_api_key(args.id).await.map_err(store_err)?;
+                // Owner-or-admin from the RECORD's own user_id, shared with
+                // `keys.update` ([`require_key_access`]).
+                let key = require_key_access(&state, &caller, args.id).await?;
+                let removed = state.store.revoke_api_key(key.id).await.map_err(store_err)?;
                 if removed {
                     Ok(Value::Null)
                 } else {

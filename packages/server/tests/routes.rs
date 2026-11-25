@@ -7372,7 +7372,7 @@ async fn mcp_expired_keys_cannot_open_or_keep_a_session() {
         "the frame refusal names the expiry"
     );
     assert_eq!(
-        state.mcp_sessions.len(),
+        state.mcp_sessions.session_count(),
         0,
         "the expired session was removed from the table"
     );
@@ -7602,23 +7602,82 @@ async fn keys_update_is_owner_or_admin_and_replaces_the_whole_record() {
         "an omitted expires_at CLEARS the expiry: {row}"
     );
 
-    // (3) An admin may edit a member's key.
+    // (3) An admin may edit a key they do NOT own. This is the leg that
+    // exercises the ownership decision itself: the key belongs to the
+    // STRANGER, who is neither the caller nor an admin, so a check based
+    // on "is it in MY list" would refuse — the record's own `user_id` is
+    // what has to authorize it.
+    let (foreign_id, _foreign_plaintext) = mcp_api_key_with_at(
+        &state,
+        &stranger_token,
+        "stranger-key",
+        serde_json::json!(["read"]),
+        Some(&(Timestamp::now() + std::time::Duration::from_secs(7200)).to_string()),
+    )
+    .await;
+    assert_ne!(foreign_id, key_id, "the foreign key is a different row");
+    // Before: the stranger's key, untouched.
+    let (_, list) = rpc(
+        &state,
+        &stranger_token,
+        "keys.list",
+        serde_json::Value::Null,
+    )
+    .await;
+    let before = find_key_row(&list, &foreign_id);
+    assert_eq!(before["name"], "stranger-key");
+    assert_eq!(before["ops"], serde_json::json!(["read"]));
+
+    let admin_expiry = (Timestamp::now() + std::time::Duration::from_secs(600)).to_string();
     let (status, envelope) = rpc(
         &state,
         &admin_token,
         "keys.update",
         serde_json::json!({
-            "id": key_id,
+            "id": foreign_id,
             "name": "admin-edit",
-            "ops": ["read"],
-            "expires_at": (Timestamp::now() + std::time::Duration::from_secs(600)).to_string(),
+            "ops": ["share", "upload"],
+            "expires_at": admin_expiry,
         }),
     )
     .await;
     assert_eq!(
         status,
         StatusCode::OK,
-        "an admin may edit any key: {envelope}"
+        "an admin may edit a key they do not own: {envelope}"
+    );
+    // After: the OWNER's view shows all three fields replaced (the row,
+    // not just the response, carries the edit).
+    let (_, list) = rpc(
+        &state,
+        &stranger_token,
+        "keys.list",
+        serde_json::Value::Null,
+    )
+    .await;
+    let after = find_key_row(&list, &foreign_id);
+    assert_eq!(
+        after["name"], "admin-edit",
+        "the admin replaced the foreign key's name: {after}"
+    );
+    assert_eq!(
+        after["ops"],
+        serde_json::json!(["upload", "share"]),
+        "the admin replaced the foreign key's ops: {after}"
+    );
+    assert_eq!(
+        after["expires_at"], admin_expiry,
+        "the admin replaced the foreign key's expiry: {after}"
+    );
+    // ...and the admin's own list still does not describe it as theirs.
+    let (_, admin_list) = rpc(&state, &admin_token, "keys.list", serde_json::Value::Null).await;
+    assert!(
+        !admin_list["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == foreign_id.as_str()),
+        "keys.list stays owner-scoped even for an admin: {admin_list}"
     );
 
     // (4) An EXPIRED key can be renewed (that is the point of editing a
@@ -7817,5 +7876,172 @@ async fn keys_create_and_update_ignore_an_unknown_buckets_key() {
     assert_eq!(
         find_key_row(&list, &id)["ops"],
         serde_json::json!(["read", "upload"])
+    );
+}
+
+/// The row a `keys.*` lane must leave ALONE: read straight from the
+/// store, any state (the test asserts on the DB, not on a response).
+async fn stored_key(state: &AppState, id: &str) -> i0721_proto::ApiKeyRecord {
+    let id: uuid::Uuid = id.parse().expect("a key id");
+    state
+        .store
+        .find_api_key_by_id(id)
+        .await
+        .expect("key lookup")
+        .expect("the key row still exists")
+}
+
+/// F-A: a member cannot edit ANOTHER user's key, and the refusal leaves
+/// that key's row byte-identical. Ownership is decided from the record's
+/// own `user_id` — a check based on the caller's own key list would have
+/// answered "not mine" for the right reason but by accident, and would
+/// have made "someone else's key" indistinguishable from "no such key".
+#[tokio::test]
+async fn a_member_cannot_update_another_users_key() {
+    let (state, _admin_token) = test_state_with_token().await;
+    let owner = state
+        .store
+        .create_user(CreateUser {
+            username: "key-owner".to_owned(),
+            display_name: "KeyOwner".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let owner_token = state.signer.sign(owner.id, Timestamp::now());
+    let intruder = state
+        .store
+        .create_user(CreateUser {
+            username: "key-intruder".to_owned(),
+            display_name: "KeyIntruder".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let intruder_token = state.signer.sign(intruder.id, Timestamp::now());
+
+    let (key_id, _plaintext) = mcp_api_key_with_at(
+        &state,
+        &owner_token,
+        "owned-by-the-victim",
+        serde_json::json!(["read"]),
+        Some(&(Timestamp::now() + std::time::Duration::from_secs(3600)).to_string()),
+    )
+    .await;
+    let before = stored_key(&state, &key_id).await;
+
+    // The intruder (a plain member, and not the owner) tries to take the
+    // key over.
+    let (status, envelope) = rpc(
+        &state,
+        &intruder_token,
+        "keys.update",
+        serde_json::json!({
+            "id": key_id,
+            "name": "stolen",
+            "ops": ["read", "upload", "share"],
+            "expires_at": (Timestamp::now() + std::time::Duration::from_secs(60)).to_string(),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the refusal rides the envelope");
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "a member cannot update another user's key: {envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["message"], "not your key",
+        "the refusal is the established wording: {envelope}"
+    );
+
+    // The DB row is unchanged in every field the update could touch.
+    let after = stored_key(&state, &key_id).await;
+    assert_eq!(after.name, before.name, "the name was not replaced");
+    assert_eq!(after.scopes, before.scopes, "the ops were not replaced");
+    assert_eq!(
+        after.expires_at, before.expires_at,
+        "the expiry was not replaced"
+    );
+    assert_eq!(after.user_id, owner.id, "the owner is still the owner");
+}
+
+/// F-A: a member cannot revoke ANOTHER user's key, and the row stays
+/// live (revoking is destructive, so "refused" must mean "untouched").
+#[tokio::test]
+async fn a_member_cannot_revoke_another_users_key() {
+    let (state, _admin_token) = test_state_with_token().await;
+    let owner = state
+        .store
+        .create_user(CreateUser {
+            username: "revoke-owner".to_owned(),
+            display_name: "RevokeOwner".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let owner_token = state.signer.sign(owner.id, Timestamp::now());
+    let intruder = state
+        .store
+        .create_user(CreateUser {
+            username: "revoke-intruder".to_owned(),
+            display_name: "RevokeIntruder".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let intruder_token = state.signer.sign(intruder.id, Timestamp::now());
+
+    let (key_id, plaintext) = mcp_api_key_with_at(
+        &state,
+        &owner_token,
+        "victims-live-key",
+        serde_json::json!(["read"]),
+        None,
+    )
+    .await;
+
+    let (status, envelope) = rpc(
+        &state,
+        &intruder_token,
+        "keys.revoke",
+        serde_json::json!({"id": key_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the refusal rides the envelope");
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "a member cannot revoke another user's key: {envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["message"], "not your key",
+        "the refusal is the established wording: {envelope}"
+    );
+
+    // Untouched: the row is still not revoked, and the key still opens a
+    // session (the strongest possible statement that the refusal was a
+    // no-op).
+    let after = stored_key(&state, &key_id).await;
+    assert!(
+        after.revoked_at.is_none(),
+        "the key was NOT revoked: {:?}",
+        after.revoked_at
+    );
+    let (mut sse, session_id) = mcp_handshake(&state, &plaintext).await;
+    let status = mcp_post_frame(&state, &session_id, 1, "tools/list", serde_json::json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "the owner's key still works after the failed takeover"
+    );
+    let frames = sse_read_until(&mut sse, "\"id\":1").await;
+    assert!(
+        sse_envelope(&frames).get("error").is_none(),
+        "the session answers normally: {frames}"
     );
 }

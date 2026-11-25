@@ -412,6 +412,15 @@ impl Store for MemoryStore {
             .cloned())
     }
 
+    async fn find_api_key_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        // Any state: the ownership lanes must see revoked/expired rows.
+        Ok(inner.api_keys.iter().find(|k| k.id == id).cloned())
+    }
+
     async fn touch_api_key(&self, id: Uuid) -> Result<(), StoreError> {
         let mut inner = self.inner.lock().map_err(lock_err)?;
         if let Some(key) = inner.api_keys.iter_mut().find(|k| k.id == id) {
