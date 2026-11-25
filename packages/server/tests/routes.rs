@@ -10674,6 +10674,65 @@ async fn health_serializes_the_settings_state_array() {
     );
 }
 
+/// MY-11's arms of the four-state array: a store holding one valid JSON
+/// `Value` row and one INVALID JSON `Corrupt` row reads back the tags
+/// `"value"` and `"corrupt"` respectively (alongside the absent /
+/// unreadable arms pinned by the neighbors).
+/// MUT:R-F-TAG — mapping `SettingsState::Value` to "corrupt" in the
+/// health mapping (api/settings.rs) turns this red.
+#[tokio::test]
+async fn health_tags_value_and_corrupt_settings_rows_distinctly() {
+    let (state, _) = test_state().await;
+    {
+        let memory = state
+            .store
+            .as_any()
+            .downcast_ref::<MemoryStore>()
+            .expect("the fixture store is the memory store");
+        // site = a VALID JSON document (the Value arm); storage_defaults
+        // = INVALID JSON text (the Corrupt arm).
+        memory.seed_raw_setting(
+            i0721_proto::CONFIG_SETTING_KEY,
+            r#"{"upload":{"max_bytes":1000}}"#,
+        );
+        memory.seed_raw_setting("storage_defaults", "not json at all");
+    }
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let settings = json["settings"].as_array().expect("a settings array");
+    let tag_of = |key: &str| {
+        settings
+            .iter()
+            .find(|row| row["key"] == key)
+            .unwrap_or_else(|| panic!("a row for {key}: {json}"))["state"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(
+        tag_of(i0721_proto::CONFIG_SETTING_KEY),
+        "value",
+        "a valid JSON row tags value: {json}"
+    );
+    assert_eq!(
+        tag_of("storage_defaults"),
+        "corrupt",
+        "an invalid-JSON row tags corrupt: {json}"
+    );
+}
+
 /// R-C: re-upload to the SAME bucket returns the existing row; the same
 /// content into ANOTHER bucket is refused WITHOUT naming a bucket;
 /// same-name different-content keeps the NAME conflict message.
