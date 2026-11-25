@@ -11249,3 +11249,514 @@ async fn storage_defaults_round_trip_and_visibility() {
 /// MUT:MY-1 — making the all-false write (or the grants.set handler)
 /// delete the row instead of upserting it turns this red.
 #[tokio::test]
+async fn revoking_via_grants_set_leaves_the_all_false_row_in_place() {
+    let (state, token) = test_state_with_token().await;
+    let bucket = plant_bucket(&state, "revoke-me", true, false, true).await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    set_grant(&state, &token, member.id, "revoke-me", true, true, true).await;
+    let row = state
+        .store
+        .get_bucket_grant(member.id, bucket.id)
+        .await
+        .unwrap()
+        .expect("the full grant wrote a row");
+    assert!(row.can_read && row.can_write && row.can_share);
+
+    // Revoke through the SAME RPC surface: {f,f,f} on the same pair.
+    set_grant(&state, &token, member.id, "revoke-me", false, false, false).await;
+
+    let row = state
+        .store
+        .get_bucket_grant(member.id, bucket.id)
+        .await
+        .unwrap()
+        .expect("the revoke WROTE an all-false row — the row was NOT deleted");
+    assert!(
+        !row.can_read && !row.can_write && !row.can_share,
+        "the surviving row is the explicit deny"
+    );
+}
+
+/// R-L's legacy face: a file row whose `bucket_id` is NULL (the
+/// pre-0007 shape) still shares through `files.share_create` — the row
+/// falls back to the BOOTSTRAP bucket for the share-bit gate (the
+/// bootstrap is signup-open, so a fresh member holds the share bit).
+/// MUT:MY-8 — dropping the `.or_else(bootstrap_bucket_id())` fallback
+/// (rpc.rs `files.share_create`) turns the create red with
+/// "file not found".
+#[tokio::test]
+async fn share_create_on_a_legacy_null_bucket_row_uses_the_bootstrap_bucket() {
+    let (state, _token) = test_state_with_token().await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    // The legacy row, planted straight into the store: bucket_id NULL.
+    let file = state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: None,
+            parent_id: None,
+            owner_id: member.id,
+            name: "legacy.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/png".to_owned(),
+            size: 1,
+            sha256: format!("legacy-{}", uuid::Uuid::new_v4().simple()),
+            storage_backend: "local".to_owned(),
+            storage_key: format!("legacy-{}", uuid::Uuid::new_v4().simple()),
+            thumbnail_key: None,
+            original_name: "legacy.png".to_owned(),
+        })
+        .await
+        .expect("plant the NULL-bucket row");
+
+    let (status, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.share_create",
+        serde_json::json!({"file_id": file.id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(
+        envelope["result"]["token"].as_str().is_some(),
+        "the NULL-bucket row resolves through the bootstrap bucket and shares: {envelope}"
+    );
+}
+
+/// MY-20's isError cell on the MCP share lane: when the store read of
+/// the file row FAILS, `get_share_link` answers a TOOL error
+/// (`isError: true`) whose text names the storage backend — never a
+/// "file not found" mask, never a hang, never a link.
+/// MUT:MY-20 — masking the precheck's store-Err arm as "file not
+/// found" (mcp.rs precheck_tool) turns this red: the text loses the
+/// backend sentence.
+#[tokio::test]
+async fn mcp_get_share_link_on_a_store_failure_answers_the_iserror_tool_error() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    let (_, up) = upload(&base_state, &admin_token, tiny_png(), "doomed.png").await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+
+    // The failing-store double: `get_file` errors, everything else
+    // delegates (the same delegation shape as the health lane's
+    // FailingSettings; the frame must REACH the precheck).
+    struct FailingFileStore(MemoryStore);
+    #[async_trait::async_trait]
+    impl Store for FailingFileStore {
+        // `get_setting` DELEGATES: the site-config read must succeed so
+        // the upload lane reaches `default_bucket_slug` — the failing
+        // read this fixture isolates is `settings_state` (the four-state
+        // read), not the raw site-config fetch.
+        async fn get_setting(
+            &self,
+            key: &str,
+        ) -> Result<Option<serde_json::Value>, i0721_store::StoreError> {
+            self.0.get_setting(key).await
+        }
+        async fn get_storage_bucket_by_slug(
+            &self,
+            _slug: &str,
+        ) -> Result<Option<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
+            Ok(None)
+        }
+        async fn list_storage_buckets(
+            &self,
+        ) -> Result<Vec<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
+            Ok(Vec::new())
+        }
+        // Everything else delegates to the inner memory store.
+        async fn list_users(
+            &self,
+            o: u64,
+            l: u64,
+        ) -> Result<Vec<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.list_users(o, l).await
+        }
+        async fn count_users(&self) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_users().await
+        }
+        async fn get_user(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.get_user(id).await
+        }
+        async fn get_user_by_username(
+            &self,
+            u: &str,
+        ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.get_user_by_username(u).await
+        }
+        async fn oauth_providers_for_user(
+            &self,
+            user_id: uuid::Uuid,
+        ) -> Result<Vec<String>, i0721_store::StoreError> {
+            self.0.oauth_providers_for_user(user_id).await
+        }
+        async fn create_user(
+            &self,
+            u: i0721_store::CreateUser,
+        ) -> Result<i0721_proto::UserRecord, i0721_store::StoreError> {
+            self.0.create_user(u).await
+        }
+        async fn delete_user(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_user(id).await
+        }
+        async fn list_files(
+            &self,
+            o: u64,
+            l: u64,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_files(o, l).await
+        }
+        async fn count_files(&self) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_files().await
+        }
+        async fn get_file(
+            &self,
+            _id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            // THE deliberate failure: the file row read itself is dead.
+            Err(i0721_store::StoreError::Db(
+                "lane: file read dead".to_owned(),
+            ))
+        }
+        async fn get_file_by_owner_and_sha256(
+            &self,
+            o: uuid::Uuid,
+            s: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_file_by_owner_and_sha256(o, s).await
+        }
+        async fn list_live_rows_by_storage_key(
+            &self,
+            k: &str,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_live_rows_by_storage_key(k).await
+        }
+        async fn count_live_files_by_storage_key(
+            &self,
+            b: Option<uuid::Uuid>,
+            k: &str,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_storage_key(b, k).await
+        }
+        async fn count_live_files_by_thumbnail_key(
+            &self,
+            b: Option<uuid::Uuid>,
+            k: &str,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_thumbnail_key(b, k).await
+        }
+        async fn create_file(
+            &self,
+            f: i0721_proto::NewFile,
+        ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+            self.0.create_file(f).await
+        }
+        async fn rename_file(
+            &self,
+            id: uuid::Uuid,
+            n: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.rename_file(id, n).await
+        }
+        async fn soft_delete_file(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.soft_delete_file(id).await
+        }
+        async fn get_oauth_identity(
+            &self,
+            p: &str,
+            s: &str,
+        ) -> Result<Option<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.get_oauth_identity(p, s).await
+        }
+        async fn link_oauth_identity(
+            &self,
+            p: &str,
+            s: &str,
+            u: uuid::Uuid,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.link_oauth_identity(p, s, u).await
+        }
+        async fn count_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            k: Option<String>,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_folder(o, p, k).await
+        }
+        async fn list_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            k: Option<String>,
+            off: u64,
+            lim: u64,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_folder(o, p, k, off, lim).await
+        }
+        async fn folder_name_taken(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            b: Option<uuid::Uuid>,
+            n: &str,
+            e: Option<uuid::Uuid>,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.folder_name_taken(o, p, b, n, e).await
+        }
+        async fn create_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            n: &str,
+            b: Option<uuid::Uuid>,
+        ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+            self.0.create_folder(o, p, n, b).await
+        }
+        async fn set_parent(
+            &self,
+            id: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_parent(id, p).await
+        }
+        async fn ancestor_ids(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.ancestor_ids(id).await
+        }
+        async fn subtree_live_ids(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.subtree_live_ids(id).await
+        }
+        async fn soft_delete_many(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.soft_delete_many(ids).await
+        }
+        async fn get_files_by_ids(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_files_by_ids(ids).await
+        }
+        async fn create_share(
+            &self,
+            s: i0721_proto::NewShare,
+        ) -> Result<i0721_proto::ShareRecord, i0721_store::StoreError> {
+            self.0.create_share(s).await
+        }
+        async fn get_share(
+            &self,
+            t: &str,
+        ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.get_share(t).await
+        }
+        async fn find_share_by_file(
+            &self,
+            o: uuid::Uuid,
+            f: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.find_share_by_file(o, f).await
+        }
+        async fn list_shares(
+            &self,
+            o: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.list_shares(o).await
+        }
+        async fn delete_share(&self, t: &str) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_share(t).await
+        }
+        async fn delete_shares_for_files(
+            &self,
+            f: &[uuid::Uuid],
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.delete_shares_for_files(f).await
+        }
+        async fn sum_live_sizes(&self, o: uuid::Uuid) -> Result<i64, i0721_store::StoreError> {
+            self.0.sum_live_sizes(o).await
+        }
+        async fn set_user_quota(
+            &self,
+            u: uuid::Uuid,
+            q: Option<i64>,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_user_quota(u, q).await
+        }
+        async fn create_api_key(
+            &self,
+            r: &i0721_proto::ApiKeyRecord,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.create_api_key(r).await
+        }
+        async fn list_api_keys(
+            &self,
+            u: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.list_api_keys(u).await
+        }
+        async fn revoke_api_key(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.revoke_api_key(id).await
+        }
+        async fn update_api_key(
+            &self,
+            id: uuid::Uuid,
+            n: &str,
+            s: &str,
+            e: Option<&str>,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.update_api_key(id, n, s, e).await
+        }
+        async fn find_api_key_by_hash(
+            &self,
+            h: &str,
+        ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.find_api_key_by_hash(h).await
+        }
+        async fn find_api_key_by_id(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.find_api_key_by_id(id).await
+        }
+        async fn touch_api_key(&self, id: uuid::Uuid) -> Result<(), i0721_store::StoreError> {
+            self.0.touch_api_key(id).await
+        }
+        async fn set_setting(
+            &self,
+            k: &str,
+            v: serde_json::Value,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_setting(k, v).await
+        }
+        async fn upsert_storage_bucket(
+            &self,
+            slug: &str,
+            d: &str,
+            a: bool,
+            g: bool,
+            e: bool,
+        ) -> Result<i0721_proto::StorageBucketRecord, i0721_store::StoreError> {
+            self.0.upsert_storage_bucket(slug, d, a, g, e).await
+        }
+        async fn delete_storage_bucket(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_storage_bucket(id).await
+        }
+        async fn count_live_files_by_bucket(
+            &self,
+            id: Option<uuid::Uuid>,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_bucket(id).await
+        }
+        async fn get_file_by_owner_bucket_and_sha256(
+            &self,
+            owner: uuid::Uuid,
+            bucket: Option<uuid::Uuid>,
+            sha: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0
+                .get_file_by_owner_bucket_and_sha256(owner, bucket, sha)
+                .await
+        }
+        async fn get_bucket_grant(
+            &self,
+            u: uuid::Uuid,
+            b: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.get_bucket_grant(u, b).await
+        }
+        async fn set_bucket_grant(
+            &self,
+            u: uuid::Uuid,
+            b: uuid::Uuid,
+            r: bool,
+            w: bool,
+            s: bool,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_bucket_grant(u, b, r, w, s).await
+        }
+        async fn list_bucket_grants_for_user(
+            &self,
+            u: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.list_bucket_grants_for_user(u).await
+        }
+        async fn list_bucket_grants_for_bucket(
+            &self,
+            b: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.list_bucket_grants_for_bucket(b).await
+        }
+        async fn a_live_key_references_bucket_slug(
+            &self,
+            slug: &str,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.a_live_key_references_bucket_slug(slug).await
+        }
+        async fn settings_state(
+            &self,
+            key: &str,
+        ) -> Result<i0721_store::SettingsState, i0721_store::StoreError> {
+            self.0.settings_state(key).await
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+    let memory = base_state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store");
+    let mut state = base_state.clone();
+    state.store = Arc::new(FailingFileStore(memory.clone()));
+
+    // The key is minted against the HEALTHY store (the double only
+    // breaks the file READ, so the handshake's key lookup still works).
+    let api_key = mcp_api_key(&state, &admin_token, "share-doomed").await;
+    let (mut sse, session_id) = mcp_handshake(&state, &api_key).await;
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        1,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": file_id}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"isError\"").await;
+    let (is_error, text) = mcp_tool_result(&sse_envelope(&frames));
+    assert!(is_error, "the store failure is a TOOL error: {text}");
+    assert!(
+        text.contains("storage backend unavailable"),
+        "the tool text names the storage failure, never a not-found mask: {text}"
+    );
+}
