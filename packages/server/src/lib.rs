@@ -11,6 +11,7 @@ pub mod blob_ipfs;
 pub mod blob_registry;
 pub mod blob_s3;
 pub mod blob_selection;
+pub mod bucket_acl;
 pub mod config;
 pub mod error;
 pub mod key_scopes;

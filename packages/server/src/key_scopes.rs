@@ -129,6 +129,75 @@ pub fn ordered_ops(set: &BTreeSet<KeyOp>) -> Vec<KeyOp> {
         .collect()
 }
 
+/// The `buckets` dimension of a key's scopes (spec Q7): a slug array of
+/// at most 64 entries, deduped and lexicographically sorted.
+///
+/// Fail-closed (I2): a MISSING field or a non-array value means NO
+/// buckets — `parse_scopes_buckets` answers the empty set for anything
+/// that is not a JSON array of strings, and an array longer than the cap
+/// answers the empty set too (a truncated permission list is a policy
+/// nobody wrote). Like `parse_scopes`, it never answers `Err`.
+#[must_use]
+pub fn parse_scopes_buckets(raw: &str) -> BTreeSet<String> {
+    const MAX_BUCKETS: usize = 64;
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return BTreeSet::new();
+    };
+    let Some(buckets) = value.get("buckets").and_then(serde_json::Value::as_array) else {
+        return BTreeSet::new();
+    };
+    if buckets.len() > MAX_BUCKETS {
+        return BTreeSet::new();
+    }
+    let mut out = BTreeSet::new();
+    for entry in buckets {
+        match entry.as_str() {
+            Some(slug) if !slug.is_empty() => {
+                out.insert(slug.to_owned());
+            }
+            // A non-string (or empty) element poisons the whole list.
+            _ => return BTreeSet::new(),
+        }
+    }
+    out
+}
+
+/// The stored representation of a key's scopes WITH the bucket set: the
+/// canonical `{"ops":[…], "buckets":[…]}` object — ops in [`KeyOp::ALL`]
+/// order, buckets lexicographically sorted, both deduped. The
+/// `keys.create` / `keys.update` write path; round-trips through
+/// [`parse_scopes`] and [`parse_scopes_buckets`] unchanged.
+#[must_use]
+pub fn encode_scopes_with_buckets(ops: impl IntoIterator<Item = KeyOp>, buckets: &[String]) -> String {
+    let set: BTreeSet<KeyOp> = ops.into_iter().collect();
+    let ordered: Vec<&str> = KeyOp::ALL
+        .into_iter()
+        .filter(|op| set.contains(op))
+        .map(KeyOp::as_str)
+        .collect();
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "ops".to_owned(),
+        serde_json::Value::Array(
+            ordered
+                .into_iter()
+                .map(|op| serde_json::Value::String(op.to_owned()))
+                .collect(),
+        ),
+    );
+    let bucket_list: BTreeSet<&String> = buckets.iter().collect();
+    payload.insert(
+        "buckets".to_owned(),
+        serde_json::Value::Array(
+            bucket_list
+                .into_iter()
+                .map(|slug| serde_json::Value::String(slug.clone()))
+                .collect(),
+        ),
+    );
+    serde_json::Value::Object(payload).to_string()
+}
+
 /// Whether a key may still open a session at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Live {
@@ -320,6 +389,83 @@ mod tests {
         );
         assert_eq!(encode_scopes([]), r#"{"ops":[]}"#);
         assert_eq!(parse_scopes(&encode_scopes([])), BTreeSet::new());
+    }
+
+    /// The buckets-dimension truth table (Q7): a slug array ≤ 64, deduped,
+    /// sorted; missing / non-array / malformed = NO buckets (fail-closed).
+    /// MUT:M-P2A1 — an `as_str`-skipping element (non-string accepted) or
+    /// a `>64`-passing cap turns the matching arm red.
+    #[test]
+    fn parse_scopes_buckets_malformed_means_none() {
+        let two: BTreeSet<String> = ["alpha".to_owned(), "beta".to_owned()].into();
+        assert_eq!(
+            parse_scopes_buckets(r#"{"ops":["read"],"buckets":["beta","alpha","beta"]}"#),
+            two,
+            "deduped and lexicographically sorted"
+        );
+        assert_eq!(
+            parse_scopes_buckets(r#"{"ops":["read"]}"#),
+            BTreeSet::new(),
+            "a missing buckets field = no buckets"
+        );
+        for raw in [
+            "not json",
+            "[]",
+            r#"{"buckets":"alpha"}"#,
+            r#"{"buckets":{"a":1}}"#,
+            r#"{"buckets":["alpha",42]}"#,
+            r#"{"buckets":[""]}"#,
+            r#"{"buckets":[null]}"#,
+            &format!(r#"{{"buckets":[{}]}}"#, {
+                // 65 distinct slugs: one over the cap is the whole-nothing.
+                (0..65)
+                    .map(|i| format!(r#""b{i}""#))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }),
+        ] {
+            assert_eq!(
+                parse_scopes_buckets(raw),
+                BTreeSet::new(),
+                "{raw:?} must answer NO buckets (fail-closed)"
+            );
+        }
+        // Exactly at the cap still parses.
+        let at_cap = format!(
+            r#"{{"buckets":[{}]}}"#,
+            (0..64)
+                .map(|i| format!(r#""b{i}""#))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert_eq!(parse_scopes_buckets(&at_cap).len(), 64);
+    }
+
+    /// The with-buckets encoder round-trips through BOTH parsers.
+    #[test]
+    fn encode_scopes_with_buckets_is_canonical_and_round_trips() {
+        let text = encode_scopes_with_buckets(
+            [KeyOp::Share, KeyOp::Read],
+            &[
+                "zeta".to_owned(),
+                "alpha".to_owned(),
+                "zeta".to_owned(),
+            ],
+        );
+        assert_eq!(
+            text, r#"{"buckets":["alpha","zeta"],"ops":["read","share"]}"#,
+            "buckets sorted + deduped; ops canonical; both live in one object"
+        );
+        assert_eq!(parse_scopes(&text), BTreeSet::from([KeyOp::Read, KeyOp::Share]));
+        assert_eq!(
+            parse_scopes_buckets(&text),
+            ["alpha".to_owned(), "zeta".to_owned()].into()
+        );
+        assert_eq!(
+            encode_scopes_with_buckets([KeyOp::Read], &[]),
+            r#"{"buckets":[],"ops":["read"]}"#,
+            "an explicit empty bucket set is stored as [] (Q7: [] = no buckets)"
+        );
     }
 
     #[test]

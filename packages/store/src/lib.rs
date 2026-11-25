@@ -21,7 +21,7 @@ pub mod pg;
 pub use memory::MemoryStore;
 pub use migrate::{
     migrations, validate_bootstrap_location, BootstrapBucketParams, MIGRATION_0007_BOOTSTRAP_SQL,
-    MIGRATION_0007_SCHEMA_SQL, ZERO_UUID_SQL,
+    MIGRATION_0007_SCHEMA_SQL, MIGRATION_0008_KEY_BUCKETS_SQL, ZERO_UUID_SQL,
 };
 pub use pg::PgStore;
 
@@ -52,6 +52,27 @@ pub struct CreateUser {
     pub role: Role,
     /// Argon2id hash; `None` = password login disabled for this user.
     pub password_hash: Option<String>,
+}
+
+/// The R-F four-state read of one settings row. `Corrupt` carries the
+/// raw stored text (health reports it), `Unreadable` carries the store
+/// error; everything but [`SettingsState::Value`] fails closed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingsState {
+    /// No row for the key.
+    Absent,
+    /// A row exists but its payload is not valid JSON (the raw text).
+    Corrupt {
+        /// The stored text, verbatim.
+        raw: String,
+    },
+    /// Reading the row itself failed (infrastructure).
+    Unreadable {
+        /// The underlying failure text.
+        err: String,
+    },
+    /// A parsed payload.
+    Value(serde_json::Value),
 }
 
 /// Why a store call failed.
@@ -312,6 +333,81 @@ pub trait Store: Send + Sync {
         &self,
         slug: &str,
     ) -> Result<Option<i0721_proto::StorageBucketRecord>, StoreError>;
+
+    /// Upsert the MUTABLE fields of one bucket (R-A's admin surface;
+    /// identity fields — slug / backend / location / endpoint_ref /
+    /// is_bootstrap — are NOT writable here). Answers the updated row.
+    async fn upsert_storage_bucket(
+        &self,
+        slug: &str,
+        display_name: &str,
+        anonymous_read: bool,
+        grant_on_signup: bool,
+        enabled: bool,
+    ) -> Result<i0721_proto::StorageBucketRecord, StoreError>;
+
+    /// Delete a bucket row by id (the caller has run R-B's three guards).
+    /// Answers whether a row was removed; grant rows cascade.
+    async fn delete_storage_bucket(&self, id: Uuid) -> Result<bool, StoreError>;
+
+    /// Count a bucket's LIVE file rows (folders count — R-B treats a
+    /// folder tree as live content). `bucket_id = None` counts the
+    /// legacy NULL rows the same way.
+    async fn count_live_files_by_bucket(
+        &self,
+        bucket_id: Option<Uuid>,
+    ) -> Result<u64, StoreError>;
+
+    /// The owner's live dedupe probe WITH the bucket dimension (R-C):
+    /// `Some(row)` when this owner already holds this content in THIS
+    /// bucket; the cross-bucket probe reuses [`Store::get_file_by_owner_and_sha256`].
+    async fn get_file_by_owner_bucket_and_sha256(
+        &self,
+        owner_id: Uuid,
+        bucket_id: Option<Uuid>,
+        sha256: &str,
+    ) -> Result<Option<FileRecord>, StoreError>;
+
+    // ── bucket grants (the P2a authorization face) ──────────────────
+
+    /// One user's grant row for one bucket, if any.
+    async fn get_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+    ) -> Result<Option<i0721_proto::BucketGrantRecord>, StoreError>;
+
+    /// Upsert one grant row (the ONLY write; revocation = an all-false
+    /// row — there is no delete-row action anywhere in the service).
+    async fn set_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+        can_read: bool,
+        can_write: bool,
+        can_share: bool,
+    ) -> Result<(), StoreError>;
+
+    /// Every grant row of one user (the grant-editor page).
+    async fn list_bucket_grants_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError>;
+
+    /// Every grant row on one bucket (the bucket page's grant roster).
+    async fn list_bucket_grants_for_bucket(
+        &self,
+        bucket_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError>;
+
+    /// The R-F four-state read of one settings row: `Absent` (no row),
+    /// `Corrupt` (a row whose payload does not parse as JSON), `Unreadable`
+    /// (the store itself failed) or `Value` (a parsed payload). Callers
+    /// fail closed on everything but `Value`.
+    async fn settings_state(
+        &self,
+        key: &str,
+    ) -> Result<SettingsState, StoreError>;
 
     // ── API keys (the MCP wave) ──────────────────────────────────────
     /// Create an API key row.

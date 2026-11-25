@@ -21,10 +21,15 @@ struct Inner {
     users: Vec<UserRecord>,
     files: Vec<FileRecord>,
     settings: HashMap<String, serde_json::Value>,
+    /// Raw settings text (test fixtures only): a `Some` entry here makes
+    /// `settings_state` read THIS text instead of the parsed map, so a
+    /// test can plant a corrupt payload the typed `set_setting` cannot.
+    settings_raw: HashMap<String, String>,
     oauth_identities: Vec<(String, String, Uuid)>,
     shares: Vec<i0721_proto::ShareRecord>,
     api_keys: Vec<i0721_proto::ApiKeyRecord>,
     buckets: Vec<i0721_proto::StorageBucketRecord>,
+    grants: Vec<i0721_proto::BucketGrantRecord>,
 }
 
 /// The in-memory [`Store`].
@@ -49,6 +54,16 @@ impl MemoryStore {
     /// buckets are born in migration 0007 only).
     pub fn seed_bucket(&self, bucket: i0721_proto::StorageBucketRecord) {
         self.inner.lock().unwrap().buckets.push(bucket);
+    }
+
+    /// Plant a RAW settings text that `settings_state` serves verbatim —
+    /// the corrupt-payload fixture the typed `set_setting` cannot build.
+    pub fn seed_raw_setting(&self, key: &str, raw: &str) {
+        self.inner
+            .lock()
+            .unwrap()
+            .settings_raw
+            .insert(key.to_owned(), raw.to_owned());
     }
 }
 
@@ -239,6 +254,150 @@ impl Store for MemoryStore {
             .iter()
             .find(|b| b.slug == slug)
             .cloned())
+    }
+
+    async fn upsert_storage_bucket(
+        &self,
+        slug: &str,
+        display_name: &str,
+        anonymous_read: bool,
+        grant_on_signup: bool,
+        enabled: bool,
+    ) -> Result<i0721_proto::StorageBucketRecord, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let row = inner
+            .buckets
+            .iter_mut()
+            .find(|b| b.slug == slug)
+            .ok_or_else(|| conflict(format!("no such bucket: {slug}")))?;
+        row.display_name = display_name.to_owned();
+        row.anonymous_read = anonymous_read;
+        row.grant_on_signup = grant_on_signup;
+        row.enabled = enabled;
+        Ok(row.clone())
+    }
+
+    async fn delete_storage_bucket(&self, id: Uuid) -> Result<bool, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let before = inner.buckets.len();
+        inner.buckets.retain(|b| b.id != id);
+        // Grant rows cascade with the bucket (the FK's ON DELETE CASCADE).
+        inner.grants.retain(|g| g.bucket_id != id);
+        Ok(inner.buckets.len() != before)
+    }
+
+    async fn count_live_files_by_bucket(&self, bucket_id: Option<Uuid>) -> Result<u64, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .files
+            .iter()
+            .filter(|f| f.deleted_at.is_none() && f.bucket_id == bucket_id)
+            .count() as u64)
+    }
+
+    async fn get_file_by_owner_bucket_and_sha256(
+        &self,
+        owner_id: Uuid,
+        bucket_id: Option<Uuid>,
+        sha256: &str,
+    ) -> Result<Option<FileRecord>, StoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(lock_err)?
+            .files
+            .iter()
+            .find(|f| {
+                f.deleted_at.is_none()
+                    && f.owner_id == owner_id
+                    && f.bucket_id == bucket_id
+                    && f.sha256 == sha256
+            })
+            .cloned())
+    }
+
+    async fn get_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+    ) -> Result<Option<i0721_proto::BucketGrantRecord>, StoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(lock_err)?
+            .grants
+            .iter()
+            .find(|g| g.user_id == user_id && g.bucket_id == bucket_id)
+            .cloned())
+    }
+
+    async fn set_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+        can_read: bool,
+        can_write: bool,
+        can_share: bool,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        if let Some(row) = inner
+            .grants
+            .iter_mut()
+            .find(|g| g.user_id == user_id && g.bucket_id == bucket_id)
+        {
+            row.can_read = can_read;
+            row.can_write = can_write;
+            row.can_share = can_share;
+            return Ok(());
+        }
+        inner.grants.push(i0721_proto::BucketGrantRecord {
+            user_id,
+            bucket_id,
+            can_read,
+            can_write,
+            can_share,
+            created_at: Timestamp::now(),
+        });
+        Ok(())
+    }
+
+    async fn list_bucket_grants_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .grants
+            .iter()
+            .filter(|g| g.user_id == user_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn list_bucket_grants_for_bucket(
+        &self,
+        bucket_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .grants
+            .iter()
+            .filter(|g| g.bucket_id == bucket_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn settings_state(&self, key: &str) -> Result<crate::SettingsState, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        if let Some(raw) = inner.settings_raw.get(key) {
+            return Ok(serde_json::from_str::<serde_json::Value>(raw)
+                .map(crate::SettingsState::Value)
+                .unwrap_or_else(|_| crate::SettingsState::Corrupt { raw: raw.clone() }));
+        }
+        match inner.settings.get(key) {
+            None => Ok(crate::SettingsState::Absent),
+            Some(value) => Ok(crate::SettingsState::Value(value.clone())),
+        }
     }
 
     async fn create_file(&self, file: NewFile) -> Result<FileRecord, StoreError> {
