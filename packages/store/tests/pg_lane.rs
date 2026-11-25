@@ -2211,7 +2211,9 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
             })
             .await
             .unwrap();
-        let lacrymira::Reply::Rows { rows, .. } = reply else { panic!("rows") };
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("rows")
+        };
         rows.iter()
             .map(|row| {
                 let slug = match &row[0] {
@@ -2274,7 +2276,7 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
     got_a.sort();
     got_b.sort();
     got_c.sort();
-    let mut sorted = |mut vec: Vec<String>| {
+    let sorted = |mut vec: Vec<String>| {
         vec.sort();
         vec
     };
@@ -2284,7 +2286,11 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
         "member A: the deny row excludes the signup bucket"
     );
     assert_eq!(got_b, sorted(expected_b.clone()), "admin B: all buckets");
-    assert_eq!(got_c, sorted(expected_c.clone()), "member C: exactly the signup buckets");
+    assert_eq!(
+        got_c,
+        sorted(expected_c.clone()),
+        "member C: exactly the signup buckets"
+    );
 
     // The DEMOTED-admin face: demote B, then re-run — B's key ALREADY
     // carries an array, so the snapshot stays the demotion-time answer.
@@ -2330,7 +2336,6 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
     cleanup_user(&store, member_a.id).await;
     cleanup_user(&store, admin_b.id).await;
     cleanup_user(&store, member_c.id).await;
-
 }
 
 /// MUT:M-P2A8 — dropping the `revoked_at IS NULL` guard makes 0008
