@@ -11,17 +11,25 @@ use i0721_proto::{FileRecord, NewFile, UserRecord};
 use jiff::Timestamp;
 use lacrymira::{Command, Condition, Entity, Reply, TypedColumnOps, Value};
 use lacrymira_pg::{MigrationResult, MigrationRunner, PgExecutor};
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 use i0721_proto::{NewShare, ShareRecord};
 
 use crate::entity::{
-    api_key_model_to_record, file_model_from_new, file_model_to_record, share_model_to_record,
+    api_key_model_to_record, file_model_from_new,
+    file_model_to_record, share_model_to_record, storage_bucket_model_to_record,
     user_model_from_new, user_model_to_record, ApiKeyColumn, ApiKeyModel, FileColumn, FileModel,
     OAuthIdentityColumn, OAuthIdentityModel, SettingColumn, SettingModel, ShareColumn, ShareModel,
-    UserColumn, UserModel,
+    StorageBucketColumn, StorageBucketModel, UserColumn, UserModel,
 };
-use crate::{migrations, CreateUser, Store, StoreError};
+use crate::{migrations, BootstrapBucketParams, CreateUser, Store, StoreError};
+
+/// The process-wide bootstrap facts the bucket migration needs. Set once
+/// by the main binary after the R-U decision; [`PgStore::migrate`] reads
+/// it so every lane that calls the parameterless form still carries the
+/// facts.
+static BOOTSTRAP_PARAMS: OnceLock<BootstrapBucketParams> = OnceLock::new();
 
 /// A [`Store`] over a PostgreSQL connection pool.
 #[derive(Debug, Clone)]
@@ -52,10 +60,41 @@ impl PgStore {
     ///
     /// [`StoreError::Db`] when a migration fails to apply.
     pub async fn migrate(&self) -> Result<MigrationResult, StoreError> {
-        MigrationRunner::new(migrations())
+        self.migrate_with(BOOTSTRAP_PARAMS.get()).await
+    }
+
+    /// Same, with explicit bootstrap facts (the main binary resolves
+    /// them fail-closed from the environment and the pending set; tests
+    /// pass a fixed set). Must be called once before [`Self::migrate`]
+    /// when the process serves real migrations — see [`Self::set_bootstrap_params`].
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Db`] when a migration fails to apply.
+    pub async fn migrate_with(
+        &self,
+        bootstrap: Option<&BootstrapBucketParams>,
+    ) -> Result<MigrationResult, StoreError> {
+        MigrationRunner::new(migrations(bootstrap))
             .up(self.executor.pool())
             .await
             .map_err(StoreError::from)
+    }
+
+    /// Register the process-wide bootstrap facts. The FIRST set wins (a
+    /// process runs one migration set); later differing sets are a
+    /// programming error and fail loudly at debug, quietly at release —
+    /// the migration facts of a process must not change mid-flight.
+    pub fn set_bootstrap_params(params: BootstrapBucketParams) {
+        match BOOTSTRAP_PARAMS.get() {
+            Some(existing) => assert!(
+                *existing == params,
+                "bootstrap bucket params must be set once, consistently"
+            ),
+            None => {
+                let _ = BOOTSTRAP_PARAMS.set(params);
+            }
+        }
     }
 
     /// Execute a rows-producing command and decode every row into the
@@ -332,9 +371,73 @@ impl Store for PgStore {
     }
 
     async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError> {
-        self.query_one::<FileModel>(live_file_by(FileColumn::StorageKey, key))
+        let rows = self.list_live_rows_by_storage_key(key).await?;
+        Ok(rows.into_iter().next())
+    }
+
+    async fn list_live_rows_by_storage_key(
+        &self,
+        key: &str,
+    ) -> Result<Vec<FileRecord>, StoreError> {
+        // `id ASC` is the deterministic traversal order R-J pins: the
+        // same key must resolve identically on every request and on both
+        // stores.
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(
+                FileColumn::DeletedAt
+                    .is_null()
+                    .into_inner()
+                    .and(FileColumn::StorageKey.eq(key).into_inner()),
+            ),
+            order_by: vec![("id".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        self.query_all::<FileModel>(cmd)
             .await?
+            .into_iter()
             .map(file_model_to_record)
+            .collect()
+    }
+
+    async fn list_storage_buckets(
+        &self,
+    ) -> Result<Vec<i0721_proto::StorageBucketRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: StorageBucketModel::TABLE.to_owned(),
+            filter: None,
+            order_by: vec![("created_at".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        self.query_all::<StorageBucketModel>(cmd)
+            .await?
+            .into_iter()
+            .map(storage_bucket_model_to_record)
+            .collect()
+    }
+
+    async fn get_storage_bucket_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<i0721_proto::StorageBucketRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: StorageBucketModel::TABLE.to_owned(),
+            filter: Some(StorageBucketColumn::Slug.eq(slug).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        self.query_one::<StorageBucketModel>(cmd)
+            .await?
+            .map(storage_bucket_model_to_record)
             .transpose()
     }
 
@@ -790,6 +893,7 @@ impl Store for PgStore {
             mime: "inode/directory".to_owned(),
             size: 0,
             sha256: format!("dir:{}", Uuid::new_v4().simple()),
+            bucket_id: None,
             storage_backend: "local".to_owned(),
             storage_key: String::new(),
             thumbnail_key: None,

@@ -24,6 +24,7 @@ struct Inner {
     oauth_identities: Vec<(String, String, Uuid)>,
     shares: Vec<i0721_proto::ShareRecord>,
     api_keys: Vec<i0721_proto::ApiKeyRecord>,
+    buckets: Vec<i0721_proto::StorageBucketRecord>,
 }
 
 /// The in-memory [`Store`].
@@ -42,6 +43,12 @@ impl MemoryStore {
     /// Insert a record directly (fixture setup for tests).
     pub fn seed_user(&self, user: UserRecord) {
         self.inner.lock().unwrap().users.push(user);
+    }
+
+    /// Insert a bucket row directly (fixture setup for tests — real
+    /// buckets are born in migration 0007 only).
+    pub fn seed_bucket(&self, bucket: i0721_proto::StorageBucketRecord) {
+        self.inner.lock().unwrap().buckets.push(bucket);
     }
 }
 
@@ -187,14 +194,44 @@ impl Store for MemoryStore {
             .cloned())
     }
 
-    async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError> {
-        Ok(self
+    async fn list_live_rows_by_storage_key(
+        &self,
+        key: &str,
+    ) -> Result<Vec<FileRecord>, StoreError> {
+        // `id ASC` — the same deterministic order the PG lane returns.
+        let mut rows: Vec<FileRecord> = self
             .inner
             .lock()
             .map_err(lock_err)?
             .files
             .iter()
-            .find(|file| file.deleted_at.is_none() && file.storage_key == key)
+            .filter(|file| file.deleted_at.is_none() && file.storage_key == key)
+            .cloned()
+            .collect();
+        rows.sort_by_key(|file| file.id);
+        Ok(rows)
+    }
+
+    async fn list_storage_buckets(
+        &self,
+    ) -> Result<Vec<i0721_proto::StorageBucketRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        let mut rows = inner.buckets.clone();
+        rows.sort_by_key(|b| (b.created_at, b.slug.clone()));
+        Ok(rows)
+    }
+
+    async fn get_storage_bucket_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<i0721_proto::StorageBucketRecord>, StoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(lock_err)?
+            .buckets
+            .iter()
+            .find(|b| b.slug == slug)
             .cloned())
     }
 
@@ -228,6 +265,7 @@ impl Store for MemoryStore {
             mime: file.mime,
             size: file.size,
             sha256: file.sha256,
+            bucket_id: None,
             storage_backend: file.storage_backend,
             storage_key: file.storage_key,
             thumbnail_key: file.thumbnail_key,
@@ -541,6 +579,7 @@ impl Store for MemoryStore {
             mime: "inode/directory".to_owned(),
             size: 0,
             sha256: format!("dir:{}", Uuid::new_v4().simple()),
+            bucket_id: None,
             storage_backend: "local".to_owned(),
             storage_key: String::new(),
             thumbnail_key: None,

@@ -19,7 +19,10 @@ pub mod migrate;
 pub mod pg;
 
 pub use memory::MemoryStore;
-pub use migrate::migrations;
+pub use migrate::{
+    migrations, BootstrapBucketParams, MIGRATION_0007_BOOTSTRAP_SQL, MIGRATION_0007_SCHEMA_SQL,
+    ZERO_UUID_SQL,
+};
 pub use pg::PgStore;
 
 use i0721_proto::{FileRecord, NewShare, Role, ShareRecord, UserRecord};
@@ -118,10 +121,29 @@ pub trait Store: Send + Sync {
         sha256: &str,
     ) -> Result<Option<FileRecord>, StoreError>;
 
-    /// Fetch a live file by its public storage key (the `/media/:key`
-    /// lookup). Several rows may share one storage key (per-owner dedupe
-    /// keeps the blob content-addressed); any of them authorizes serving.
-    async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError>;
+    /// Fetch a live file by its public storage key. STAGE-A SHIM over
+    /// [`Store::list_live_rows_by_storage_key`] — the real call sites
+    /// re-route per row (I4) in the B-P1 stage-B slice; this keeps the
+    /// lane compiling meanwhile and its behavior deterministic (the
+    /// row list is `id ASC`, so the shim's "first row" no longer
+    /// depends on table scan order).
+    async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError> {
+        Ok(self
+            .list_live_rows_by_storage_key(key)
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    /// ALL live rows sharing a storage key, `id ASC` — the set the
+    /// `/media` lane's serving-row decision and the share lane's
+    /// per-row routing consume (spec R-J: the determination is a set
+    /// predicate and the order is a single deterministic key, identical
+    /// on both stores).
+    async fn list_live_rows_by_storage_key(
+        &self,
+        key: &str,
+    ) -> Result<Vec<FileRecord>, StoreError>;
 
     /// Count live rows sharing a storage key — the caller's blob-reclaim
     /// probe (a blob goes away only with its last live row; full GC is a
@@ -258,8 +280,19 @@ pub trait Store: Send + Sync {
         quota_bytes: Option<i64>,
     ) -> Result<(), StoreError>;
 
-    // ── API keys (the MCP wave) ──────────────────────────────────────
+    // ── bucket registry (the B-P1 slice; the write RPC arrives in P2a) ──
 
+    /// Every registered bucket (the registry's startup load and the
+    /// health lane's row source).
+    async fn list_storage_buckets(&self) -> Result<Vec<i0721_proto::StorageBucketRecord>, StoreError>;
+
+    /// One bucket by its stable slug.
+    async fn get_storage_bucket_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<i0721_proto::StorageBucketRecord>, StoreError>;
+
+    // ── API keys (the MCP wave) ──────────────────────────────────────
     /// Create an API key row.
     async fn create_api_key(&self, record: &i0721_proto::ApiKeyRecord) -> Result<(), StoreError>;
 

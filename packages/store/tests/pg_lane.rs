@@ -89,6 +89,58 @@ fn scratch_user() -> CreateUser {
     }
 }
 
+/// A1 (R-R) — the entity layer can carry the new nullable UUID column:
+/// the column is added by plain DDL, a `create_file` INSERT that never
+/// names `bucket_id` succeeds, and the row reads back with `bucket_id`
+/// NULL through the typed entity (no `Command::Sql` fallback needed).
+/// Once migration 0007 exists the ALTER here is redundant (IF NOT
+/// EXISTS), so the check stays valid on every lane database.
+#[tokio::test]
+async fn pg_entity_layer_carries_a_new_nullable_uuid_column() {
+    let Some(store) = db().await else { return };
+    let alter = lacrymira::Command::Sql {
+        dialect: lacrymira::Dialect::Postgres,
+        text: "ALTER TABLE files ADD COLUMN IF NOT EXISTS bucket_id UUID \
+               REFERENCES storage_buckets (id)"
+            .to_owned(),
+        params: vec![],
+    };
+    store
+        .executor
+        .execute(&alter)
+        .await
+        .expect("the nullable UUID column is expressible as DDL");
+
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let created = store
+        .create_file(NewFile {
+            parent_id: None,
+            owner_id: user.id,
+            name: "a1.png".to_owned(),
+            kind: FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: 1,
+            sha256: format!("a1{}", uuid::Uuid::new_v4().simple()),
+            storage_backend: "local".to_owned(),
+            storage_key: format!("a1{}", uuid::Uuid::new_v4().simple()),
+            thumbnail_key: None,
+            original_name: "a1.png".to_owned(),
+        })
+        .await
+        .expect("an insert that never sets bucket_id");
+    let fetched = store
+        .get_file(created.id)
+        .await
+        .expect("read back")
+        .expect("row exists");
+    assert!(
+        fetched.bucket_id.is_none(),
+        "the un-set column decodes back as NULL (no fallback to zero-uuid): {:?}",
+        fetched.bucket_id
+    );
+    cleanup_user(&store, user.id).await;
+}
+
 async fn cleanup_user(store: &PgStore, id: uuid::Uuid) {
     store.delete_user(id).await.expect("cleanup delete");
 }
