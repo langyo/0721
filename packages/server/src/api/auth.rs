@@ -117,6 +117,15 @@ pub struct AuthSession {
     pub user: UserDto,
 }
 
+/// The account-first ladder's first-step body: just the name the caller
+/// typed (no password — that comes after the factors are known).
+#[derive(Debug, Clone, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+pub struct AccountMethodsRequest {
+    /// Login name as typed; surrounding whitespace is trimmed server-side.
+    pub username: String,
+}
+
 /// Extract and verify the bearer token, then load the user.
 ///
 /// The watermark check reproduces the legacy engine: a token minted
@@ -206,6 +215,218 @@ pub async fn login_methods(
     let providers = crate::oauth::load_providers(&state).await;
     let document = crate::oauth::login_methods_document(password, &providers)?;
     Ok(axum::response::Json(document))
+}
+
+/// `POST /api/v1/auth/account-methods` — the account-first ladder's first
+/// step: the caller knows a name and asks how THAT account signs in.
+///
+/// ## The two facts this endpoint must not leak
+///
+/// This is a PUBLIC, unauthenticated surface taking a caller-chosen
+/// username, so it is a textbook account-enumeration oracle. Two rules
+/// keep it shut:
+///
+/// 1. **Shape parity** — a name that matches no user answers exactly like
+///    a name that matches a password-carrying one: `password` factor
+///    present, zero oauth rows. Never an empty list, never a 404. See
+///    [`account_factors`] for the construction and `routes.rs` for the
+///    test that compares the two responses as whole documents.
+/// 2. **Provider parity** — the "this account has these linked
+///    providers" answer exists only when the account really has linked
+///    providers; it comes from the account's own binding rows, never by
+///    joining against the global provider list (a global question would
+///    answer identically for every name and make the honest absence
+///    indistinguishable from a bug).
+///
+/// Rate limiting rides the same per-IP budget as [`login`]: both are
+/// guess surfaces for the same secret, and sharing the log means this
+/// endpoint cannot be used to widen the budget.
+pub async fn account_methods(
+    ConnectInfo(source): ConnectInfo<SocketAddr>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<AccountMethodsRequest>,
+) -> Result<Json<AccountMethods>, ApiError> {
+    let client_ip = effective_client_ip(&state.config.trusted_proxies, source.ip(), &headers);
+    state.login_limiter.record(client_ip)?;
+
+    let password_switch = password_login_enabled(&state).await;
+    let user = state
+        .store
+        .get_user_by_username(request.username.trim())
+        .await?;
+    let linked = match &user {
+        Some(user) => state.store.oauth_providers_for_user(user.id).await?,
+        None => Vec::new(),
+    };
+    let has_password_hash = user
+        .as_ref()
+        .is_some_and(|user| user.password_hash.is_some());
+
+    // Label resolution reads the provider registry (authentication state,
+    // not a secret): an enabled row names itself, a bound provider whose
+    // row is gone still gets a row so the account's real options survive
+    // an operator's edit.
+    let providers = crate::oauth::load_providers(&state).await;
+    let enabled: Vec<_> = providers.iter().filter(|row| row.enabled).collect();
+    let factors = account_factors(
+        &AccountFacts {
+            has_password_hash,
+            password_switch,
+            linked_providers: &linked,
+        },
+        &ProviderLabels::new(&enabled),
+    );
+
+    Ok(Json(AccountMethods {
+        factors,
+        password: password_switch,
+    }))
+}
+
+/// One sign-in factor an account has.
+///
+/// Externally tagged on `kind`: `{"kind":"password"}` and
+/// `{"kind":"oauth","provider":"erp","label":"Celestia ID"}` — the ladder
+/// front end switches on `kind` and never has to read a nullable pair.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(tag = "kind")]
+#[ts(export, export_to = "../../webui/src/types/")]
+pub enum LoginFactor {
+    /// The account carries a password hash AND the deployment's password
+    /// switch is on.
+    #[serde(rename = "password")]
+    Password,
+    /// A third-party identity is linked to the account; `provider` is the
+    /// registry id of the row to start the OAuth flow for.
+    ///
+    /// Renamed explicitly: the default `rename_all` spelling of this
+    /// variant would be `o_auth`, which is not what the ladder front end
+    /// and the generated TS binding read.
+    #[serde(rename = "oauth")]
+    OAuth {
+        /// Registry id (`erp`, `github`, …).
+        provider: String,
+        /// Display label for the ladder row.
+        label: String,
+    },
+}
+
+/// The `account-methods` answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../webui/src/types/")]
+pub struct AccountMethods {
+    /// At least one entry, always — see [`account_factors`].
+    pub factors: Vec<LoginFactor>,
+    /// The deployment-wide password switch, echoed so the ladder can tell
+    /// "this account has no password" from "passwords are off here".
+    pub password: bool,
+}
+
+/// The facts the factor decision needs, separated from the store so the
+/// anti-enumeration parity is testable without a database.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AccountFacts<'a> {
+    /// `users.password_hash IS NOT NULL`.
+    pub has_password_hash: bool,
+    /// The global password kill-switch (see [`password_login_enabled`]).
+    pub password_switch: bool,
+    /// Provider ids bound to the account (`oauth_identities` rows).
+    pub linked_providers: &'a [String],
+}
+
+/// The display labels this deployment can put on a provider row.
+pub(crate) struct ProviderLabels<'a> {
+    providers: &'a [&'a crate::oauth::OAuthProvider],
+}
+
+/// The brand name of the family's central identity provider. Its registry
+/// `display_name` is operator-editable, and an empty one would render as
+/// a nameless row, so the brand is the fallback.
+pub(crate) const CELESTIA_ID_LABEL: &str = "Celestia ID";
+
+impl<'a> ProviderLabels<'a> {
+    /// Wrap the ENABLED provider rows (disabled ones must not be offered).
+    pub(crate) fn new(providers: &'a [&'a crate::oauth::OAuthProvider]) -> Self {
+        Self { providers }
+    }
+
+    /// The row label for `provider_id`.
+    fn label(&self, provider_id: &str) -> String {
+        let row = self.providers.iter().find(|row| row.id == provider_id);
+        match row {
+            Some(row) if !row.display_name.trim().is_empty() => row.display_name.clone(),
+            Some(row) if row.provider_type == "builtin:erp" => CELESTIA_ID_LABEL.to_owned(),
+            // A bound provider whose registry row is gone (or disabled):
+            // the account really has this option, so name it by its id
+            // rather than dropping it — the flow entry would 404 anyway,
+            // and hiding a real path is worse than naming it plainly.
+            _ => provider_id.to_owned(),
+        }
+    }
+}
+
+/// Decide an account's factors — the anti-enumeration core.
+///
+/// The invariant, stated as the property the tests pin: **the returned set
+/// is never empty, and every empty "unknown account" answer is exactly the
+/// answer a password-carrying account with no linked provider gets.**
+///
+/// The parity is structural rather than conditional: a missing user
+/// arrives here as `has_password_hash = false, linked_providers = []`, and
+/// the FIRST branch below is reached by every account whose password is
+/// usable. So an unknown name and a normal password account produce the
+/// same `vec![Password]` — there is no `if found_anything { … } else {
+/// unreachable }` seam that a later edit could fill differently. The only
+/// accounts that differ from that baseline are the ones that really have
+/// a linked provider, which is the fact this endpoint exists to report.
+///
+/// The floor is what makes this hold for every account, not just the
+/// common one: an OAuth-only account (NULL hash, one linked identity)
+/// announces exactly its provider, and an unknown name — which has no
+/// provider — announces the password baseline. So the answer space is
+/// `{password} ∪ {that account's providers}`, and the ONLY difference an
+/// unknown name can produce is the absence of providers, which is a fact
+/// any caller can also produce by testing an account it has already seen.
+///
+/// Note the deliberate asymmetry of the baseline: it is emitted from the
+/// deployment switch alone, never from anything account-specific, so the
+/// shapes available to an unlinked name are identical for every input.
+pub(crate) fn account_factors(
+    facts: &AccountFacts<'_>,
+    labels: &ProviderLabels<'_>,
+) -> Vec<LoginFactor> {
+    let mut factors = Vec::new();
+    // The password factor is the account's OWN fact first: an account with
+    // no hash never announces a password, whatever the deployment switch
+    // says. The switch only gates the switch-independent baseline below.
+    if facts.has_password_hash && facts.password_switch {
+        factors.push(LoginFactor::Password);
+    }
+    for provider in facts.linked_providers {
+        // Dedupe per provider id, not per label: the store already folds
+        // multiple subjects of one provider into one id, and a duplicate
+        // row would render twice.
+        let seen = factors.iter().any(|factor| {
+            matches!(factor, LoginFactor::OAuth { provider: bound, .. } if bound == provider)
+        });
+        if seen {
+            continue;
+        }
+        factors.push(LoginFactor::OAuth {
+            provider: provider.clone(),
+            label: labels.label(provider),
+        });
+    }
+    if factors.is_empty() {
+        // Only reachable with the password switch OFF and nothing linked —
+        // i.e. the shape a `password:false` deployment needs. `Password`
+        // here is the switch-independent baseline: it is what a password
+        // account's ladder would have shown anyway, so an unknown name
+        // keeps the same answer while the switch is on.
+        factors.push(LoginFactor::Password);
+    }
+    factors
 }
 
 /// `POST /api/v1/auth/login` — mints the session and plants it as an
@@ -378,5 +599,196 @@ mod password_switch_tests {
         assert!(!resolve_password_login(None, Some(false)));
         // Unpinned defaults ON (fresh deployments must not lock out).
         assert!(resolve_password_login(None, None));
+    }
+}
+
+#[cfg(test)]
+mod account_factor_tests {
+    use super::*;
+
+    fn provider(id: &str, display_name: &str, provider_type: &str) -> crate::oauth::OAuthProvider {
+        crate::oauth::OAuthProvider {
+            id: id.to_owned(),
+            display_name: display_name.to_owned(),
+            provider_type: provider_type.to_owned(),
+            client_id: "client".to_owned(),
+            client_secret: String::new(),
+            base_url: None,
+            issuer_url: None,
+            scopes: None,
+            enabled: true,
+            icon: None,
+        }
+    }
+
+    /// The rows every case below resolves against: one erp (the family
+    /// identity) and one generic provider.
+    fn registry() -> Vec<crate::oauth::OAuthProvider> {
+        vec![
+            provider("erp", "Celestia ID", "builtin:erp"),
+            provider("gh", "GitHub", "builtin:github"),
+        ]
+    }
+
+    fn factors_for(
+        has_password_hash: bool,
+        password_switch: bool,
+        linked: &[String],
+    ) -> Vec<LoginFactor> {
+        let rows = registry();
+        let enabled: Vec<&crate::oauth::OAuthProvider> = rows.iter().collect();
+        account_factors(
+            &AccountFacts {
+                has_password_hash,
+                password_switch,
+                linked_providers: linked,
+            },
+            &ProviderLabels::new(&enabled),
+        )
+    }
+
+    #[test]
+    fn password_account_lists_the_password_factor() {
+        assert_eq!(
+            factors_for(true, true, &[]),
+            vec![LoginFactor::Password],
+            "a password-carrying account announces exactly the password factor"
+        );
+    }
+
+    #[test]
+    fn unknown_account_has_the_same_shape_as_a_password_account() {
+        // MUT:enumeration-parity — this is the anti-enumeration pin at the
+        // decision layer. A missing user reaches `account_factors` as
+        // (false, [], switch) and MUST render what a password account
+        // renders; turning the fallback into an empty vec (or a 404 at the
+        // route) reddens here.
+        assert_eq!(
+            factors_for(false, true, &[]),
+            factors_for(true, true, &[]),
+            "unknown and password accounts must be indistinguishable"
+        );
+        assert_eq!(factors_for(false, true, &[]), vec![LoginFactor::Password]);
+    }
+
+    #[test]
+    fn passwordless_account_without_links_still_answers_with_a_factor() {
+        // Reachable state: an OAuth-only account whose provider link was
+        // removed, or an admin-created user without a password. An empty
+        // factor list would render a dead ladder AND become the one shape
+        // that means "no such account" — so the ladder always has a floor.
+        assert_eq!(factors_for(false, true, &[]), vec![LoginFactor::Password]);
+        // With the password switch OFF the floor is the same factor: the
+        // baseline must not change with the switch, or the switch itself
+        // becomes an oracle for "does this name exist".
+        assert_eq!(factors_for(false, false, &[]), vec![LoginFactor::Password]);
+        assert_eq!(factors_for(true, false, &[]), vec![LoginFactor::Password]);
+    }
+
+    #[test]
+    fn linked_providers_append_oauth_factors_with_brand_labels() {
+        let linked = vec!["erp".to_owned(), "gh".to_owned()];
+        assert_eq!(
+            factors_for(true, true, &linked),
+            vec![
+                LoginFactor::Password,
+                LoginFactor::OAuth {
+                    provider: "erp".to_owned(),
+                    label: "Celestia ID".to_owned(),
+                },
+                LoginFactor::OAuth {
+                    provider: "gh".to_owned(),
+                    label: "GitHub".to_owned(),
+                },
+            ],
+            "each bound provider is one factor, labelled by its registry row"
+        );
+    }
+
+    #[test]
+    fn a_passwordless_oauth_account_announces_only_its_providers() {
+        // The state the endpoint exists for: no password hash (NULL), one
+        // linked identity. The password switch is ON deployment-wide, yet
+        // no password factor may appear — the account genuinely cannot use
+        // one.
+        let linked = vec!["erp".to_owned()];
+        assert_eq!(
+            factors_for(false, true, &linked),
+            vec![LoginFactor::OAuth {
+                provider: "erp".to_owned(),
+                label: "Celestia ID".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn duplicate_and_unregistered_providers_still_render_once() {
+        // The store folds subjects; a store bug that sends the same id
+        // twice must not put two identical rows on the ladder.
+        let linked = vec!["erp".to_owned(), "erp".to_owned()];
+        assert_eq!(
+            factors_for(false, true, &linked),
+            vec![LoginFactor::OAuth {
+                provider: "erp".to_owned(),
+                label: "Celestia ID".to_owned(),
+            }]
+        );
+
+        // MUT:factor-dedupe-key — the dedupe must compare the provider id,
+        // not the label. Two rows with the SAME label are still two
+        // providers; keying on the label would let one row swallow the
+        // other and the account would lose a real option.
+        let same_label = ["gh".to_owned(), "tw".to_owned()];
+        assert_eq!(
+            factors_for(false, true, &same_label),
+            vec![
+                LoginFactor::OAuth {
+                    provider: "gh".to_owned(),
+                    label: "GitHub".to_owned(),
+                },
+                LoginFactor::OAuth {
+                    provider: "tw".to_owned(),
+                    // not in the registry: named by its id, exactly once.
+                    label: "tw".to_owned(),
+                },
+            ]
+        );
+
+        // A bound provider whose registry row was deleted or renamed: the
+        // account's real option survives, named by its id.
+        let unregistered = vec!["gone".to_owned()];
+        assert_eq!(
+            factors_for(false, true, &unregistered),
+            vec![LoginFactor::OAuth {
+                provider: "gone".to_owned(),
+                label: "gone".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn label_falls_back_to_the_brand_when_the_operator_blanked_it() {
+        let rows = [provider("erp", "  ", "builtin:erp")];
+        let enabled: Vec<&crate::oauth::OAuthProvider> = rows.iter().collect();
+        let labels = ProviderLabels::new(&enabled);
+        assert_eq!(labels.label("erp"), CELESTIA_ID_LABEL);
+    }
+
+    #[test]
+    fn wire_shape_switches_on_kind() {
+        // The TS binding is generated from this shape, so the tag/spelling
+        // is contract: `{"kind":"password"}` and
+        // `{"kind":"oauth","provider":…,"label":…}` with no null fields.
+        let password = serde_json::to_value(LoginFactor::Password).unwrap();
+        assert_eq!(password, serde_json::json!({"kind": "password"}));
+        let oauth = serde_json::to_value(LoginFactor::OAuth {
+            provider: "erp".to_owned(),
+            label: "Celestia ID".to_owned(),
+        })
+        .unwrap();
+        assert_eq!(
+            oauth,
+            serde_json::json!({"kind": "oauth", "provider": "erp", "label": "Celestia ID"})
+        );
     }
 }

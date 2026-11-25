@@ -35,11 +35,12 @@
     "failed": "Nombre de usuario o contraseña incorrectos",
     "passwordDisabled": "El inicio con contraseña está desactivado: elija otro canal de acceso.",
     "noMethods": "No hay ningún método de acceso disponible: un administrador debe activar un proveedor o el acceso con contraseña.",
-    "passwordChannel": "Contraseña",
+    "accountChannel": "Cuenta",
     "submit": "Iniciar sesión",
     "celestiaChannel": "Celestia ID",
     "ssoChannel": "Inicio de sesión único",
-    "orContinue": "o continuar con"
+    "orContinue": "o continuar con",
+    "orProvider": "o continuar con un método vinculado"
   },
   "portal": {
     "title": "Imágenes",

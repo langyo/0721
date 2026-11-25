@@ -166,6 +166,15 @@ pub trait Store: Send + Sync {
         user_id: Uuid,
     ) -> Result<(), StoreError>;
 
+    /// Every provider id bound to `user_id`, DISTINCT and ascending.
+    ///
+    /// The shape is deliberately narrow: a caller asking "which sign-in
+    /// methods does this account have" needs the provider set and
+    /// nothing else, so no subject id ever leaves this layer (and the
+    /// request that drives this probe is unauthenticated — see the
+    /// `account-methods` endpoint).
+    async fn oauth_providers_for_user(&self, user_id: Uuid) -> Result<Vec<String>, StoreError>;
+
     // ── netdisk: scoped listing, folders, moves, shares, quota ──────
 
     /// Count the live rows in a folder listing without fetching them.
