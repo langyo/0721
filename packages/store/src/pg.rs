@@ -504,7 +504,13 @@ impl Store for PgStore {
         // exclude self; friendly Conflict instead of a raw 23505).
         if let Some(current) = self.get_file(id).await? {
             if self
-                .folder_name_taken(current.owner_id, current.parent_id, name, Some(id))
+                .folder_name_taken(
+                    current.owner_id,
+                    current.parent_id,
+                    current.bucket_id,
+                    name,
+                    Some(id),
+                )
                 .await?
             {
                 return Err(StoreError::Conflict(format!(
@@ -914,17 +920,24 @@ impl Store for PgStore {
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
+        bucket_id: Option<Uuid>,
         name: &str,
         exclude: Option<Uuid>,
     ) -> Result<bool, StoreError> {
         // Entity-layer read (the raw COALESCE SQL hit the driver's
         // binary-decoding path for UUID params); the root/NULL folding
-        // that COALESCE expressed happens here in Rust.
+        // that COALESCE expressed happens here in Rust. The bucket
+        // dimension folds the same way (R-G: same-layer uniqueness is
+        // bucket-aware — identical names in different buckets coexist).
         let mut filter = FileColumn::DeletedAt
             .is_null()
             .into_inner()
             .and(FileColumn::OwnerId.eq(owner_id).into_inner())
             .and(FileColumn::Name.eq(name).into_inner());
+        filter = match bucket_id {
+            Some(bid) => filter.and(FileColumn::BucketId.eq(bid).into_inner()),
+            None => filter.and(FileColumn::BucketId.is_null().into_inner()),
+        };
         filter = match parent_id {
             Some(pid) => filter.and(FileColumn::ParentId.eq(pid).into_inner()),
             None => filter.and(FileColumn::ParentId.is_null().into_inner()),
@@ -952,7 +965,7 @@ impl Store for PgStore {
         bucket_id: Option<Uuid>,
     ) -> Result<FileRecord, StoreError> {
         if self
-            .folder_name_taken(owner_id, parent_id, name, None)
+            .folder_name_taken(owner_id, parent_id, bucket_id, name, None)
             .await?
         {
             return Err(StoreError::Conflict(format!(
@@ -999,7 +1012,13 @@ impl Store for PgStore {
         // the store layer is the final gate against a raw 23505).
         if let Some(current) = self.get_file(id).await? {
             if self
-                .folder_name_taken(current.owner_id, parent_id, &current.name, Some(id))
+                .folder_name_taken(
+                    current.owner_id,
+                    parent_id,
+                    current.bucket_id,
+                    &current.name,
+                    Some(id),
+                )
                 .await?
             {
                 return Err(StoreError::Conflict(format!(

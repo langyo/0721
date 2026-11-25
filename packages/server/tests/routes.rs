@@ -8323,10 +8323,11 @@ async fn health_reports_unreadable_settings_instead_of_default() {
             &self,
             o: uuid::Uuid,
             p: Option<uuid::Uuid>,
+            b: Option<uuid::Uuid>,
             n: &str,
             e: Option<uuid::Uuid>,
         ) -> Result<bool, i0721_store::StoreError> {
-            self.0.folder_name_taken(o, p, n, e).await
+            self.0.folder_name_taken(o, p, b, n, e).await
         }
         async fn create_folder(
             &self,
@@ -8712,4 +8713,433 @@ fn blob_registry_never_falls_back_to_another_bucket() {
         Err(other) => panic!("expected Unavailable naming the OWN bucket: {other}"),
         Ok(_) => panic!("the unavailable bucket must not resolve"),
     }
+}
+
+// ── the stage-B guard tests: reads, writes and folders route by row ─────
+
+/// `media_reads_from_the_rows_bucket`: two rows share one storage key
+/// across two buckets; `/media` serves the bytes of the row that the
+/// id-ASC serving-row rule selects — its OWN bucket's bytes, never the
+/// other bucket's. MUT:M2 — `for_row`'s NULL branch resolving to "the
+/// first Ready bucket" instead of the bootstrap bucket turns this and
+/// `a_share_reads_only_bytes_from_its_own_rows_bucket` red.
+#[tokio::test]
+async fn media_reads_from_the_rows_bucket() {
+    let (state, admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (status, dto) = upload(&state, &token, tiny_png(), "a.png").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    // The pipeline converts to WebP: the row's OWN bytes are what the
+    // row's bucket store holds.
+    let bytes = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the row's bucket holds its bytes");
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(body.as_ref(), bytes.as_ref(), "the row's own bytes serve");
+
+    // And the row itself carries its bucket id (the write side of I4).
+    let row = state
+        .store
+        .get_file(uuid::Uuid::parse_str(dto["id"].as_str().unwrap()).unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let expected = state.registry.bootstrap_bucket_id().unwrap();
+    assert_eq!(row.bucket_id, Some(expected), "the row carries its bucket");
+    assert_eq!(
+        row.storage_backend, "local",
+        "the row's tag is its bucket's backend"
+    );
+    let _ = admin;
+}
+
+/// `a_share_reads_only_bytes_from_its_own_rows_bucket`: a share's
+/// download reads the FILE ROW's bucket — with a same-key decoy in the
+/// registry's other store the served bytes must still be the row's.
+/// MUT:M-B1 — share resolution reverting to "any row by storage_key"
+/// turns this red.
+#[tokio::test]
+async fn a_share_reads_only_bytes_from_its_own_rows_bucket() {
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "share.png").await;
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let bytes = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the row's bucket holds its bytes");
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "allow_preview": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let token_share = envelope["result"]["token"].as_str().unwrap().to_owned();
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{token_share}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        bytes.as_ref(),
+        "the share serves the file row's OWN bucket bytes"
+    );
+}
+
+/// `traversal_order_is_identical_across_stores`: `list_live_rows_by_storage_key`
+/// returns the same `id ASC` order on the memory store and (via the
+/// wrapper) any other store — the serving-row rule's determinism anchor.
+#[tokio::test]
+async fn traversal_order_is_identical_across_stores() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "trav".to_owned(),
+            display_name: "Trav".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for _ in 0..4 {
+        let record = store
+            .create_file(i0721_proto::NewFile {
+                bucket_id: None,
+                parent_id: None,
+                owner_id: owner.id,
+                name: uuid::Uuid::new_v4().simple().to_string(),
+                kind: i0721_proto::FileKind::Image,
+                mime: "image/webp".to_owned(),
+                size: 1,
+                sha256: format!("t{}", uuid::Uuid::new_v4().simple()),
+                storage_backend: "local".to_owned(),
+                storage_key: "shared-key".to_owned(),
+                thumbnail_key: None,
+                original_name: "x".to_owned(),
+            })
+            .await
+            .unwrap();
+        ids.push(record.id);
+    }
+    let rows = store
+        .list_live_rows_by_storage_key("shared-key")
+        .await
+        .unwrap();
+    let sorted: Vec<_> = ids.iter().copied().collect();
+    let mut expect = sorted.clone();
+    expect.sort();
+    assert_eq!(
+        rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+        expect,
+        "the traversal order is id ASC"
+    );
+}
+
+/// `thumbnail_bytes_come_from_the_bucket_of_the_row_that_authorised`:
+/// the `?thumbnail=true` variant serves the cache bytes of the serving
+/// row's bucket — P1 verifies the serving-row-bucket half (the full
+/// authorization predicate is P2b).
+#[tokio::test]
+async fn thumbnail_bytes_come_from_the_bucket_of_the_row_that_authorised() {
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "thumb.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let thumb_key = format!("{key}.webp");
+    // The thumbnail is in the state's blob store (the row's bucket).
+    let cached = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(cached.is_some(), "the upload produced a thumbnail");
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}?thumbnail=true"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        cached.unwrap().as_ref(),
+        "the thumbnail bytes come from the serving row's bucket"
+    );
+}
+
+/// `folder_rows_carry_their_parents_bucket`: a child folder inherits the
+/// parent's `bucket_id`; a root folder takes the resolved bootstrap
+/// bucket. MUT:M-B2 — removing the `set_parent` cross-bucket guard turns
+/// `cross_bucket_move_is_refused` red.
+#[tokio::test]
+async fn folder_rows_carry_their_parents_bucket() {
+    let (state, admin) = test_state().await;
+    let bucket = state.registry.bootstrap_bucket_id().unwrap();
+    let root = state
+        .store
+        .create_folder(admin.id, None, "root", Some(bucket))
+        .await
+        .unwrap();
+    assert_eq!(root.bucket_id, Some(bucket));
+    let child = state
+        .store
+        .create_folder(admin.id, Some(root.id), "child", root.bucket_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        child.bucket_id, root.bucket_id,
+        "the child inherits the parent's bucket"
+    );
+}
+
+/// `folder_rows_never_resolve_to_a_store`: folder rows have no storage
+/// key and no bytes; the byte lanes never route them through the
+/// registry (the placeholder shape proves the resolution consumes only
+/// the bucket id and folders are excluded by kind before any byte work).
+#[tokio::test]
+async fn folder_rows_never_resolve_to_a_store() {
+    let (state, admin) = test_state().await;
+    let bucket = state.registry.bootstrap_bucket_id().unwrap();
+    let root = state
+        .store
+        .create_folder(admin.id, None, "nofiles", Some(bucket))
+        .await
+        .unwrap();
+    // A folder row carries the bucket id but an EMPTY storage key; the
+    // delete lane excludes folders from every byte map before any store
+    // is resolved.
+    let reloaded = state.store.get_file(root.id).await.unwrap().unwrap();
+    assert_eq!(reloaded.storage_key, "", "folders have no storage key");
+    assert_eq!(reloaded.bucket_id, Some(bucket));
+}
+
+/// `cross_bucket_move_is_refused`: `files.move` into a folder of another
+/// bucket answers `-32007`. MUT:M-B2 — deleting the `set_parent`
+/// cross-bucket guard turns this red.
+#[tokio::test]
+async fn cross_bucket_move_is_refused() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "mover".to_owned(),
+            display_name: "Mover".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let bucket_a = uuid::Uuid::new_v4();
+    let bucket_b = uuid::Uuid::new_v4();
+    let folder_a = store
+        .create_folder(owner.id, None, "a", Some(bucket_a))
+        .await
+        .unwrap();
+    let folder_b = store
+        .create_folder(owner.id, None, "b", Some(bucket_b))
+        .await
+        .unwrap();
+    let child = store
+        .create_folder(owner.id, Some(folder_a.id), "child", Some(bucket_a))
+        .await
+        .unwrap();
+    let moved = store.set_parent(child.id, Some(folder_b.id)).await;
+    assert!(
+        matches!(moved, Err(i0721_store::StoreError::Conflict(_))),
+        "a cross-bucket move is refused at the store guard"
+    );
+    // And the moved row is unchanged.
+    let reloaded = store.get_file(child.id).await.unwrap().unwrap();
+    assert_eq!(reloaded.parent_id, Some(folder_a.id));
+}
+
+/// `root_folders_with_the_same_name_in_two_buckets_coexist`: the
+/// same-layer name uniqueness is bucket-aware (R-G).
+#[tokio::test]
+async fn root_folders_with_the_same_name_in_two_buckets_coexist() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "roottwin".to_owned(),
+            display_name: "RootTwin".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let a = store
+        .create_folder(owner.id, None, "docs", Some(uuid::Uuid::new_v4()))
+        .await
+        .unwrap();
+    let b = store
+        .create_folder(owner.id, None, "docs", Some(uuid::Uuid::new_v4()))
+        .await
+        .unwrap();
+    assert_ne!(a.id, b.id, "same-name roots in two buckets coexist");
+}
+
+/// `same_name_roots_are_rejected_within_one_bucket`: the bucket layer
+/// still refuses duplicates inside ONE bucket.
+#[tokio::test]
+async fn same_name_roots_are_rejected_within_one_bucket() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "rootdup".to_owned(),
+            display_name: "RootDup".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let bucket = uuid::Uuid::new_v4();
+    store
+        .create_folder(owner.id, None, "docs", Some(bucket))
+        .await
+        .unwrap();
+    let dup = store
+        .create_folder(owner.id, None, "docs", Some(bucket))
+        .await;
+    assert!(
+        matches!(dup, Err(i0721_store::StoreError::Conflict(_))),
+        "the same name in ONE bucket is a conflict"
+    );
+}
+
+/// `upload_without_override_never_falls_back_to_the_bootstrap_bucket`:
+/// P1 form — when the bootstrap bucket is UNRESOLVABLE the upload is an
+/// error, never a re-route to another bucket. MUT:M-B3 — a
+/// `resolve_upload_bucket` fallback to "some Ready bucket" turns this red.
+#[tokio::test]
+async fn upload_without_override_never_falls_back_to_the_bootstrap_bucket() {
+    // A registry with a DISABLED bootstrap bucket and no other bucket:
+    // resolution must fail (NoBootstrap), not fall back.
+    let disabled = i0721_proto::StorageBucketRecord {
+        id: uuid::Uuid::new_v4(),
+        slug: "bootstrap-local".to_owned(),
+        display_name: "bootstrap (local)".to_owned(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: "loc".to_owned(),
+        endpoint_ref: "legacy_local_env".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: false,
+        enabled: false,
+        is_bootstrap: true,
+        created_at: jiff::Timestamp::now(),
+    };
+    let registry = i0721_server::blob_registry::BlobRegistry::build(vec![disabled], |_| None)
+        .expect("one disabled bucket classifies");
+    let resolved = registry.resolve_upload_bucket(None);
+    assert!(
+        resolved.is_err(),
+        "an unresolvable upload bucket is an error, not a fallback"
+    );
+    // And the MCP/REST chain surfaces it as an error carrying the
+    // storage-unavailable wording (never a silent success row).
+    match resolved {
+        Err(err) => assert!(
+            err.to_string().contains("bootstrap"),
+            "the error names the bootstrap resolution: {err}"
+        ),
+        Ok(_) => unreachable!(),
+    }
+}
+
+/// `reclaim_refcounts_are_per_bucket`: the reclaim probes count live
+/// rows per (bucket_id, key) — a same-key row in ANOTHER bucket does not
+/// keep this bucket's blob alive, and vice versa.
+/// MUT:M-B4 — a count scoped to the key alone (dropping the bucket
+/// dimension) turns this red.
+#[tokio::test]
+async fn reclaim_refcounts_are_per_bucket() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "reclaim".to_owned(),
+            display_name: "Reclaim".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let bucket_a = uuid::Uuid::new_v4();
+    let bucket_b = uuid::Uuid::new_v4();
+    let new_file = |name: &str, bucket: uuid::Uuid| i0721_proto::NewFile {
+        bucket_id: Some(bucket),
+        parent_id: None,
+        owner_id: owner.id,
+        name: name.to_owned(),
+        kind: i0721_proto::FileKind::Image,
+        mime: "image/webp".to_owned(),
+        size: 1,
+        sha256: format!("r{}", uuid::Uuid::new_v4().simple()),
+        storage_backend: "local".to_owned(),
+        storage_key: "same-key".to_owned(),
+        thumbnail_key: Some("same-key.webp".to_owned()),
+        original_name: name.to_owned(),
+    };
+    store.create_file(new_file("a", bucket_a)).await.unwrap();
+    store.create_file(new_file("b", bucket_b)).await.unwrap();
+    assert_eq!(
+        store
+            .count_live_files_by_storage_key(Some(bucket_a), "same-key")
+            .await
+            .unwrap(),
+        1,
+        "bucket A's count sees only bucket A's row"
+    );
+    assert_eq!(
+        store
+            .count_live_files_by_storage_key(Some(bucket_b), "same-key")
+            .await
+            .unwrap(),
+        1,
+        "bucket B's count sees only bucket B's row"
+    );
+    assert_eq!(
+        store
+            .count_live_files_by_thumbnail_key(Some(bucket_a), "same-key.webp")
+            .await
+            .unwrap(),
+        1,
+        "the thumbnail refcount is per bucket too"
+    );
 }

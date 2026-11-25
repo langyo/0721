@@ -586,7 +586,7 @@ pub fn build_server(state: AppState) -> RpcServer {
                 // create/move, not a raw index rejection.
                 let taken = state
                     .store
-                    .folder_name_taken(existing.owner_id, existing.parent_id, &params.name, Some(params.id))
+                    .folder_name_taken(existing.owner_id, existing.parent_id, existing.bucket_id, &params.name, Some(params.id))
                     .await
                     .map_err(store_err)?;
                 if taken {
@@ -1212,7 +1212,7 @@ pub fn build_server(state: AppState) -> RpcServer {
                 // its own layer keeping its name is a no-op, not 409).
                 let taken = state
                     .store
-                    .folder_name_taken(record.owner_id, args.parent_id, &record.name, Some(args.id))
+                    .folder_name_taken(record.owner_id, args.parent_id, record.bucket_id, &record.name, Some(args.id))
                     .await
                     .map_err(store_err)?;
                 if taken {

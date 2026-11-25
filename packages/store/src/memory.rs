@@ -554,6 +554,7 @@ impl Store for MemoryStore {
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
+        bucket_id: Option<Uuid>,
         name: &str,
         exclude: Option<Uuid>,
     ) -> Result<bool, StoreError> {
@@ -562,6 +563,7 @@ impl Store for MemoryStore {
             f.deleted_at.is_none()
                 && f.owner_id == owner_id
                 && f.parent_id == parent_id
+                && f.bucket_id == bucket_id
                 && f.name == name
                 && Some(f.id) != exclude
         }))
@@ -579,6 +581,7 @@ impl Store for MemoryStore {
             f.deleted_at.is_none()
                 && f.owner_id == owner_id
                 && f.parent_id == parent_id
+                && f.bucket_id == bucket_id
                 && f.name == name
         }) {
             return Err(conflict(format!(

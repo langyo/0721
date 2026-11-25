@@ -206,10 +206,15 @@ pub trait Store: Send + Sync {
 
     /// Whether a name is already taken in one owner's folder layer
     /// (live rows; `exclude` lets a rename/move keep its own name).
+    /// `bucket_id` scopes the check to ONE bucket layer (R-G: the
+    /// same-layer uniqueness index is bucket-aware, so identical names
+    /// in different buckets coexist); the caller passes the target
+    /// parent's bucket (or the moved/renamed row's own for the root).
     async fn folder_name_taken(
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
+        bucket_id: Option<Uuid>,
         name: &str,
         exclude: Option<Uuid>,
     ) -> Result<bool, StoreError>;
