@@ -10083,6 +10083,114 @@ async fn bucket_scope_denials_are_jsonrpc_frames_not_tool_errors() {
     );
 }
 
+/// R-B's live-rows guard: a NON-bootstrap bucket holding a live file
+/// row refuses the delete with the conflict shape — empty it first.
+/// MUT:R-B-ROWS — dropping the `count_live_files_by_bucket` guard from
+/// the `storage.buckets.delete` handler (rpc.rs) turns this red.
+#[tokio::test]
+async fn bucket_delete_refused_while_live_rows_remain() {
+    let (state, token) = test_state_with_token().await;
+    let bucket = plant_bucket(&state, "occupied", true, false, true).await;
+    let owner = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    // A LIVE file row (not soft-deleted) in the bucket: the delete must
+    // refuse BEFORE any store mutation.
+    state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: Some(bucket.id),
+            parent_id: None,
+            owner_id: owner.id,
+            name: "keeper.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: 1,
+            sha256: format!("r{}", uuid::Uuid::new_v4().simple()),
+            storage_backend: "local".to_owned(),
+            storage_key: format!("k{}", uuid::Uuid::new_v4().simple()),
+            thumbnail_key: None,
+            original_name: "keeper.png".to_owned(),
+        })
+        .await
+        .unwrap();
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.buckets.delete",
+        serde_json::json!({"slug": "occupied"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32007,
+        "live rows refuse the delete: {envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("live rows"),
+        "the conflict names the remaining rows: {envelope}"
+    );
+    // The refusal is pre-mutational: the bucket still exists.
+    assert!(
+        state
+            .store
+            .get_storage_bucket_by_slug("occupied")
+            .await
+            .unwrap()
+            .is_some(),
+        "the bucket survives a refused delete"
+    );
+}
+
+/// R-B's bootstrap guard: the bootstrap bucket cannot be deleted at
+/// all — every legacy NULL-bucket row resolves through it.
+/// MUT:R-B-BOOT — dropping the `is_bootstrap` guard from the
+/// `storage.buckets.delete` handler (rpc.rs) turns this red.
+#[tokio::test]
+async fn bucket_delete_refused_for_the_bootstrap_bucket() {
+    let (state, token) = test_state_with_token().await;
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.buckets.delete",
+        serde_json::json!({"slug": "bootstrap"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "the bootstrap bucket cannot be deleted: {envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("bootstrap"),
+        "the refusal names the bootstrap rule: {envelope}"
+    );
+    assert!(
+        state
+            .store
+            .get_storage_bucket_by_slug("bootstrap")
+            .await
+            .unwrap()
+            .is_some(),
+        "the bootstrap bucket survives"
+    );
+}
+
 /// R-B's three delete-guard directions, driven through the RPC surface
 /// with keys planted DIRECTLY (so the scopes carry the exact slugs).
 #[tokio::test]
