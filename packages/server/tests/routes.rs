@@ -10829,6 +10829,32 @@ async fn upsert_omitting_a_field_is_rejected_not_reset() {
     );
 }
 
+/// R-A's STRICT FULL DOCUMENT: an EXTRA unknown field refuses with the
+/// invalid-params shape — never silently accepted with the unknown
+/// field dropped (a dropped field would let a caller believe a knob was
+/// set when the binary never heard of it).
+/// MUT:R-A-STRICT — removing `deny_unknown_fields` from
+/// `BucketUpsertParams` (rpc.rs) turns this red.
+#[tokio::test]
+async fn upsert_rejects_unknown_fields_strictly() {
+    let (state, token) = test_state_with_token().await;
+    plant_bucket(&state, "strict-extra", true, false, true).await;
+    // A fully valid document PLUS one key the struct does not know.
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.buckets.upsert",
+        serde_json::json!({"slug": "strict-extra", "display_name": "Strict", "anonymous_read": true, "grant_on_signup": false, "enabled": true, "backend": "s3"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32602,
+        "an unknown field is a refusal (the strict full document): {envelope}"
+    );
+}
+
 #[tokio::test]
 async fn signup_default_requires_anonymous_read() {
     let (state, token) = test_state_with_token().await;
