@@ -9223,30 +9223,18 @@ async fn same_name_roots_are_rejected_within_one_bucket() {
 /// `resolve_upload_bucket` fallback to "some Ready bucket" turns this red.
 #[tokio::test]
 async fn upload_without_override_never_falls_back_to_the_bootstrap_bucket() {
-    // A registry with a DISABLED bootstrap bucket and no other bucket:
-    // resolution must fail (NoBootstrap), not fall back.
-    let disabled = i0721_proto::StorageBucketRecord {
-        id: uuid::Uuid::new_v4(),
-        slug: "bootstrap-local".to_owned(),
-        display_name: "bootstrap (local)".to_owned(),
-        backend: i0721_proto::BucketBackend::Local,
-        location: "loc".to_owned(),
-        endpoint_ref: "legacy_local_env".to_owned(),
-        anonymous_read: true,
-        grant_on_signup: false,
-        enabled: false,
-        is_bootstrap: true,
-        created_at: jiff::Timestamp::now(),
-    };
-    let registry = i0721_server::blob_registry::BlobRegistry::build(vec![disabled], |_| None)
-        .expect("one disabled bucket classifies");
-    let resolved = registry.resolve_upload_bucket(None);
+    // A registry whose BOOTSTRAP bucket is DISABLED while ANOTHER bucket
+    // is Ready: resolution must fail (NoBootstrap) — the M3 mutation
+    // ("fall back to the first Ready bucket") would answer Ok with the
+    // foreign bucket.
+    let (base_state, _) = test_state().await;
+    let (state, _second_id, _second_store) =
+        plant_second_bucket(&base_state, "satellite", false);
+    let resolved = state.registry.resolve_upload_bucket(None);
     assert!(
         resolved.is_err(),
-        "an unresolvable upload bucket is an error, not a fallback"
+        "an unresolvable upload bucket is an error, not a fallback: {resolved:?}"
     );
-    // And the MCP/REST chain surfaces it as an error carrying the
-    // storage-unavailable wording (never a silent success row).
     match resolved {
         Err(err) => assert!(
             err.to_string().contains("bootstrap"),
