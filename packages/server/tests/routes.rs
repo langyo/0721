@@ -3921,6 +3921,48 @@ async fn upload_raw(
     upload_raw_query(state, token, bytes, name, folder_id, None).await
 }
 
+/// Multipart upload with an explicit `?bucket=` target (the R-I
+/// override lane); returns the parsed DTO.
+async fn upload_bucket(
+    state: &AppState,
+    token: &str,
+    bytes: Vec<u8>,
+    name: &str,
+    bucket: &str,
+) -> (StatusCode, serde_json::Value) {
+    let boundary = "X-BOUNDARY-X";
+    let b = boundary;
+    let mut body = format!(
+        "--{b}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"{name}\"\r\ncontent-type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(&bytes);
+    body.extend_from_slice(format!("\r\n--{b}--\r\n").as_bytes());
+    let response = app(state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/files?bucket={bucket}"))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+            token,
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or_default(),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn upload_raw_query(
     state: &AppState,
@@ -10149,27 +10191,157 @@ async fn grants_cannot_be_set_for_an_admin() {
     );
 }
 
+/// `share_create_via_rpc_requires_the_share_bit`: a member holding an
+/// EXPLICIT grant row with read+write but NO share bit on a non-bootstrap
+/// bucket must be refused by RPC `files.share_create` (-32005 AUTH,
+/// the message naming the bucket) — owner-or-admin is the WHO, the
+/// share bit is the MAY; flipping the row's share bit lets the very
+/// same call succeed.
+/// MUT:R-L-RPC — removing the `Need::Share` gate from `files.share_create`
+/// (rpc.rs) turns this red.
+#[tokio::test]
+async fn share_create_via_rpc_requires_the_share_bit() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    // A second bucket so the gate reads the member's grant ROW, not the
+    // signup default (the bootstrap bucket's signup-open posture would
+    // mask a missing check).
+    let (state, second_id, _store) = plant_second_bucket(&base_state, "club", true);
+    // The store row must carry the SAME id the registry entry registered
+    // (`plant_second_bucket`'s second id) — bucket_row_for_id prefers
+    // the store's rows and only falls back to the registry's synthesized
+    // posture when none matches, and a mismatched row id would resolve
+    // the share gate through the fallback's signup-open posture.
+    let memory = state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store");
+    memory.seed_bucket(i0721_proto::StorageBucketRecord {
+        id: second_id,
+        slug: "club".to_owned(),
+        display_name: "club".to_owned(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: "loc".to_owned(),
+        endpoint_ref: "x".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: false,
+        enabled: true,
+        is_bootstrap: false,
+        created_at: Timestamp::now(),
+    });
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+
+    // The explicit deny-share row: read+write, share=false. The row is
+    // the WHOLE answer (R-A), so the member cannot share.
+    set_grant(&state, &admin_token, member.id, "club", true, true, false).await;
+
+    let (_, own) = upload_bucket(&state, &member_token, png_of(4, 4), "mine.png", "club").await;
+    let file_id = own["id"].as_str().unwrap().to_owned();
+
+    let (status, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "a write-only grant row cannot publish a share: {envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("club"),
+        "the refusal names the bucket: {envelope}"
+    );
+
+    // The admin flips the row's share bit: the SAME call now succeeds.
+    set_grant(&state, &admin_token, member.id, "club", true, true, true).await;
+    let (status, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(
+        envelope["result"]["token"].as_str().is_some(),
+        "the share is created once the bit is held: {envelope}"
+    );
+}
+
 /// `grant_surface_method_table_is_exactly_set`: the `storage.grants.*`
-/// method names are exactly `{set}` — nothing else dispatches.
+/// method names are exactly `{set}` — nothing else dispatches. The
+/// probe rides the REAL dispatch table over the wire: an unknown
+/// method on the surface answers the method-table shape (`-32601`),
+/// while the known name reaches its handler (its reachability is
+/// covered by the grant tests elsewhere).
+/// MUT:GATE-32601 — registering/accepting `storage.grants.bogus` (e.g.
+/// a wildcard fall-through in the method table) turns this red.
 #[test]
 fn grant_surface_method_table_is_exactly_set() {
-    // The check rides the same mechanism the ops.* guard uses: any
-    // `storage.grants.X` other than `set` must answer -32601. The
-    // method table is static, so the assertion reads the source of
-    // truth directly (the registered method_ctx names).
-    let registered = ["storage.grants.set"];
-    for method in [
-        "storage.grants.set",
-        "storage.grants.delete",
-        "storage.grants.get",
-    ] {
-        let known = registered.contains(&method);
+    // The method table is static and the lane is stateless here: build
+    // the real server and ask the WHOLE dispatch table whether the
+    // surface carries anything beyond `set`, AND probe an unknown name
+    // through the HTTP face for the -32601 shape. The server half is
+    // sync-built; the wire probe needs no runtime (the router answers
+    // the method-table miss before any store touch).
+    let state = {
+        let store = Arc::new(MemoryStore::new());
+        AppState::new(
+            store,
+            Arc::new(MemoryBlobStore::new()),
+            Arc::new(test_config()),
+        )
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        // The UNKNOWN method: the method-table shape (-32601) —
+        // proof the surface dispatches nothing beyond its members. A
+        // token is minted because the auth hook precedes the dispatch
+        // (an anonymous frame answers 401, not a JSON-RPC fault).
+        let admin = state
+            .store
+            .create_user(CreateUser {
+                username: "admin".to_owned(),
+                display_name: "Administrator".to_owned(),
+                role: Role::Admin,
+                password_hash: Some(hash_password("admin-password").unwrap()),
+            })
+            .await
+            .unwrap();
+        let token = state.signer.sign(admin.id, Timestamp::now());
+        let (_, envelope) = rpc(
+            &state,
+            &token,
+            "storage.grants.bogus",
+            serde_json::json!({}),
+        )
+        .await;
         assert_eq!(
-            known,
-            (method == "storage.grants.set"),
-            "{method}: the grants surface is exactly {registered:?}"
+            rpc_error_code(&envelope),
+            -32601,
+            "the unknown grants method is a method-table miss: {envelope}"
         );
-    }
+    });
 }
 
 /// R-F's four states on the default-bucket setting (the upload lane's
