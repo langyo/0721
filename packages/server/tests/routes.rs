@@ -8187,20 +8187,23 @@ async fn health_reports_bucket_unavailable_with_the_missing_var() {
     );
 }
 
-/// `health_reports_unreadable_settings_instead_of_default`: a store
-/// read failure must surface as `config_source: "unreadable"`, not the
-/// old `"default"` (the value the corrupt row also produces).
-/// MUT:M10b — mapping the Err arm back to "default" must turn this red.
-#[tokio::test]
-async fn health_reports_unreadable_settings_instead_of_default() {
+/// The failing-settings double (`settings_state` → Err on EVERY key):
+/// both the health report test and the upload-defaults Unreadable test
+/// ride the same delegation impl, so the lane's one mock stays the ONE
+/// place the failure shape is defined.
+async fn failing_settings_state() -> AppState {
     struct FailingSettings(MemoryStore);
     #[async_trait::async_trait]
     impl Store for FailingSettings {
+        // `get_setting` DELEGATES: the site-config read must succeed so
+        // the upload lane reaches `default_bucket_slug` — the failing
+        // read this fixture isolates is `settings_state` (the four-state
+        // read), not the raw site-config fetch.
         async fn get_setting(
             &self,
-            _key: &str,
+            key: &str,
         ) -> Result<Option<serde_json::Value>, i0721_store::StoreError> {
-            Err(i0721_store::StoreError::Db("lane: unreadable".to_owned()))
+            self.0.get_setting(key).await
         }
         async fn get_storage_bucket_by_slug(
             &self,
@@ -8555,30 +8558,52 @@ async fn health_reports_unreadable_settings_instead_of_default() {
         }
         async fn settings_state(
             &self,
-            _key: &str,
+            key: &str,
         ) -> Result<i0721_store::SettingsState, i0721_store::StoreError> {
-            // THE deliberate failure: every settings read is Unreadable —
-            // the lane's reason this mock exists.
+            // THE deliberate failure. Two shapes: the `site` key (and any
+            // other) ERRORS — a store failure that the health report's
+            // config_source must call `unreadable`; the
+            // `storage_defaults` key answers Ok(Unreadable) — the
+            // four-state value the upload lane's
+            // `default_bucket_slug` Unreadable arm must fail closed on
+            // (an Err here would be scrubbed by From<StoreError> BEFORE
+            // the arm could speak, which is exactly the lane this
+            // fixture must NOT mask).
+            if key == "storage_defaults" {
+                return Ok(i0721_store::SettingsState::Unreadable {
+                    err: "lane: unreadable".to_owned(),
+                });
+            }
             Err(i0721_store::StoreError::Db("lane: unreadable".to_owned()))
         }
     }
     let store = Arc::new(FailingSettings(MemoryStore::new()));
-    let password_hash = hash_password("admin-password").unwrap();
-    let admin = store
+    let _ = store
         .create_user(CreateUser {
             username: "admin".to_owned(),
             display_name: "Administrator".to_owned(),
             role: Role::Admin,
-            password_hash: Some(password_hash),
+            password_hash: Some(hash_password("admin-password").unwrap()),
         })
         .await
         .unwrap();
-    let _ = admin;
-    let state = AppState::new(
+    AppState::new(
         store,
         Arc::new(MemoryBlobStore::new()),
         Arc::new(test_config()),
-    );
+    )
+}
+
+/// `health_reports_unreadable_settings_instead_of_default`: a store
+/// read failure must surface as `config_source: "unreadable"`, not the
+/// old `"default"` (the value the corrupt row also produces), and EVERY
+/// `settings[]` row's state must read `"unreadable"` — the fixture's
+/// store fails every key.
+/// MUT:P-10-MAP — mapping the Err arm of `settings_state` in
+/// `api/settings.rs` to "absent" (or anything else) turns this red.
+#[tokio::test]
+async fn health_reports_unreadable_settings_instead_of_default() {
+    let state = failing_settings_state().await;
     let response = app(&state)
         .oneshot(
             Request::builder()
@@ -8598,6 +8623,49 @@ async fn health_reports_unreadable_settings_instead_of_default() {
         "a store read failure is its OWN state, never 'default': {json}"
     );
     assert!(json["buckets"].is_array(), "{json}");
+    // The P-10 array: the fixture's store fails EVERY settings read, so
+    // every row's state must carry the honest "unreadable" tag — not a
+    // silent "absent"/"default" fallback.
+    let settings = json["settings"].as_array().expect("a settings array");
+    assert!(!settings.is_empty(), "the settings array is present: {json}");
+    for row in settings {
+        assert_eq!(
+            row["state"], "unreadable",
+            "every settings row reads unreadable when the store fails: {row}"
+        );
+    }
+}
+
+/// R-F's Unreadable arm on the UPLOAD lane: with the default-bucket
+/// setting's store read failing, `POST /api/v1/files` must fail closed —
+/// 500 and a body that names the settings key and its state — never a
+/// silent fallback to the bootstrap bucket.
+/// MUT:R-F-UP — mapping `default_bucket_slug`'s Unreadable arm back to
+/// "the default (bootstrap) bucket" turns this red.
+#[tokio::test]
+async fn upload_refused_while_the_default_bucket_state_is_unreadable() {
+    let state = failing_settings_state().await;
+    let admin = state
+        .store
+        .list_users(0, 1)
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the helper seeded the admin");
+    let token = state.signer.sign(admin.id, Timestamp::now());
+    let (status, body) = upload_raw(&state, &token, tiny_png(), "u.png", None).await;
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "unreadable default = fail-closed, never a bootstrap fallback: {body}"
+    );
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+    let text = body["error"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("storage_defaults") && text.contains("unreadable"),
+        "the error names the settings key and the state: {text}"
+    );
 }
 // ── the account-first ladder's discovery endpoint ──────────────────────
 
