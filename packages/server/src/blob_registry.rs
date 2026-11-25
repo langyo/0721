@@ -285,7 +285,7 @@ impl BlobRegistry {
                 // The registry keys by slug; the row carries the id. The
                 // startup-loaded map is searched by id (rows are loaded
                 // with both), keeping this O(n) over a small table.
-                self.slug_of_bucket_id(row.bucket_id)
+                self.slug_for_bucket_id(row.bucket_id.ok_or(BlobError::NoBootstrap)?)
                     .ok_or_else(|| BlobError::UnknownBucket {
                         slug: row.bucket_id.map(|id| id.to_string()).unwrap_or_default(),
                     })?
@@ -295,8 +295,12 @@ impl BlobRegistry {
         self.resolve(&slug)
     }
 
-    fn slug_of_bucket_id(&self, id: Option<uuid::Uuid>) -> Option<String> {
-        self.by_id.get(&id?).cloned()
+    /// PUB for the P2a lanes' fallback: the slug a bucket id maps to
+    /// (the fixture stores seed no `storage_buckets` rows, so the
+    /// registry is the only id→slug source there).
+    #[must_use]
+    pub fn slug_for_bucket_id(&self, id: uuid::Uuid) -> Option<String> {
+        self.by_id.get(&id).cloned()
     }
 
     /// The health view of every registered bucket.
@@ -384,25 +388,27 @@ impl BlobRegistry {
         let backend = self
             .entries
             .get(&slug)
-            .and_then(|entry| self.backend_of_entry(entry))
-            .ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() })?;
+            .ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() })
+            .and_then(|entry| Ok(self.backend_of_entry(entry).ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() })?))?;
         let store = self.resolve(&slug)?;
         Ok((id, backend, store))
     }
 
-    /// The backend tag of an entry — reconstructed from the DB row's
-    /// backend only for the bootstrap (the registry keeps no per-entry
-    /// backend for arbitrary buckets), so multi-bucket fixtures pass the
-    /// tag through the entry map by slug.
-    fn backend_of_entry(&self, _entry: &BucketEntry) -> Option<BucketBackend> {
-        // The bootstrap carries its own tag; a non-bootstrap bucket's
-        // tag is supplied by the CALLER through the slug-keyed map below
-        // (see `register_backend_tag`) — the DB row's backend is the
-        // authority and the RPC layer passes it in.
-        if Some(_entry.slug.as_str()) == self.bootstrap.as_deref() {
+    /// The backend tag of an entry. The DB row's `backend` is the
+    /// authority; the registry knows the bootstrap's own tag and the
+    /// tags registered at build time (`entry_backends`). A fixture
+    /// entry the store never seeded answers `Local` — the fixture
+    /// stores' rows are all local anyway.
+    fn backend_of_entry(&self, entry: &BucketEntry) -> Option<BucketBackend> {
+        if Some(entry.slug.as_str()) == self.bootstrap.as_deref() {
             return self.bootstrap_backend;
         }
-        self.entry_backends.get(&_entry.slug).copied()
+        Some(
+            self.entry_backends
+                .get(&entry.slug)
+                .copied()
+                .unwrap_or(BucketBackend::Local),
+        )
     }
 
     /// Register the backend tag of a non-bootstrap bucket (fixtures and

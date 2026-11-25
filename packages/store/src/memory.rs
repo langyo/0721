@@ -101,6 +101,10 @@ fn scopes_buckets(raw: &str) -> Option<std::collections::BTreeSet<String>> {
 
 #[async_trait::async_trait]
 impl Store for MemoryStore {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     async fn list_users(&self, offset: u64, limit: u64) -> Result<Vec<UserRecord>, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let mut users = inner.users.clone();

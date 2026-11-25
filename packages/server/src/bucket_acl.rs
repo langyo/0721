@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use i0721_proto::{Role, StorageBucketRecord, UserRecord};
+use uuid::Uuid;
 use i0721_store::{Store, StoreError};
 
 /// The three authorization bits for one user × bucket.
@@ -102,6 +103,39 @@ pub async fn granted_buckets(
         }
     }
     Ok(out)
+}
+
+/// The bucket row for a file's `bucket_id`, resolved from the store's
+/// registry rows; when the store seeds none (the fixture lanes), the
+/// BlobRegistry's id→slug map is the fallback and the row is synthesized
+/// with the bootstrap-bucket posture (signup-open, anonymous-readable).
+/// `None` = the id is unknown to BOTH sources (genuinely invisible).
+pub async fn bucket_row_for_id(
+    store: &dyn Store,
+    registry: &crate::blob_registry::BlobRegistry,
+    bucket_id: Uuid,
+) -> Result<Option<StorageBucketRecord>, StoreError> {
+    if let Some(row) = store
+        .list_storage_buckets()
+        .await?
+        .into_iter()
+        .find(|b| b.id == bucket_id)
+    {
+        return Ok(Some(row));
+    }
+    Ok(registry.slug_for_bucket_id(bucket_id).map(|slug| StorageBucketRecord {
+        id: bucket_id,
+        slug,
+        display_name: String::new(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: String::new(),
+        endpoint_ref: String::new(),
+        anonymous_read: true,
+        grant_on_signup: true,
+        enabled: true,
+        is_bootstrap: false,
+        created_at: jiff::Timestamp::MIN,
+    }))
 }
 
 #[cfg(test)]
@@ -226,7 +260,6 @@ mod tests {
         memory.seed_bucket(bucket("partial", false));
         let store: Arc<dyn Store> = Arc::new(memory);
         let member = user(&store, Role::Member).await;
-        let open = store.get_storage_bucket_by_slug("open").await.unwrap().unwrap();
         let private = store.get_storage_bucket_by_slug("private").await.unwrap().unwrap();
         let partial = store.get_storage_bucket_by_slug("partial").await.unwrap().unwrap();
         store

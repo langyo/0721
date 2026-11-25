@@ -308,6 +308,10 @@ fn folder_filter(
 
 #[async_trait::async_trait]
 impl Store for PgStore {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     async fn list_users(&self, offset: u64, limit: u64) -> Result<Vec<UserRecord>, StoreError> {
         let cmd = Command::Select {
             table: UserModel::TABLE.to_owned(),

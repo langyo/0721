@@ -104,6 +104,10 @@ impl From<lacrymira::Error> for StoreError {
 /// The data access surface of the service.
 #[async_trait::async_trait]
 pub trait Store: Send + Sync {
+    /// The `dyn Any` escape hatch — the fixture lanes' downcast to the
+    /// concrete store type (the memory lane's seeding methods are
+    /// inherent, not trait methods). Never used in business code.
+    fn as_any(&self) -> &dyn std::any::Any;
     /// List users by ascending creation, paged.
     async fn list_users(&self, offset: u64, limit: u64) -> Result<Vec<UserRecord>, StoreError>;
 

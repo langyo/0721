@@ -717,6 +717,11 @@ struct ResolvedBucket {
     slug: String,
 }
 
+/// The share tool's folder-refusal text (the pre-check answers it for a
+/// folder argument so the tool body never re-fetches; the same string
+/// the body has always answered).
+const FOLDER_REFUSAL: &str = "a folder cannot be shared — only files get a public link";
+
 /// The §7 three-state pre-check, run in `dispatch_tool` BEFORE
 /// `call_tool`: one function resolves the tool's bucket, loads its row,
 /// and answers Allow / ToolError / Frame per the error table.
@@ -801,56 +806,37 @@ async fn precheck_tool(
             };
             let file = match state.store.get_file(file_id).await {
                 Ok(Some(row)) if row.deleted_at.is_none() && row.kind != FileKind::Folder => row,
-                Ok(_) => return Precheck::ToolError("file not found".to_owned()),
+                // A FOLDER (or a soft-deleted row) keeps the tool body's
+                // historical answer — the folder rule's text names the
+                // folder restriction. Signal it distinctly from a real
+                // miss.
+                Ok(Some(_)) => return Precheck::ToolError(FOLDER_REFUSAL.to_owned()),
+                Ok(None) => return Precheck::ToolError("file not found".to_owned()),
                 Err(err) => {
                     return Precheck::ToolError(format!("storage backend unavailable: {err}"));
                 }
             };
-            let (slug, bucket) = match file.bucket_id {
-                Some(id) => match state
-                    .store
-                    .list_storage_buckets()
-                    .await
-                    .map_err(|err| Precheck::ToolError(format!("storage backend unavailable: {err}")))
-                    .map(|rows| rows.into_iter().find(|b| b.id == id))
-                {
-                    Ok(Some(bucket)) => (bucket.slug.clone(), bucket),
-                    Ok(None) => return Precheck::ToolError("file not found".to_owned()),
-                    Err(tool_error) => return tool_error,
-                },
-                // A NULL-bucket row reads through the bootstrap bucket.
-                None => match state.registry.bootstrap_bucket_id() {
-                    Ok(id) => {
-                        let slug = state
-                            .store
-                            .list_storage_buckets()
-                            .await
-                            .ok()
-                            .and_then(|rows| {
-                                rows.into_iter().find(|b| b.id == id).map(|b| b.slug.clone())
-                            })
-                            .unwrap_or_default();
-                        (slug.clone(), i0721_proto::StorageBucketRecord {
-                            id,
-                            slug,
-                            display_name: String::new(),
-                            backend: i0721_proto::BucketBackend::Local,
-                            location: String::new(),
-                            endpoint_ref: String::new(),
-                            anonymous_read: true,
-                            grant_on_signup: false,
-                            enabled: true,
-                            is_bootstrap: true,
-                            created_at: jiff::Timestamp::now(),
-                        })
-                    }
-                    Err(_) => {
-                        return Precheck::ToolError(
-                            "storage backend unavailable: no enabled bootstrap bucket".to_owned(),
-                        );
-                    }
-                },
+            // The file's bucket row: `bucket_id` → the store's registry
+            // rows with the registry's id→slug map as the fixture-lane
+            // fallback; None → the file cannot be shared (its bytes are
+            // unreachable).
+            let Some(bucket_id) = file.bucket_id else {
+                return Precheck::ToolError("file not found".to_owned());
             };
+            let bucket = match crate::bucket_acl::bucket_row_for_id(
+                state.store.as_ref(),
+                &state.registry,
+                bucket_id,
+            )
+            .await
+            {
+                Ok(Some(row)) => row,
+                Ok(None) => return Precheck::ToolError("file not found".to_owned()),
+                Err(err) => {
+                    return Precheck::ToolError(format!("storage backend unavailable: {err}"));
+                }
+            };
+            let slug = bucket.slug.clone();
             if !key_buckets.contains(&slug) {
                 return Precheck::Frame(RpcFault::new(
                     SCOPE_DENIED,

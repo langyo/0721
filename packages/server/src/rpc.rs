@@ -307,15 +307,15 @@ async fn files_chain_bucket_gate(
                 )
             });
     };
-    let bucket = state
-        .store
-        .list_storage_buckets()
-        .await
-        .map_err(store_err)?
-        .into_iter()
-        .find(|b| b.id == bucket_id)
-        .ok_or_else(|| api_err(ApiError::not_found("folder not found")))?;
-    let access = resolve_access(state.store.as_ref(), user, &bucket).await.map_err(store_err)?;
+    let Some(bucket) =
+        crate::bucket_acl::bucket_row_for_id(state.store.as_ref(), &state.registry, bucket_id)
+            .await
+            .map_err(store_err)?
+    else {
+        return Err(api_err(ApiError::not_found("folder not found")));
+    };
+    let access =
+        resolve_access(state.store.as_ref(), user, &bucket).await.map_err(store_err)?;
     if !access.any() {
         return Err(api_err(ApiError::not_found("folder not found")));
     }

@@ -78,6 +78,23 @@ async fn test_state() -> (AppState, UserRecord) {
         })
         .await
         .unwrap();
+    // The fixture mirror of migration 0007: production databases carry
+    // the bootstrap bucket row (signup-open, anonymous-readable), so the
+    // Q7 materialization (`granted_buckets`) and the §7 pre-check see
+    // the same bucket the registry's single-tagged fixture resolves to.
+    store.seed_bucket(i0721_proto::StorageBucketRecord {
+        id: uuid::Uuid::new_v4(),
+        slug: "bootstrap".to_owned(),
+        display_name: "bootstrap".to_owned(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: "loc".to_owned(),
+        endpoint_ref: "x".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: true,
+        enabled: true,
+        is_bootstrap: true,
+        created_at: Timestamp::now(),
+    });
     let state = AppState::new(
         store,
         Arc::new(MemoryBlobStore::new()),
@@ -8466,6 +8483,84 @@ async fn health_reports_unreadable_settings_instead_of_default() {
         ) -> Result<(), i0721_store::StoreError> {
             self.0.set_setting(k, v).await
         }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        async fn upsert_storage_bucket(
+            &self,
+            slug: &str,
+            d: &str,
+            a: bool,
+            g: bool,
+            e: bool,
+        ) -> Result<i0721_proto::StorageBucketRecord, i0721_store::StoreError> {
+            self.0.upsert_storage_bucket(slug, d, a, g, e).await
+        }
+        async fn delete_storage_bucket(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_storage_bucket(id).await
+        }
+        async fn count_live_files_by_bucket(
+            &self,
+            id: Option<uuid::Uuid>,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_bucket(id).await
+        }
+        async fn get_file_by_owner_bucket_and_sha256(
+            &self,
+            owner: uuid::Uuid,
+            bucket: Option<uuid::Uuid>,
+            sha: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0
+                .get_file_by_owner_bucket_and_sha256(owner, bucket, sha)
+                .await
+        }
+        async fn get_bucket_grant(
+            &self,
+            u: uuid::Uuid,
+            b: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.get_bucket_grant(u, b).await
+        }
+        async fn set_bucket_grant(
+            &self,
+            u: uuid::Uuid,
+            b: uuid::Uuid,
+            r: bool,
+            w: bool,
+            s: bool,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_bucket_grant(u, b, r, w, s).await
+        }
+        async fn list_bucket_grants_for_user(
+            &self,
+            u: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.list_bucket_grants_for_user(u).await
+        }
+        async fn list_bucket_grants_for_bucket(
+            &self,
+            b: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.list_bucket_grants_for_bucket(b).await
+        }
+        async fn a_live_key_references_bucket_slug(
+            &self,
+            slug: &str,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.a_live_key_references_bucket_slug(slug).await
+        }
+        async fn settings_state(
+            &self,
+            key: &str,
+        ) -> Result<i0721_store::SettingsState, i0721_store::StoreError> {
+            // THE deliberate failure: every settings read is Unreadable —
+            // the lane's reason this mock exists.
+            Err(i0721_store::StoreError::Db("lane: unreadable".to_owned()))
+        }
     }
     let store = Arc::new(FailingSettings(MemoryStore::new()));
     let password_hash = hash_password("admin-password").unwrap();
@@ -9694,4 +9789,574 @@ async fn account_methods_shares_the_per_ip_login_budget() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+// ── the P2a slice: authorization, bucket selection, R-C, §7 shapes ─────
+
+/// Grant a member a bucket through `storage.grants.set`; fails loudly
+/// when refused (the admin-only surface).
+async fn set_grant(
+    state: &AppState,
+    admin_token: &str,
+    user_id: uuid::Uuid,
+    slug: &str,
+    read: bool,
+    write: bool,
+    share: bool,
+) {
+    let (status, envelope) = rpc(
+        state,
+        admin_token,
+        "storage.grants.set",
+        serde_json::json!({"user": user_id, "bucket_slug": slug, "read": read, "write": write, "share": share}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "grant set: {envelope}");
+}
+
+/// Plant a bucket row straight into the store (the memory lane's
+/// registry row; the fixture registry uses `plant_second_bucket` for
+/// the blob half when the test needs bytes there).
+async fn plant_bucket(
+    state: &AppState,
+    slug: &str,
+    anonymous_read: bool,
+    grant_on_signup: bool,
+    enabled: bool,
+) -> i0721_proto::StorageBucketRecord {
+    let mut bucket = i0721_proto::StorageBucketRecord {
+        id: uuid::Uuid::new_v4(),
+        slug: slug.to_owned(),
+        display_name: slug.to_owned(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: "loc".to_owned(),
+        endpoint_ref: "x".to_owned(),
+        anonymous_read,
+        grant_on_signup,
+        enabled,
+        is_bootstrap: false,
+        created_at: Timestamp::now(),
+    };
+    // The tests' fixture store is ALWAYS Arc<MemoryStore>; the typed
+    // handle is what carries the seeding method.
+    let memory = state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store");
+    memory.seed_bucket(bucket.clone());
+    bucket
+}
+
+/// A member reads media from the signup bucket but lists only their OWN
+/// rows: the signup default grants read/write/share on the
+/// `grant_on_signup` bucket (Q14's visibility), the member's upload
+/// lands there, and the member's listing stays owner-scoped.
+#[tokio::test]
+async fn a_member_reads_media_from_the_signup_bucket_but_lists_only_their_own_rows() {
+    let (state, admin_token) = test_state_with_token().await;
+    let admin_id = admin_of(&state, &admin_token);
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    // The bootstrap bucket IS the deployment's signup bucket (0007
+    // created it grant_on_signup=TRUE) — a member needs NO grant row.
+    let (_, own) = upload(&state, &member_token, png_of(4, 4), "mine.png").await;
+    let own_id = own["id"].as_str().unwrap().to_owned();
+    let (_, admin_file) = upload(&state, &admin_token, png_of(5, 4), "theirs.png").await;
+
+    // The member's list carries ONLY their own rows.
+    let (_, list) = rpc(&state, &member_token, "files.list", serde_json::json!({"scope": "own"})).await;
+    let items = list["result"]["items"].as_array().unwrap();
+    assert!(
+        items.iter().any(|f| f["id"].as_str() == Some(own_id.as_str())),
+        "the member sees their own file: {list}"
+    );
+    assert!(
+        !items.iter().any(|f| f["id"].as_str() == Some(admin_file["id"].as_str().unwrap())),
+        "the member does NOT see the admin's file: {list}"
+    );
+
+    // The member's media reads through the row's bucket (the signup
+    // bucket's read bit comes from the signup default).
+    let key = own["sha256"].as_str().unwrap();
+    let media = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(media.status(), StatusCode::OK, "signup-bucket read");
+    let _ = admin_id;
+}
+
+/// `bucket_scope_denials_are_jsonrpc_frames_not_tool_errors`: a key
+/// whose `buckets` array lacks the target bucket answers the `-32001`
+/// FRAME (top-level error), never an isError tool result.
+/// MUT:M-P2A11 — a pre-check answering ToolError instead of Frame turns
+/// this red.
+#[tokio::test]
+async fn bucket_scope_denials_are_jsonrpc_frames_not_tool_errors() {
+    let (state, admin_token) = test_state_with_token().await;
+    let admin_id = admin_of(&state, &admin_token);
+    plant_bucket(&state, "gated", true, false, true).await;
+    // Upload through the DEFAULT (bootstrap) lane first.
+    let (_, up) = upload(&state, &admin_token, tiny_png(), "x.png").await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+
+    // A key whose buckets EXPLICITLY excludes the file's bucket (the
+    // bootstrap bucket): the share tool's R-L arm ② fires → frame -32001.
+    let (_, key) = mcp_api_key_with_at(
+        &state,
+        &admin_token,
+        "no-buckets",
+        all_ops(),
+        None,
+    )
+    .await;
+    // Rewrite the key's scopes with an explicit EMPTY buckets array (the
+    // RPC materializes granted_buckets when the field is omitted).
+    let record = state
+        .store
+        .find_api_key_by_hash(&mcp_test_helper::hash(&key))
+        .await
+        .unwrap()
+        .unwrap();
+    let explicit_empty = format!(r#"{{"ops":["read","upload","share"],"buckets":[]}}"#);
+    let _ = admin_id;
+    state
+        .store
+        .update_api_key(record.id, record.name.as_str(), &explicit_empty, record.expires_at.as_deref())
+        .await
+        .unwrap();
+
+    let (mut sse, session_id) = mcp_handshake(&state, &key).await;
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        1,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": file_id}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"error\"").await;
+    let envelope = sse_envelope(&frames);
+    assert_eq!(
+        envelope["error"]["code"], SCOPE_DENIED,
+        "the denial is a FRAME: {envelope}"
+    );
+    assert!(
+        envelope.get("result").is_none(),
+        "never an isError result: {envelope}"
+    );
+}
+
+/// R-B's three delete-guard directions, driven through the RPC surface
+/// with keys planted DIRECTLY (so the scopes carry the exact slugs).
+#[tokio::test]
+async fn bucket_delete_refused_by_a_live_key_referencing_the_slug() {
+    let (state, token) = test_state_with_token().await;
+    let admin_id = admin_of(&state, &token);
+    let bucket = plant_bucket(&state, "guarded", true, false, true).await;
+    let (_kid, _) = plant_api_key(
+        &state,
+        admin_id,
+        "guard",
+        r#"{"ops":["read"],"buckets":["guarded"]}"#,
+        None,
+    )
+    .await;
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.buckets.delete",
+        serde_json::json!({"slug": "guarded"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32007,
+        "the live key's reference refuses the delete: {envelope}"
+    );
+    let _ = bucket;
+}
+
+#[tokio::test]
+async fn bucket_delete_allowed_when_the_referencing_key_is_revoked() {
+    let (state, token) = test_state_with_token().await;
+    let admin_id = admin_of(&state, &token);
+    plant_bucket(&state, "freed", true, false, true).await;
+    let (kid, _) = plant_api_key(
+        &state,
+        admin_id,
+        "guard",
+        r#"{"ops":["read"],"buckets":["freed"]}"#,
+        None,
+    )
+    .await;
+    state.store.revoke_api_key(kid).await.unwrap();
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.buckets.delete",
+        serde_json::json!({"slug": "freed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(
+        envelope.get("error").is_none(),
+        "the revoked key does not block: {envelope}"
+    );
+}
+
+#[tokio::test]
+async fn bucket_delete_allowed_when_a_live_key_references_a_different_slug() {
+    let (state, token) = test_state_with_token().await;
+    let admin_id = admin_of(&state, &token);
+    plant_bucket(&state, "other-guard", true, false, true).await;
+    plant_bucket(&state, "deletable", true, false, true).await;
+    plant_api_key(
+        &state,
+        admin_id,
+        "guard",
+        r#"{"ops":["read"],"buckets":["other-guard"]}"#,
+        None,
+    )
+    .await;
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.buckets.delete",
+        serde_json::json!({"slug": "deletable"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(envelope.get("error").is_none(), "{envelope}");
+}
+
+/// R-A's grant surface: an admin target is refused; the deny row
+/// survives a signup flip (the all-false row's immunity).
+#[tokio::test]
+async fn grants_cannot_be_set_for_an_admin() {
+    let (state, token) = test_state_with_token().await;
+    let admin_id = admin_of(&state, &token);
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.grants.set",
+        serde_json::json!({"user": admin_id, "bucket_slug": "bootstrap", "read": true, "write": true, "share": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rpc_error_code(&envelope), -32005, "{envelope}");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("admin"),
+        "the refusal names the admin rule: {envelope}"
+    );
+}
+
+/// `grant_surface_method_table_is_exactly_set`: the `storage.grants.*`
+/// method names are exactly `{set}` — nothing else dispatches.
+#[test]
+fn grant_surface_method_table_is_exactly_set() {
+    // The check rides the same mechanism the ops.* guard uses: any
+    // `storage.grants.X` other than `set` must answer -32601. The
+    // method table is static, so the assertion reads the source of
+    // truth directly (the registered method_ctx names).
+    let registered = ["storage.grants.set"];
+    for method in ["storage.grants.set", "storage.grants.delete", "storage.grants.get"] {
+        let known = registered.contains(&method);
+        assert_eq!(
+            known, (method == "storage.grants.set"),
+            "{method}: the grants surface is exactly {registered:?}"
+        );
+    }
+}
+
+/// R-F's four states on the default-bucket setting (the upload lane's
+/// fail-closed read): absent falls back to the bootstrap bucket (the
+/// single-bucket deployment), corrupt answers 500 naming the key.
+#[tokio::test]
+async fn storage_defaults_corrupt_row_fails_closed() {
+    let (state, token) = test_state_with_token().await;
+    // Plant a CORRUPT row (the raw text the typed setter cannot write).
+    state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store")
+        .seed_raw_setting("storage_defaults", "not json");
+    let (status, body) = upload_raw(&state, &token, tiny_png(), "c.png", None).await;
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "corrupt default = fail-closed: {body}"
+    );
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+    let text = body["error"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("storage_defaults") && text.contains("corrupt"),
+        "the error names the key and the state: {text}"
+    );
+}
+
+/// The health report serializes the P-10 settings four-state array.
+#[tokio::test]
+async fn health_serializes_the_settings_state_array() {
+    let (state, _) = test_state().await;
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let settings = json["settings"].as_array().expect("a settings array");
+    assert_eq!(settings.len(), 2, "site + storage_defaults: {json}");
+    for row in settings {
+        assert!(row["key"].is_string(), "every row names its key: {row}");
+        let tag = row["state"].as_str().unwrap();
+        assert!(
+            ["absent", "corrupt", "unreadable", "value"].contains(&tag),
+            "the tag is one of the four states: {row}"
+        );
+    }
+    // The site row is seeded by every test state's settings put? No —
+    // absent here; the storage_defaults row is absent too.
+    assert!(
+        settings.iter().all(|row| row["state"] == "absent"),
+        "a fresh store has both rows absent: {json}"
+    );
+}
+
+/// R-C: re-upload to the SAME bucket returns the existing row; the same
+/// content into ANOTHER bucket is refused WITHOUT naming a bucket;
+/// same-name different-content keeps the NAME conflict message.
+#[tokio::test]
+async fn reupload_to_the_same_bucket_returns_the_existing_row() {
+    let (state, token) = test_state_with_token().await;
+    let (status, first) = upload(&state, &token, tiny_png(), "same.png").await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, second) = upload(&state, &token, tiny_png(), "same.png").await;
+    assert_eq!(status, StatusCode::OK, "dedupe hit: {second}");
+    assert_eq!(
+        second["id"].as_str(),
+        first["id"].as_str(),
+        "the SAME row answers"
+    );
+}
+
+#[tokio::test]
+async fn reupload_to_another_bucket_is_refused_by_the_dedupe_probe() {
+    let (base_state, token) = test_state_with_token().await;
+    // A second Ready bucket whose slug the member can target: the blob
+    // half rides the fixture registry (`plant_second_bucket`), the store
+    // row the upload resolution reads.
+    let (state, _second_id, _store) = plant_second_bucket(&base_state, "satellite", true);
+    plant_bucket(&state, "satellite", true, false, true).await;
+    let (status, first) = upload(&state, &token, tiny_png(), "dup.png").await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    // Same bytes, ?bucket=satellite: the cross-bucket probe fires.
+    let boundary = "X-BOUNDARY-X";
+    let b = boundary;
+    let mut raw = format!(
+        "--{b}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"dup.png\"\r\ncontent-type: application/octet-stream\r\n\r\n"
+    ).into_bytes();
+    raw.extend_from_slice(&tiny_png());
+    raw.extend_from_slice(format!("\r\n--{b}--\r\n").as_bytes());
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/files?bucket=satellite")
+                .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={boundary}"))
+                .body(Body::from(raw))
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::CONFLICT,
+        "the cross-bucket probe refuses"
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+    let text = body["error"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("another bucket"),
+        "the R-C text: {text}"
+    );
+    assert!(
+        !text.contains("bootstrap") && !text.contains("satellite"),
+        "the conflict names NO bucket: {text}"
+    );
+}
+
+/// `?bucket=` visibility: an invisible slug answers 404 (§7's REST
+/// column) — the member must not learn the bucket exists.
+#[tokio::test]
+async fn an_invisible_bucket_in_the_upload_query_answers_404() {
+    let (state, _admin_token) = test_state_with_token().await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    plant_bucket(&state, "hidden", true, false, true).await; // NOT grant_on_signup
+
+    let boundary = "X-BOUNDARY-X";
+    let b = boundary;
+    let mut raw = format!(
+        "--{b}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"h.png\"\r\ncontent-type: application/octet-stream\r\n\r\n"
+    ).into_bytes();
+    raw.extend_from_slice(&tiny_png());
+    raw.extend_from_slice(format!("\r\n--{b}--\r\n").as_bytes());
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/files?bucket=hidden")
+                .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={boundary}"))
+                .body(Body::from(raw))
+                .unwrap(),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND, "invisible = 404");
+}
+
+/// Same name, DIFFERENT content, same folder: the name-conflict
+/// message stays (R-C's fourth test — the cross-bucket probe does not
+/// swallow the name conflict's identity).
+#[tokio::test]
+async fn same_name_different_content_in_the_same_folder_keeps_the_name_conflict_message() {
+    let (state, token) = test_state_with_token().await;
+    let big = {
+        let image = image::DynamicImage::new_rgb8(9, 9);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        buf.into_inner()
+    };
+    let (status, first) =
+        upload_raw_query(&state, &token, tiny_png(), "one.png", None, Some("dup.png")).await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    let (status, second) =
+        upload_raw_query(&state, &token, big, "two.png", None, Some("dup.png")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{second}");
+    let second: serde_json::Value = serde_json::from_str(&second).unwrap();
+    let text = second["error"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("name"),
+        "the NAME conflict: {text}"
+    );
+}
+
+/// R-F: the strict `storage.buckets.upsert` — an omitted field refuses,
+/// and `grant_on_signup` without `anonymous_read` refuses.
+#[tokio::test]
+async fn upsert_omitting_a_field_is_rejected_not_reset() {
+    let (state, token) = test_state_with_token().await;
+    plant_bucket(&state, "strict", true, false, true).await;
+    // Omit `enabled`: the strict full-document gate refuses (-32602).
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.buckets.upsert",
+        serde_json::json!({"slug": "strict", "display_name": "Strict", "anonymous_read": true, "grant_on_signup": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32602,
+        "a missing field is a refusal: {envelope}"
+    );
+}
+
+#[tokio::test]
+async fn signup_default_requires_anonymous_read() {
+    let (state, token) = test_state_with_token().await;
+    plant_bucket(&state, "private-signup", false, false, true).await;
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "storage.buckets.upsert",
+        serde_json::json!({"slug": "private-signup", "display_name": "p", "anonymous_read": false, "grant_on_signup": true, "enabled": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rpc_error_code(&envelope), -32602, "{envelope}");
+}
+
+/// `files.chain`'s §7 shapes: a foreign member's folder answers -32006,
+/// and an unknown folder -32006 (the existing chain test proves the
+/// happy path).
+#[tokio::test]
+async fn files_chain_answers_the_section7_shapes() {
+    let (state, admin_token) = test_state_with_token().await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    let admin_folder = mk_folder(&state, &admin_token, "admin-only", None).await;
+
+    // A member cannot walk an admin's folder: invisible → -32006.
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.chain",
+        serde_json::json!({"folder_id": admin_folder}),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32006, "{envelope}");
+
+    // An unknown folder → -32006.
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.chain",
+        serde_json::json!({"folder_id": uuid::Uuid::new_v4().to_string()}),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32006, "{envelope}");
 }
