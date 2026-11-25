@@ -340,10 +340,11 @@ live session it opened.
 
 Every key carries its OWN permissions and an optional expiry, set at
 creation or with `keys.update {id, name, ops, expires_at?}` (a
-whole-record replacement; omit `expires_at` to clear it — omitted or
-`null` never means "keep the old one"). A key needs at least one
-permission, and a supplied `expires_at` must be RFC 3339 and in the
-future. Expiry is checked at every handshake AND on every frame: an
+whole-record replacement; omit `expires_at` to clear it — omitted,
+`null` or `""` all clear it and never mean "keep the old one"). A key
+needs at least one permission, and a supplied `expires_at` must be RFC
+3339 and in the future; any UTC offset is accepted and the instant is
+stored in its canonical UTC form. Expiry is checked at every handshake AND on every frame: an
 expired key cannot open a stream, and a session whose key lapses
 mid-flight is dropped with a 401. Keys minted before permissions were
 enforced are normalized by the schema migration to the EMPTY permission

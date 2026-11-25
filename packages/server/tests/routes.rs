@@ -7499,17 +7499,34 @@ async fn keys_create_validates_ops_and_expiry() {
         );
     }
 
-    // The canonical-instant half: a non-UTC offset is normalized.
-    let offset = future;
-    let offset_text = format!("{offset}");
+    // The canonical-instant half: a NON-UTC offset is really sent and
+    // comes back as the same instant in canonical `Z` form. (Formatting a
+    // jiff `Timestamp` here would only ever produce `…Z`, which is why the
+    // literal is spelled out: a server that stored the caller's spelling
+    // verbatim, or refused offset-bearing RFC 3339, both fail below.)
     let (_, envelope) = rpc(
         &state,
         &token,
         "keys.create",
-        serde_json::json!({"name": "utc", "ops": ["upload"], "expires_at": offset_text}),
+        serde_json::json!({
+            "name": "offset",
+            "ops": ["upload"],
+            "expires_at": "2127-03-04T10:03:04+08:00",
+        }),
     )
     .await;
-    assert!(envelope.get("error").is_none(), "{envelope}");
+    assert!(
+        envelope.get("error").is_none(),
+        "an offset-bearing instant is accepted: {envelope}"
+    );
+    let offset_id = envelope["result"]["id"].as_str().unwrap().to_owned();
+    let (_, list) = rpc(&state, &token, "keys.list", serde_json::Value::Null).await;
+    let row = find_key_row(&list, &offset_id);
+    assert_eq!(
+        row["expires_at"], "2127-03-04T02:03:04Z",
+        "the offset-bearing instant is stored as its canonical UTC form: {row}"
+    );
+    assert_eq!(row["expired"], false, "it is still in the future: {row}");
 }
 
 /// ⑧ `keys.update`: owner and admin may edit, a stranger may not; the
@@ -7568,6 +7585,44 @@ async fn keys_update_is_owner_or_admin_and_replaces_the_whole_record() {
         rpc_error_code(&envelope),
         -32005,
         "a member cannot edit another member's key: {envelope}"
+    );
+
+    // (1b) The UPDATE lane shares the create lane's write validation: a
+    // past or an unparseable instant is refused, and a refused update
+    // writes nothing — the whole listed row is byte-for-byte what it was.
+    let (_, list) = rpc(&state, &member_token, "keys.list", serde_json::Value::Null).await;
+    let before = find_key_row(&list, &key_id).clone();
+    assert!(
+        !before["expires_at"].is_null(),
+        "the member's key starts with an expiry: {before}"
+    );
+    for (label, bad) in [
+        ("past instant", "2000-01-01T00:00:00Z"),
+        ("unparseable instant", "tomorrow"),
+    ] {
+        let (_, envelope) = rpc(
+            &state,
+            &member_token,
+            "keys.update",
+            serde_json::json!({
+                "id": key_id,
+                "name": "sneaked",
+                "ops": ["share"],
+                "expires_at": bad,
+            }),
+        )
+        .await;
+        assert_eq!(
+            rpc_error_code(&envelope),
+            -32602,
+            "{label}: the update lane validates the instant like the create lane: {envelope}"
+        );
+    }
+    let (_, list) = rpc(&state, &member_token, "keys.list", serde_json::Value::Null).await;
+    assert_eq!(
+        find_key_row(&list, &key_id),
+        &before,
+        "a refused update writes nothing: name, ops and expiry are unchanged"
     );
 
     // (2) The owner edits: a whole-record replacement that clears the
