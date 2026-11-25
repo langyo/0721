@@ -224,23 +224,31 @@ async fn row_is_visible_without_read(
 /// The R-J serving row: the first row by `id ASC` (the store's
 /// traversal order) whose bucket is `Ready ∧ enabled` — bytes for the
 /// original AND the thumbnail (including the lazy write) come from THAT
-/// row's bucket.
-fn serving_row<'a>(
+/// row's bucket. Availability = the registry's Ready state AND the
+/// store's `enabled` flag (the registry snapshot can trail a runtime
+/// disable; the row in the store is the authority for the flag).
+async fn serving_row<'a>(
     state: &AppState,
     rows: &[&'a i0721_proto::FileRecord],
 ) -> Option<&'a i0721_proto::FileRecord> {
-    rows.iter().copied().find(|row| {
-        state.registry.for_row(row).is_ok() && row_bucket_ready(state, row)
-    })
+    for row in rows {
+        if state.registry.for_row(row).is_err() || !row_bucket_ready(state, row) {
+            continue;
+        }
+        if let Some(bucket) = bucket_of_row(state, row).await.ok().flatten() {
+            if !bucket.enabled {
+                continue;
+            }
+        }
+        return Some(row);
+    }
+    None
 }
 
 /// Whether the row's bucket (the NULL shape reads through the bootstrap
-/// bucket) is `Ready` in the registry — the `enabled` half of the
-/// serving-row rule (`for_row`'s success already excludes Unavailable).
+/// bucket) is `Ready` in the registry.
 fn row_bucket_ready(state: &AppState, row: &i0721_proto::FileRecord) -> bool {
-    let bucket_id = row.bucket_id.or_else(|| {
-        state.registry.bootstrap_bucket_id().ok()
-    });
+    let bucket_id = row.bucket_id.or_else(|| state.registry.bootstrap_bucket_id().ok());
     bucket_id
         .and_then(|id| state.registry.slug_for_bucket_id(id))
         .is_some_and(|slug| {
@@ -325,7 +333,7 @@ pub async fn download(
             out
         }
     };
-    let face = if let Some(row) = serving_row(&state, &authorized) {
+    let face = if let Some(row) = serving_row(&state, &authorized).await {
         Face::Serve(row.id)
     } else if matches!(actor, MediaActor::Anonymous) {
         // A held (the set is non-empty only when it did) but no usable

@@ -11943,3 +11943,914 @@ async fn mcp_get_share_link_on_a_store_failure_answers_the_iserror_tool_error() 
         "the tool text names the storage failure, never a not-found mask: {text}"
     );
 }
+
+// ── P2b: anonymous direct links (R-J full text), R-S cache headers,
+//    R-D shares surviving privatisation ────────────────────────────────
+
+/// Plant a bucket row whose id MATCHES the fixture registry's second
+/// entry (the P2a `share_create_via_rpc_requires_the_share_bit`
+/// posture): `bucket_row_for_id` prefers the store's rows, so a
+/// mismatched id would silently resolve through the synthesized
+/// signup-open fallback.
+async fn plant_bucket_with_id(
+    state: &AppState,
+    id: uuid::Uuid,
+    slug: &str,
+    anonymous_read: bool,
+    grant_on_signup: bool,
+    enabled: bool,
+) {
+    let memory = state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store");
+    memory.seed_bucket(i0721_proto::StorageBucketRecord {
+        id,
+        slug: slug.to_owned(),
+        display_name: slug.to_owned(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: "loc".to_owned(),
+        endpoint_ref: "x".to_owned(),
+        anonymous_read,
+        grant_on_signup,
+        enabled,
+        is_bootstrap: false,
+        created_at: Timestamp::now(),
+    });
+}
+
+/// Flip a bucket's mutable fields through the STORE's own upsert path
+/// (the production face). The fixture registry's own copy does not
+/// refresh (it is static) — the media lane reads the STORE's rows for
+/// visibility/A, so a store-only flip exercises exactly the
+/// A-vs-availability split the P2b faces test.
+async fn patch_bucket(
+    state: &AppState,
+    slug: &str,
+    anonymous_read: bool,
+    grant_on_signup: bool,
+    enabled: bool,
+) {
+    let row = state
+        .store
+        .get_storage_bucket_by_slug(slug)
+        .await
+        .unwrap()
+        .expect("the bucket exists");
+    state
+        .store
+        .upsert_storage_bucket(slug, &row.display_name, anonymous_read, grant_on_signup, enabled)
+        .await
+        .unwrap();
+}
+
+/// Flip `anonymous_read` on a bucket row (the bucket goes private /
+/// public again).
+async fn set_bucket_anonymous(state: &AppState, slug: &str, anonymous_read: bool) {
+    let row = state
+        .store
+        .get_storage_bucket_by_slug(slug)
+        .await
+        .unwrap()
+        .expect("the bucket exists");
+    patch_bucket(state, slug, anonymous_read, row.grant_on_signup, row.enabled).await;
+}
+
+/// Flip `enabled` on a bucket row (the bucket becomes unusable).
+async fn set_bucket_enabled(state: &AppState, slug: &str, enabled: bool) {
+    let row = state
+        .store
+        .get_storage_bucket_by_slug(slug)
+        .await
+        .unwrap()
+        .expect("the bucket exists");
+    patch_bucket(state, slug, row.anonymous_read, row.grant_on_signup, enabled).await;
+}
+
+/// The cache-control header of a media response.
+fn cache_of(response: &axum::response::Response) -> Option<String> {
+    response
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+}
+
+/// `public_bucket_media_anonymous_ok` — the REGRESSION ANCHOR: a
+/// public (anonymous-readable) bucket's media keeps serving to
+/// anonymous requests, exactly as the legacy engine did. MUT:P2B-A-SET
+/// — a predicate that loses the anonymous arm turns this red.
+#[tokio::test]
+async fn public_bucket_media_anonymous_ok() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "public.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "anonymous media on a public bucket still serves"
+    );
+    assert_eq!(
+        cache_of(&response).as_deref(),
+        Some("public, max-age=31536000, immutable"),
+        "2xx ∧ A carries the immutable public directive"
+    );
+}
+
+/// `private_bucket_media_404_anonymous` — a private bucket's media
+/// answers 404 to anonymous requests (I3: no 403, no 503, no oracle).
+/// MUT:P2B-A-DEFAULT — the predicate treating signup-OPEN as
+/// anonymous-readable turns this red.
+#[tokio::test]
+async fn private_bucket_media_404_anonymous() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "private.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    // The bootstrap bucket (where the upload landed) flips PRIVATE: A
+    // no longer holds for this key.
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        cache_of(&response).as_deref(),
+        Some("no-store"),
+        "every non-2xx answer is no-store"
+    );
+}
+
+/// `private_bucket_media_200_with_session_read` — the same private
+/// bucket serves 200 to a session whose bucket holds `Read`, with the
+/// PRIVATE cache directive (2xx ∧ ¬A). MUT:P2B-SESSION-READ — dropping
+/// the Read arm of `authorized_rows` turns this red.
+#[tokio::test]
+async fn private_bucket_media_200_with_session_read() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "own.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a session with Read on the private bucket still serves"
+    );
+    assert_eq!(
+        cache_of(&response).as_deref(),
+        Some("private, no-store"),
+        "2xx ∧ ¬A never carries a public directive"
+    );
+}
+
+/// `private_bucket_thumbnail_follows_the_same_check` — the
+/// `?thumbnail=true` variant runs the SAME R-J judgment (the same
+/// private-bucket 404/200 faces), never a laxer thumbnail path.
+#[tokio::test]
+async fn private_bucket_thumbnail_follows_the_same_check() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "thumb.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+    let anonymous = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}?thumbnail=true"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        anonymous.status(),
+        StatusCode::NOT_FOUND,
+        "the thumbnail variant is anonymous-404 like the original"
+    );
+    let session = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}?thumbnail=true"))
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        session.status(),
+        StatusCode::OK,
+        "the thumbnail variant serves the Read-holding session"
+    );
+}
+
+/// `private_media_grant_does_not_leak_through_a_shared_storage_key` —
+/// one key, two rows in two buckets: the PRIVATE bucket's row must not
+/// leak through the PUBLIC bucket's anonymous readability of the same
+/// key. MUT:P2B-LEAK — an authorized set that silently widens past the
+/// per-row bucket check turns this red.
+#[tokio::test]
+async fn private_media_grant_does_not_leak_through_a_shared_storage_key() {
+    let (base_state, _) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    let (_, dto) = upload(&base_state, &token, tiny_png(), "pub.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let public_bytes = base_state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the public bucket holds its bytes");
+
+    // A second, PRIVATE bucket whose store holds DIFFERENT bytes at the
+    // same key, with a row of ANOTHER owner in it.
+    let (state, second_id, second_store) = plant_second_bucket(&base_state, "vault", true);
+    plant_bucket_with_id(&state, second_id, "vault", false, false, true).await;
+    second_store
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            &key,
+            b"private-bytes-must-not-leak",
+        )
+        .await
+        .unwrap();
+    let other = state
+        .store
+        .create_user(CreateUser {
+            username: "vault-owner".to_owned(),
+            display_name: "Vault".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: Some(second_id),
+            parent_id: None,
+            owner_id: other.id,
+            name: "vault.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: 28,
+            sha256: key.clone(),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: "vault.png".to_owned(),
+        })
+        .await
+        .unwrap();
+
+    // Anonymous: 200 — but from the PUBLIC row's bucket, never the
+    // private store's bytes.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        public_bytes.as_ref(),
+        "anonymous serves the public row's bytes only"
+    );
+
+    // A session (the upload owner, the admin) with NO grant row on the
+    // private bucket still reads through the PUBLIC witness row — the
+    // private grant of another owner leaks nothing.
+    let session = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(session.status(), StatusCode::OK);
+}
+
+/// `shared_storage_key_resolves_identically_on_every_request` — the
+/// same URL answers the same face on every request (no per-request
+/// drift, no order dependence in the set predicate).
+#[tokio::test]
+async fn shared_storage_key_resolves_identically_on_every_request() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "stable.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let first = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let second = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), second.status(), "same URL, same face");
+    assert_eq!(
+        cache_of(&first),
+        cache_of(&second),
+        "same URL, same cache directive"
+    );
+}
+
+/// `disabling_a_public_bucket_answers_503_to_sessions_and_404_to_anonymous`
+/// — visibility (A) and availability (Ready ∧ enabled) split: the
+/// disabled public bucket keeps A TRUE (enabled is ignored), so
+/// sessions fall to the 503 face while anonymous still answers 404
+/// (I3: anonymous never sees the 503). MUT:P2B-503-FACE — collapsing
+/// the session face to 404 (or leaking the 503 to anonymous) turns
+/// this red.
+#[tokio::test]
+async fn disabling_a_public_bucket_answers_503_to_sessions_and_404_to_anonymous() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "down.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    set_bucket_enabled(&state, "bootstrap", false).await;
+    let session = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        session.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "session face for a disabled (unusable) public bucket"
+    );
+    assert_eq!(
+        cache_of(&session).as_deref(),
+        Some("no-store"),
+        "the 503 face is no-store"
+    );
+    let anonymous = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        anonymous.status(),
+        StatusCode::NOT_FOUND,
+        "anonymous never distinguishes unavailability (I3)"
+    );
+}
+
+/// `a_visible_bucket_without_read_answers_403_not_404` — a session
+/// VISIBLY holding the bucket (any grant bit) but WITHOUT `Read`
+/// answers 403, not 404. MUT:P2B-403-FACE — folding the
+/// visible-without-read arm into 404 turns this red.
+#[tokio::test]
+async fn a_visible_bucket_without_read_answers_403_not_404() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    // A private bucket the member can WRITE but not read (an explicit
+    // row keeps the deny shape regardless of the signup default); the
+    // blob half rides the fixture registry so the upload can target it.
+    let (base_state, bucket_id, _blind) = plant_second_bucket(&base_state, "blind", true);
+    plant_bucket_with_id(&base_state, bucket_id, "blind", false, false, true).await;
+    let member = base_state
+        .store
+        .create_user(CreateUser {
+            username: "blind-member".to_owned(),
+            display_name: "Blind".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = base_state.signer.sign(member.id, Timestamp::now());
+    base_state
+        .store
+        .set_bucket_grant(member.id, bucket_id, false, true, false)
+        .await
+        .unwrap();
+    // The admin uploads INTO that bucket (the override rides ?bucket=).
+    let (status, dto) = upload_bucket(&base_state, &admin_token, tiny_png(), "b.png", "blind").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+
+    let member_face = app(&base_state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        member_face.status(),
+        StatusCode::FORBIDDEN,
+        "visible (write bit) but unreadable: 403, not 404"
+    );
+    assert_eq!(
+        cache_of(&member_face).as_deref(),
+        Some("no-store"),
+        "the 403 face is no-store"
+    );
+}
+
+/// I3: `anonymous_never_distinguishes_an_unavailable_bucket_from_absence`
+/// — a private DISABLED bucket and a nonexistent key answer the SAME
+/// 404 to anonymous requests (no 403, no 503, no oracle).
+#[tokio::test]
+async fn anonymous_never_distinguishes_an_unavailable_bucket_from_absence() {
+    let (state, admin_token) = test_state_with_token().await;
+    let (_, dto) = upload(&state, &admin_token, tiny_png(), "gone.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    // Private AND disabled: neither visible nor usable.
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+    set_bucket_enabled(&state, "bootstrap", false).await;
+    let unavailable = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let absent = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{}", "0".repeat(64)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unavailable.status(), StatusCode::NOT_FOUND);
+    assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        cache_of(&unavailable),
+        cache_of(&absent),
+        "the two 404s are indistinguishable, headers included"
+    );
+}
+
+/// I6: `api_key_with_a_narrowed_bucket_set_never_serves_from_a_bucket_outside_it`
+/// — a live key whose `buckets` omits the file's bucket answers 404
+/// even though its OWNER could read the media with a session (I6: the
+/// key's authority = ops ∩ buckets ∩ the user's current grants). The
+/// file sits in a PRIVATE bucket, so the A witness arm never rescues
+/// the key (the intersection decides alone).
+#[tokio::test]
+async fn api_key_with_a_narrowed_bucket_set_never_serves_from_a_bucket_outside_it() {
+    let (state, admin_token) = test_state_with_token().await;
+    let (_, up) = upload(&state, &admin_token, tiny_png(), "keyed.png").await;
+    let key = up["sha256"].as_str().unwrap().to_owned();
+    // Private bucket: A does not hold, so the key's `buckets` set is
+    // the ONLY door (the intersection decides alone).
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+    // A read-op key whose buckets array EXCLUDES the bootstrap bucket.
+    let (_, key_plain) = mcp_api_key_with_at(&state, &admin_token, "narrow", all_ops(), None).await;
+    let record = state
+        .store
+        .find_api_key_by_hash(&mcp_test_helper::hash(&key_plain))
+        .await
+        .unwrap()
+        .unwrap();
+    let narrowed = r#"{"ops":["read","upload","share"],"buckets":[]}"#.to_owned();
+    state
+        .store
+        .update_api_key(
+            record.id,
+            record.name.as_str(),
+            &narrowed,
+            record.expires_at.as_deref(),
+        )
+        .await
+        .unwrap();
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .header(header::AUTHORIZATION, format!("Bearer {key_plain}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "the key's bucket set excludes the file's bucket: no media"
+    );
+
+    // The SAME key WITH the bucket in its set serves (I6's other half:
+    // the intersection grants what the user's grant allows).
+    let wide = format!(
+        r#"{{"ops":["read","upload","share"],"buckets":["{}"]}}"#,
+        state.registry.bootstrap_slug().unwrap_or("bootstrap")
+    );
+    state
+        .store
+        .update_api_key(
+            record.id,
+            record.name.as_str(),
+            &wide,
+            record.expires_at.as_deref(),
+        )
+        .await
+        .unwrap();
+    let allowed = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .header(header::AUTHORIZATION, format!("Bearer {key_plain}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK, "in-set key reads");
+}
+
+/// I5: `private_media_never_carries_a_public_cache_directive` — the
+/// ¬A 200 answer's directive is `private, no-store`, byte for byte.
+#[tokio::test]
+async fn private_media_never_carries_a_public_cache_directive() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "nocache.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let directive = cache_of(&response).unwrap_or_default();
+    assert!(
+        !directive.contains("public"),
+        "no public directive on a private-bucket 200: {directive}"
+    );
+    assert_eq!(directive, "private, no-store");
+}
+
+/// I5: `an_unavailable_or_forbidden_media_response_is_never_cacheable`
+/// — the 503 and the 403 faces both carry `no-store`.
+#[tokio::test]
+async fn an_unavailable_or_forbidden_media_response_is_never_cacheable() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    let (_, up) = upload(&base_state, &admin_token, tiny_png(), "dead.png").await;
+    let key = up["sha256"].as_str().unwrap().to_owned();
+    // Disabled public bucket: session 503 — no-store.
+    set_bucket_enabled(&base_state, "bootstrap", false).await;
+    let unavailable = app(&base_state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &admin_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(cache_of(&unavailable).as_deref(), Some("no-store"));
+    // Enabled private bucket + a visible-but-unreadable session: 403.
+    set_bucket_enabled(&base_state, "bootstrap", true).await;
+    let (base_state, bucket_id, _blind) = plant_second_bucket(&base_state, "blind403", true);
+    plant_bucket_with_id(&base_state, bucket_id, "blind403", false, false, true).await;
+    let member = base_state
+        .store
+        .create_user(CreateUser {
+            username: "blind403-member".to_owned(),
+            display_name: "B".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = base_state.signer.sign(member.id, Timestamp::now());
+    base_state
+        .store
+        .set_bucket_grant(member.id, bucket_id, false, true, false)
+        .await
+        .unwrap();
+    // DIFFERENT bytes: the same admin's same-content upload in another
+    // bucket is the R-C cross-bucket refusal, not this test's subject.
+    let mut different = tiny_png();
+    different[0] ^= 0xFF;
+    let (status, dto) =
+        upload_bucket(&base_state, &admin_token, different, "b.png", "blind403").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let blind_key = dto["sha256"].as_str().unwrap().to_owned();
+    let forbidden = app(&base_state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{blind_key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert_eq!(cache_of(&forbidden).as_deref(), Some("no-store"));
+}
+
+/// `the_same_url_changes_its_cache_directive_when_A_changes` — A
+/// flipping TRUE→FALSE (privatising the bucket) changes the SAME URL's
+/// directive from the immutable public form to `private, no-store` —
+/// and back again when A flips TRUE once more.
+#[tokio::test]
+async fn the_same_url_changes_its_cache_directive_when_A_changes() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "flip.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let url = format!("/media/{key}");
+
+    let public = app(&state)
+        .oneshot(bearer(Request::builder().uri(&url).body(Body::empty()).unwrap(), &token))
+        .await
+        .unwrap();
+    assert_eq!(
+        cache_of(&public).as_deref(),
+        Some("public, max-age=31536000, immutable")
+    );
+
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+    let private = app(&state)
+        .oneshot(bearer(Request::builder().uri(&url).body(Body::empty()).unwrap(), &token))
+        .await
+        .unwrap();
+    assert_eq!(cache_of(&private).as_deref(), Some("private, no-store"));
+
+    set_bucket_anonymous(&state, "bootstrap", true).await;
+    let back = app(&state)
+        .oneshot(bearer(Request::builder().uri(&url).body(Body::empty()).unwrap(), &token))
+        .await
+        .unwrap();
+    assert_eq!(
+        cache_of(&back).as_deref(),
+        Some("public, max-age=31536000, immutable")
+    );
+}
+
+/// R-D: `privatising_a_bucket_keeps_existing_shares_valid` — a share
+/// created while the bucket was public KEEPS serving after the bucket
+/// goes private (bytes route by ROW, I4), and the owner's
+/// `files.share_list` still lists it. MUT:P2B-RD — a share lane that
+/// re-checks the bucket's `anonymous_read` turns this red.
+#[tokio::test]
+async fn privatising_a_bucket_keeps_existing_shares_valid() {
+    let (state, _admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "shared.png").await;
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    // The share exists BEFORE the privatisation.
+    let (_, created) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id}),
+    )
+    .await;
+    let share_token = rpc_result(&created)["token"].as_str().unwrap().to_owned();
+
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+
+    // The public share download still serves the bytes.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{share_token}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "the existing share keeps serving after the bucket went private"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let stored = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(body.as_ref(), stored.as_ref(), "the row's own bytes");
+
+    // The owner's share_list still lists it (R-D's second half).
+    let (_, list) = rpc(&state, &token, "files.share_list", serde_json::Value::Null).await;
+    let tokens: Vec<&str> = rpc_result(&list)
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["token"].as_str())
+        .collect();
+    assert!(
+        tokens.contains(&share_token.as_str()),
+        "share_list keeps the privatised bucket's share: {list}"
+    );
+
+    // And anonymous /media on the same key is NOW 404 — the share is
+    // the only remaining public door.
+    let media = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(media.status(), StatusCode::NOT_FOUND);
+}
+
+/// R-D: `revoking_the_owners_access_keeps_existing_shares_valid` — the
+/// spec's other R-D test: revoking the OWNER's grant row on the bucket
+/// (all-false deny row) does NOT kill an already-issued share.
+#[tokio::test]
+async fn revoking_the_owners_access_keeps_existing_shares_valid() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    // The owner is a MEMBER with an explicit row on a private bucket;
+    // the member uploads into the bucket (the grant's write bit),
+    // issues the share, then the row is revoked to all-false.
+    let (base_state, bucket_id, _store) = plant_second_bucket(&base_state, "revoked", true);
+    plant_bucket_with_id(&base_state, bucket_id, "revoked", false, false, true).await;
+    let member = base_state
+        .store
+        .create_user(CreateUser {
+            username: "share-owner".to_owned(),
+            display_name: "S".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = base_state.signer.sign(member.id, Timestamp::now());
+    base_state
+        .store
+        .set_bucket_grant(member.id, bucket_id, true, true, true)
+        .await
+        .unwrap();
+    let (status, dto) =
+        upload_bucket(&base_state, &member_token, tiny_png(), "s.png", "revoked").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+
+    let (_, created) = rpc(
+        &base_state,
+        &member_token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id}),
+    )
+    .await;
+    let share_token = rpc_result(&created)["token"].as_str().unwrap().to_owned();
+
+    // Revoke the owner's access (all-false deny row).
+    base_state
+        .store
+        .set_bucket_grant(member.id, bucket_id, false, false, false)
+        .await
+        .unwrap();
+
+    let response = app(&base_state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{share_token}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "the share survives the owner's revocation (R-D, I4 routing)"
+    );
+    // The owner's share_list still lists it.
+    let (_, list) = rpc(
+        &base_state,
+        &member_token,
+        "files.share_list",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert!(
+        rpc_result(&list)
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["token"].as_str() == Some(share_token.as_str())),
+        "the revoked owner still sees their share in the list: {list}"
+    );
+    let _ = admin_token;
+}
+
+/// R-D / R-L re-test: NEW shares on a privatised bucket still need the
+/// actor's CURRENT share bit (P2a's R-L holds under P2b).
+#[tokio::test]
+async fn new_shares_still_need_the_current_share_bit() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    let (base_state, bucket_id, _store) = plant_second_bucket(&base_state, "noshare", true);
+    plant_bucket_with_id(&base_state, bucket_id, "noshare", false, false, true).await;
+    let member = base_state
+        .store
+        .create_user(CreateUser {
+            username: "writer-only".to_owned(),
+            display_name: "W".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = base_state.signer.sign(member.id, Timestamp::now());
+    base_state
+        .store
+        .set_bucket_grant(member.id, bucket_id, true, true, false)
+        .await
+        .unwrap();
+    let (status, dto) =
+        upload_bucket(&base_state, &member_token, tiny_png(), "w.png", "noshare").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+    let (_, envelope) = rpc(
+        &base_state,
+        &member_token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "the write-only member cannot publish a NEW share (share bit required)"
+    );
+    let _ = admin_token;
+}
