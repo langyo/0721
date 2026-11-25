@@ -112,6 +112,8 @@ pub struct BucketEntry {
 #[derive(Debug)]
 pub struct BlobRegistry {
     entries: HashMap<String, BucketEntry>,
+    /// The bootstrap bucket's backend tag (fresh uploads' row tag).
+    bootstrap_backend: Option<BucketBackend>,
     /// id → slug index (rows carry the bucket id; entries key by slug).
     by_id: HashMap<uuid::Uuid, String>,
     /// Slug of the earliest-CREATED enabled bootstrap bucket — the rows
@@ -158,11 +160,16 @@ impl BlobRegistry {
             .iter()
             .filter(|row| row.is_bootstrap && row.enabled)
             .min_by_key(|row| (row.created_at, row.slug.clone()))
-            .map(|row| row.slug.clone());
+            .map(|row| (row.slug.clone(), row.backend));
+        let (bootstrap, bootstrap_backend) = match bootstrap {
+            Some((slug, backend)) => (Some(slug), Some(backend)),
+            None => (None, None),
+        };
         Ok(Self {
             entries,
             by_id,
             bootstrap,
+            bootstrap_backend,
         })
     }
 
@@ -170,9 +177,7 @@ impl BlobRegistry {
     /// `store`, rows with or without a bucket alike.
     #[must_use]
     pub fn single(store: Arc<dyn BlobStore>) -> Arc<Self> {
-        let mut entries = HashMap::new();
-        let mut by_id = HashMap::new();
-        entries.insert(
+        let entries = HashMap::from([(
             "bootstrap".to_owned(),
             BucketEntry {
                 slug: "bootstrap".to_owned(),
@@ -180,11 +185,33 @@ impl BlobRegistry {
                 reason: None,
                 store: Some(store),
             },
-        );
+        )]);
         Arc::new(Self {
             entries,
-            by_id,
+            by_id: HashMap::new(),
             bootstrap: Some("bootstrap".to_owned()),
+            bootstrap_backend: Some(BucketBackend::Local),
+        })
+    }
+
+    /// A single-entry registry with an explicit backend tag (the
+    /// fixture lane where the tag must follow a chosen backend).
+    #[must_use]
+    pub fn single_tagged(store: Arc<dyn BlobStore>, backend: BucketBackend) -> Arc<Self> {
+        let entries = HashMap::from([(
+            "bootstrap".to_owned(),
+            BucketEntry {
+                slug: "bootstrap".to_owned(),
+                state: BucketState::Ready,
+                reason: None,
+                store: Some(store),
+            },
+        )]);
+        Arc::new(Self {
+            entries,
+            by_id: HashMap::new(),
+            bootstrap: Some("bootstrap".to_owned()),
+            bootstrap_backend: Some(backend),
         })
     }
 
@@ -268,6 +295,17 @@ impl BlobRegistry {
         let slug = self.bootstrap.clone().ok_or(BlobError::NoBootstrap)?;
         self.resolve(&slug)
     }
+
+    /// The bootstrap bucket's backend tag (the fresh row's
+    /// `storage_backend` — the bytes and the tag come from the same
+    /// bucket).
+    ///
+    /// # Errors
+    ///
+    /// [`BlobError::NoBootstrap`] when no enabled bootstrap bucket exists.
+    pub fn bootstrap_backend_tag(&self) -> Result<BucketBackend, BlobError> {
+        self.bootstrap_backend.ok_or(BlobError::NoBootstrap)
+    }
 }
 
 /// Classify one DB row into its registry entry (no network I/O).
@@ -325,17 +363,16 @@ fn build_store(
     };
     match row.backend {
         BucketBackend::Local => {
-            // The legacy prefix rides the shared I0721_MEDIA_ROOT (the
-            // config's own default included — zero env change for
-            // existing deploys); per-bucket roots name the slug.
+            // The legacy prefix rides the shared I0721_MEDIA_ROOT — the
+            // CALLER (main) supplies it from the resolved config, so a
+            // missing root surfaces as Unavailable naming the variable
+            // (fail-closed, never a silent default directory).
             let var = if row.endpoint_ref.starts_with("legacy_") {
                 "I0721_MEDIA_ROOT".to_owned()
             } else {
                 format!("I0721_BUCKET_{prefix}_ROOT")
             };
-            let Some(root) = lookup(&var).or_else(|| {
-                (var == "I0721_MEDIA_ROOT").then(|| crate::config::DEFAULT_MEDIA_ROOT.to_owned())
-            }) else {
+            let Some(root) = lookup(&var) else {
                 return Ok(missing(&var));
             };
             match LocalBlobStore::open(std::path::Path::new(&root)) {
@@ -423,6 +460,10 @@ mod tests {
     use jiff::Timestamp;
 
     fn bucket(slug: &str, backend: BucketBackend, endpoint_ref: &str, enabled: bool) -> StorageBucketRecord {
+        bucket_full(slug, backend, endpoint_ref, enabled, true)
+    }
+
+    fn bucket_full(slug: &str, backend: BucketBackend, endpoint_ref: &str, enabled: bool, is_bootstrap: bool) -> StorageBucketRecord {
         StorageBucketRecord {
             id: uuid::Uuid::new_v4(),
             slug: slug.to_owned(),
@@ -433,7 +474,7 @@ mod tests {
             anonymous_read: true,
             grant_on_signup: false,
             enabled,
-            is_bootstrap: true,
+            is_bootstrap,
             created_at: Timestamp::now(),
         }
     }
@@ -465,7 +506,7 @@ mod tests {
     /// `blob_registry_never_falls_back_to_another_bucket`.)
     #[test]
     fn a_null_row_never_resolves_to_an_unrelated_ready_bucket() {
-        let ready = bucket("other", BucketBackend::Local, "x", true);
+        let ready = bucket_full("other", BucketBackend::Local, "x", true, false);
         let disabled = bucket("bootstrap-local", BucketBackend::Local, "legacy_local_env", false);
         let registry = BlobRegistry::build(vec![ready, disabled], |_| None).unwrap();
         assert!(matches!(
@@ -484,7 +525,7 @@ mod tests {
         let row = row_of(None);
         let err = registry.for_row(&row).err().unwrap();
         match err {
-            BlobError::Unavailable { slug, .. } => assert_eq!(slug, "bootstrap-local"),
+            BlobError::Unavailable { slug, .. } => assert_eq!(slug, "own"),
             other => panic!("expected Unavailable, got {other:?}"),
         }
     }

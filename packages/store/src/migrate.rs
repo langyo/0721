@@ -459,14 +459,15 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
     out
 }
 
-/// Format the bootstrap half of 0007. The runner's SQL lane cannot bind
+/// Format the bootstrap half of 0007 (PUB for the PG lane: the tests
+/// re-run exactly this text against hand-planted shapes). The runner's SQL lane cannot bind
 /// parameters, so the deployment facts (backend label, location, minted
 /// id) are formatted in from Rust — same precedent as migration 0002's
 /// `format!` JSON. The backend label is a CHECK-constrained tag with a
 /// fixed shape (validated by [`bootstrap_backend_for_startup`]'s caller),
 /// and the location is dollar-quoted as data so an arbitrary env value
 /// cannot break out of the literal.
-fn bootstrap_sql(bootstrap: &BootstrapBucketParams) -> String {
+pub fn bootstrap_sql(bootstrap: &BootstrapBucketParams) -> String {
     MIGRATION_0007_BOOTSTRAP_SQL
         .replace("$1", &format!("'{}'::uuid", bootstrap.id))
         .replace("$2", &format!("$loc${}$loc$", bootstrap.location))

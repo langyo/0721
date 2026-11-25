@@ -183,17 +183,12 @@ pub async fn run_upload(
         .registry
         .bootstrap_store()
         .map_err(|err| ApiError::internal(format!("storage backend unavailable: {err}")))?;
-    let bootstrap = state
-        .store
-        .list_storage_buckets()
-        .await?
-        .into_iter()
-        .filter(|b| b.enabled && b.is_bootstrap)
-        .min_by_key(|b| (b.created_at, b.slug.clone()));
-    let storage_backend = bootstrap
-        .as_ref()
-        .map(|b| b.backend.as_str().to_owned())
-        .ok_or_else(|| ApiError::internal("no bootstrap bucket in the registry"))?;
+    let storage_backend = state
+        .registry
+        .bootstrap_backend_tag()
+        .map_err(|err| ApiError::internal(format!("storage backend unavailable: {err}")))?
+        .as_str()
+        .to_owned();
     let storage_key = processed.sha256.clone();
     let thumbnail_key = processed
         .thumbnail

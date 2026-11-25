@@ -55,7 +55,19 @@ impl AppState {
         blobs: Arc<dyn BlobStore>,
         config: Arc<Config>,
     ) -> Self {
-        Self::with_registry(store, BlobRegistry::single(blobs.clone()), config, blobs)
+        Self::with_registry(
+            store,
+            BlobRegistry::single_tagged(
+                blobs.clone(),
+                config
+                    .storage_backend
+                    .as_deref()
+                    .and_then(i0721_proto::BucketBackend::parse)
+                    .unwrap_or(i0721_proto::BucketBackend::Local),
+            ),
+            config,
+            blobs,
+        )
     }
 
     /// Assemble a state from an explicit registry (production path).
