@@ -3957,10 +3957,7 @@ async fn upload_bucket(
     let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
         .await
         .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or_default(),
-    )
+    (status, serde_json::from_slice(&bytes).unwrap_or_default())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8669,7 +8666,10 @@ async fn health_reports_unreadable_settings_instead_of_default() {
     // every row's state must carry the honest "unreadable" tag — not a
     // silent "absent"/"default" fallback.
     let settings = json["settings"].as_array().expect("a settings array");
-    assert!(!settings.is_empty(), "the settings array is present: {json}");
+    assert!(
+        !settings.is_empty(),
+        "the settings array is present: {json}"
+    );
     for row in settings {
         assert_eq!(
             row["state"], "unreadable",
@@ -10154,7 +10154,7 @@ async fn mcp_upload_file_with_a_bucket_outside_the_key_answers_the_32001_frame()
 /// `get_share_link`'s precheck (mcp.rs) turns this red.
 #[tokio::test]
 async fn mcp_get_share_link_without_the_user_share_bit_answers_the_32005_frame() {
-    let (base_state, admin_token) = test_state_with_token().await;
+    let (base_state, _admin_token) = test_state_with_token().await;
     let (state, second_id, _store) = plant_second_bucket(&base_state, "share-gated", true);
     // The store row MUST carry the registry's id (bucket_row_for_id
     // prefers the store's rows; a mismatched id would fall through to
@@ -10194,8 +10194,14 @@ async fn mcp_get_share_link_without_the_user_share_bit_answers_the_32005_frame()
         .await
         .unwrap();
     let member_token = state.signer.sign(member.id, Timestamp::now());
-    let (_, own) = upload_bucket(&state, &member_token, png_of(4, 4), "mine.png", "share-gated")
-        .await;
+    let (_, own) = upload_bucket(
+        &state,
+        &member_token,
+        png_of(4, 4),
+        "mine.png",
+        "share-gated",
+    )
+    .await;
     let file_id = own["id"].as_str().unwrap().to_owned();
 
     // The member's OWN key: ops include share, buckets include
