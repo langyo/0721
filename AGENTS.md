@@ -23,6 +23,14 @@
 - **存储**：桶登记表（`storage_buckets`）+ 每行 `files.bucket_id`——字节读写按行路由到该行自己的桶；
   `I0721_STORAGE_BACKEND` 只在首次执行桶迁移的启动时必读（0007 建出 `bootstrap-<backend>` 引导桶并回填全部行），此后忽略；
   旧标签的行留在停用的遗留引导桶里，状态与原因见 `/api/health`。后端 = local | s3（`object_store` ^0.12）| ipfs（kubo RPC + MFS）。
+- **匿名直链（R-J，P2b 起生效）**：同一 storage_key 可同时落在公开桶与私有桶——`/media/{key}` 的判定是**集合谓词**：
+  A =「∃ 活行位于 `anonymous_read = TRUE` 的桶」（不看 enabled）。匿名只会得到 200 或 404（无 403/503 预言机）；
+  会话/API key 走 `authorized_rows`（A 见证行 ∪ 对请求者有 `Read` 的行；key 另须该桶 ∈ key 的 `buckets`，调用时求交），
+  服务行 = `id ASC` 第一个 `Ready ∧ enabled` 的行，没有 → 503；`authorized_rows` 空但有可见无读的桶 → 403。
+  **缓存头**（R-S）：2xx ∧ A = `public, max-age=31536000, immutable`；2xx ∧ ¬A = `private, no-store`；非 2xx 一律 `no-store`。
+  **缓存不可撤回**：`anonymous_read` 关闭不能撤回已发出的公开缓存——应急撤图必须删对象或删行（README 同款警告）。
+  **分享不受变私影响**（R-D）：桶变私 / 撤属主授权都不影响已发出的分享（字节按行路由）；`files.share_list` 照列；新建分享仍需当次分享权。
+  **桶凭据 `s3:*`**：桶凭据 = 该桶 ARN 上的 `s3:*`（含 ListBucket），用户级授权全在 `bucket_grants`——凭据策略错配会越过授权面（README 写明）。
 - **webui**：hikari Vue/TS，**家族范式对齐**（2026-11-23 webui 波次；参照 ayane 的迭代）：
   `HkAdminShell` 四槽壳（header/sidebar/content/footer）+ 分组侧边栏（内容/接入/管理，管理组 admin 专属）
   + `HkAdminHeader` 身份面（头像账户窗/语言级联/登出）+ `HkStatusBar` 页脚（面板版本+引擎身份+传输探针）
