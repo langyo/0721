@@ -16,21 +16,43 @@ use uuid::Uuid;
 use crate::{CreateUser, Store, StoreError};
 use i0721_proto::ShareRecord;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Inner {
     users: Vec<UserRecord>,
     files: Vec<FileRecord>,
     settings: HashMap<String, serde_json::Value>,
+    /// Raw settings text (test fixtures only): a `Some` entry here makes
+    /// `settings_state` read THIS text instead of the parsed map, so a
+    /// test can plant a corrupt payload the typed `set_setting` cannot.
+    settings_raw: HashMap<String, String>,
     oauth_identities: Vec<(String, String, Uuid)>,
     shares: Vec<i0721_proto::ShareRecord>,
     api_keys: Vec<i0721_proto::ApiKeyRecord>,
     buckets: Vec<i0721_proto::StorageBucketRecord>,
+    grants: Vec<i0721_proto::BucketGrantRecord>,
 }
 
 /// The in-memory [`Store`].
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     inner: Mutex<Inner>,
+}
+
+// A snapshot Clone for test fixtures: a cloned handle starts from the
+// SAME rows the original held at clone time (a wrapper mock wrapping a
+// cloned handle sees the rows the fixture seeded through the original;
+// later writes diverge, which is what a fixture wants).
+impl Clone for MemoryStore {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Mutex::new(
+                self.inner
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            ),
+        }
+    }
 }
 
 impl MemoryStore {
@@ -50,6 +72,16 @@ impl MemoryStore {
     pub fn seed_bucket(&self, bucket: i0721_proto::StorageBucketRecord) {
         self.inner.lock().unwrap().buckets.push(bucket);
     }
+
+    /// Plant a RAW settings text that `settings_state` serves verbatim —
+    /// the corrupt-payload fixture the typed `set_setting` cannot build.
+    pub fn seed_raw_setting(&self, key: &str, raw: &str) {
+        self.inner
+            .lock()
+            .unwrap()
+            .settings_raw
+            .insert(key.to_owned(), raw.to_owned());
+    }
 }
 
 fn lock_err(poisoned: impl std::fmt::Display) -> StoreError {
@@ -60,8 +92,36 @@ fn conflict(reason: impl Into<String>) -> StoreError {
     StoreError::Conflict(reason.into())
 }
 
+/// Parse a scopes text's `buckets` array the SAME way the server's
+/// fail-closed interpreter does: a well-formed string array of ≤ 64
+/// entries answers the set; anything else answers `None` (the memory
+/// twin of `parse_scopes_buckets` — the store cannot depend on the
+/// server crate, so the shape is mirrored here and pinned equal by the
+/// round-trip test).
+fn scopes_buckets(raw: &str) -> Option<std::collections::BTreeSet<String>> {
+    const MAX_BUCKETS: usize = 64;
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    let buckets = value.get("buckets")?.as_array()?;
+    if buckets.len() > MAX_BUCKETS {
+        return None;
+    }
+    let mut out = std::collections::BTreeSet::new();
+    for entry in buckets {
+        let slug = entry.as_str()?;
+        if slug.is_empty() {
+            return None;
+        }
+        out.insert(slug.to_owned());
+    }
+    Some(out)
+}
+
 #[async_trait::async_trait]
 impl Store for MemoryStore {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     async fn list_users(&self, offset: u64, limit: u64) -> Result<Vec<UserRecord>, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let mut users = inner.users.clone();
@@ -128,12 +188,20 @@ impl Store for MemoryStore {
         Ok(inner.users.len() != before)
     }
 
-    async fn list_files(&self, offset: u64, limit: u64) -> Result<Vec<FileRecord>, StoreError> {
+    async fn list_files(
+        &self,
+        buckets: Option<&[Uuid]>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let mut files: Vec<FileRecord> = inner
             .files
             .iter()
-            .filter(|file| file.deleted_at.is_none())
+            .filter(|file| {
+                file.deleted_at.is_none()
+                    && buckets.is_none_or(|set| file.bucket_id.is_none_or(|b| set.contains(&b)))
+            })
             .cloned()
             .collect();
         files.sort_by_key(|file| std::cmp::Reverse(file.created_at));
@@ -161,14 +229,17 @@ impl Store for MemoryStore {
             .count() as u64)
     }
 
-    async fn count_files(&self) -> Result<u64, StoreError> {
+    async fn count_files(&self, buckets: Option<&[Uuid]>) -> Result<u64, StoreError> {
         Ok(self
             .inner
             .lock()
             .map_err(lock_err)?
             .files
             .iter()
-            .filter(|file| file.deleted_at.is_none())
+            .filter(|file| {
+                file.deleted_at.is_none()
+                    && buckets.is_none_or(|set| file.bucket_id.is_none_or(|b| set.contains(&b)))
+            })
             .count() as u64)
     }
 
@@ -239,6 +310,161 @@ impl Store for MemoryStore {
             .iter()
             .find(|b| b.slug == slug)
             .cloned())
+    }
+
+    async fn upsert_storage_bucket(
+        &self,
+        slug: &str,
+        display_name: &str,
+        anonymous_read: bool,
+        grant_on_signup: bool,
+        enabled: bool,
+    ) -> Result<i0721_proto::StorageBucketRecord, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let row = inner
+            .buckets
+            .iter_mut()
+            .find(|b| b.slug == slug)
+            .ok_or_else(|| conflict(format!("no such bucket: {slug}")))?;
+        row.display_name = display_name.to_owned();
+        row.anonymous_read = anonymous_read;
+        row.grant_on_signup = grant_on_signup;
+        row.enabled = enabled;
+        Ok(row.clone())
+    }
+
+    async fn delete_storage_bucket(&self, id: Uuid) -> Result<bool, StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let before = inner.buckets.len();
+        inner.buckets.retain(|b| b.id != id);
+        // Grant rows cascade with the bucket (the FK's ON DELETE CASCADE).
+        inner.grants.retain(|g| g.bucket_id != id);
+        Ok(inner.buckets.len() != before)
+    }
+
+    async fn count_live_files_by_bucket(&self, bucket_id: Option<Uuid>) -> Result<u64, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .files
+            .iter()
+            .filter(|f| f.deleted_at.is_none() && f.bucket_id == bucket_id)
+            .count() as u64)
+    }
+
+    async fn get_file_by_owner_bucket_and_sha256(
+        &self,
+        owner_id: Uuid,
+        bucket_id: Option<Uuid>,
+        sha256: &str,
+    ) -> Result<Option<FileRecord>, StoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(lock_err)?
+            .files
+            .iter()
+            .find(|f| {
+                f.deleted_at.is_none()
+                    && f.owner_id == owner_id
+                    && f.bucket_id == bucket_id
+                    && f.sha256 == sha256
+            })
+            .cloned())
+    }
+
+    async fn get_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+    ) -> Result<Option<i0721_proto::BucketGrantRecord>, StoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(lock_err)?
+            .grants
+            .iter()
+            .find(|g| g.user_id == user_id && g.bucket_id == bucket_id)
+            .cloned())
+    }
+
+    async fn set_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+        can_read: bool,
+        can_write: bool,
+        can_share: bool,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        if let Some(row) = inner
+            .grants
+            .iter_mut()
+            .find(|g| g.user_id == user_id && g.bucket_id == bucket_id)
+        {
+            row.can_read = can_read;
+            row.can_write = can_write;
+            row.can_share = can_share;
+            return Ok(());
+        }
+        inner.grants.push(i0721_proto::BucketGrantRecord {
+            user_id,
+            bucket_id,
+            can_read,
+            can_write,
+            can_share,
+            created_at: Timestamp::now(),
+        });
+        Ok(())
+    }
+
+    async fn list_bucket_grants_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .grants
+            .iter()
+            .filter(|g| g.user_id == user_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn list_bucket_grants_for_bucket(
+        &self,
+        bucket_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .grants
+            .iter()
+            .filter(|g| g.bucket_id == bucket_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn settings_state(&self, key: &str) -> Result<crate::SettingsState, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        if let Some(raw) = inner.settings_raw.get(key) {
+            return Ok(serde_json::from_str::<serde_json::Value>(raw)
+                .map(crate::SettingsState::Value)
+                .unwrap_or_else(|_| crate::SettingsState::Corrupt { raw: raw.clone() }));
+        }
+        match inner.settings.get(key) {
+            None => Ok(crate::SettingsState::Absent),
+            Some(value) => Ok(crate::SettingsState::Value(value.clone())),
+        }
+    }
+
+    async fn a_live_key_references_bucket_slug(&self, slug: &str) -> Result<bool, StoreError> {
+        // The memory twin of `BUCKET_KEY_REFERENCE_SQL`: live keys only,
+        // and only the well-formed `buckets` arrays count (fail-closed
+        // on malformed scopes — a corrupt row never blocks a delete).
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner.api_keys.iter().any(|key| {
+            key.revoked_at.is_none()
+                && scopes_buckets(&key.scopes).is_some_and(|set| set.contains(slug))
+        }))
     }
 
     async fn create_file(&self, file: NewFile) -> Result<FileRecord, StoreError> {
@@ -523,6 +749,7 @@ impl Store for MemoryStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
     ) -> Result<u64, StoreError> {
         let inner = self.inner.lock().map_err(lock_err)?;
         let n = inner
@@ -533,6 +760,11 @@ impl Store for MemoryStore {
                     && f.owner_id == owner_id
                     && f.parent_id == parent_id
                     && kind.as_deref().is_none_or(|k| f.kind.as_str() == k)
+                    // §7 pushdown: rows outside the visible set vanish
+                    // from the count (Q14: items AND total shrink).
+                    && buckets.is_none_or(|set| {
+                        f.bucket_id.is_none_or(|b| set.contains(&b))
+                    })
             })
             .count();
         Ok(n as u64)
@@ -543,6 +775,7 @@ impl Store for MemoryStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
         offset: u64,
         limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError> {
@@ -555,6 +788,7 @@ impl Store for MemoryStore {
                     && f.owner_id == owner_id
                     && f.parent_id == parent_id
                     && kind.as_ref().is_none_or(|k| *k == f.kind.as_str())
+                    && buckets.is_none_or(|set| f.bucket_id.is_none_or(|b| set.contains(&b)))
             })
             .cloned()
             .collect();
@@ -884,7 +1118,7 @@ mod tests {
         let a = store.create_file(new_file(owner.id, "aa")).await.unwrap();
         store.create_file(new_file(owner.id, "bb")).await.unwrap();
 
-        assert_eq!(store.count_files().await.unwrap(), 2);
+        assert_eq!(store.count_files(None).await.unwrap(), 2);
         assert!(
             store.create_file(new_file(owner.id, "aa")).await.is_err(),
             "the same owner's live duplicate hash is rejected"
@@ -895,7 +1129,7 @@ mod tests {
             !store.soft_delete_file(a.id).await.unwrap(),
             "the guarded update marks 0 rows the second time"
         );
-        assert_eq!(store.count_files().await.unwrap(), 1);
+        assert_eq!(store.count_files(None).await.unwrap(), 1);
         assert!(store.get_file(a.id).await.unwrap().is_none());
         assert!(
             store.create_file(new_file(owner.id, "aa")).await.is_ok(),
@@ -1041,6 +1275,6 @@ mod tests {
         let owner = store.create_user(new_user("u")).await.unwrap();
         store.create_file(new_file(owner.id, "aa")).await.unwrap();
         assert!(store.delete_user(owner.id).await.unwrap());
-        assert_eq!(store.count_files().await.unwrap(), 0);
+        assert_eq!(store.count_files(None).await.unwrap(), 0);
     }
 }

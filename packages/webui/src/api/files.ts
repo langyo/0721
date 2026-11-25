@@ -3,13 +3,23 @@ import type { FileDto, PageResult, QuotaInfo, ShareDto } from "@/types";
 import { wsCall } from "@/composables/useJsonRpc";
 import { apiUpload } from "./client";
 
-export function listFolder(folderId: string | null, kind?: string, offset = 0, limit = 100): Promise<PageResult<FileDto>> {
+/** `bucket` is the §7 pushdown's explicit slug (P2a): the server filters
+ *  rows AND total to that visible bucket (an invisible/unreadable slug
+ *  answers an empty page — never an error). */
+export function listFolder(
+  folderId: string | null,
+  kind?: string,
+  offset = 0,
+  limit = 100,
+  bucket?: string,
+): Promise<PageResult<FileDto>> {
   return wsCall<PageResult<FileDto>>("files.list", {
     scope: "own",
     folder_id: folderId,
     offset,
     limit,
     ...(kind ? { kind } : {}),
+    ...(bucket ? { bucket } : {}),
   });
 }
 
@@ -18,6 +28,8 @@ export interface ChainEntry {
   name: string;
 }
 
+/** `files.chain` gates on the TARGET folder's own bucket (§7's column);
+ *  the chosen root needs no extra param here. */
 export function folderChain(folderId: string): Promise<ChainEntry[]> {
   return wsCall<ChainEntry[]>("files.chain", { folder_id: folderId });
 }
@@ -42,8 +54,18 @@ export function deleteFile(id: string): Promise<void> {
   return wsCall<void>("files.delete", { id });
 }
 
-export function uploadTo(file: File, folderId: string | null, onProgress?: (f: number) => void): Promise<void> {
-  const query = folderId ? `?folder_id=${encodeURIComponent(folderId)}` : "";
+/** Multipart upload into the netdisk tree. `bucket` is the R-I override
+ *  (`?bucket=<slug>`); when absent the server resolves the default. */
+export function uploadTo(
+  file: File,
+  folderId: string | null,
+  onProgress?: (f: number) => void,
+  bucket?: string,
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (folderId) params.set("folder_id", folderId);
+  if (bucket) params.set("bucket", bucket);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
   return apiUpload(`/api/v1/files${query}`, file, onProgress);
 }
 

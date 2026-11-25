@@ -1,0 +1,76 @@
+/* The bucket registry page (admin). */
+.buckets-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.bucket-slug-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.bucket-slug {
+  font-family: var(--hk-font-mono, monospace);
+  font-size: 0.9rem;
+}
+
+.bucket-display {
+  color: var(--hk-text-muted, inherit);
+  font-size: 0.8rem;
+}
+
+.bucket-flags {
+  display: inline-flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.bucket-row-actions {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.bucket-defaults {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 22rem;
+}
+
+.defaults-label {
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.grant-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.grant-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.grant-name {
+  min-width: 8rem;
+  font-size: 0.9rem;
+}
+
+.grant-bit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.grant-empty,
+.grant-hint {
+  font-size: 0.8rem;
+  color: var(--hk-text-muted, inherit);
+}

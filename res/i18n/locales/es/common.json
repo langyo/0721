@@ -48,7 +48,9 @@
     "uploading": "Subiendo {name}",
     "uploadFailed": "Error al subir",
     "deleteConfirm": "¿Eliminar este archivo? Su enlace público dejará de funcionar.",
-    "openOriginal": "Abrir original"
+    "openOriginal": "Abrir original",
+    "uploadBucket": "Subir al cubo",
+    "uploadDefaultBucket": "Por defecto (fijado por admin)"
   },
   "users": {
     "title": "Usuarios",
@@ -148,7 +150,10 @@
     "kind": "Tipo",
     "kindFolder": "Carpeta",
     "details": "Detalles",
-    "pickHint": "Selecciona un elemento para verlo"
+    "pickHint": "Selecciona un elemento para verlo",
+    "noReadPermission": "sin permiso de lectura",
+    "bucketRoot": "Raíz del cubo",
+    "bucketAll": "Todos los cubos"
   },
   "keys": {
     "title": "Claves API",
@@ -180,7 +185,12 @@
     "edit": "Editar clave API",
     "updated": "Clave API actualizada",
     "opsRequired": "Selecciona al menos un permiso",
-    "expiryFuture": "La caducidad debe ser futura"
+    "expiryFuture": "La caducidad debe ser futura",
+    "buckets": "Cubos",
+    "bucketsHint": "Sin selección = explícitamente sin cubos. Guardar sin seleccionar congela los permisos actuales en el servidor.",
+    "noBuckets": "sin cubos",
+    "noBucketsAvailable": "No hay cubos registrados — la clave no tendrá ninguno hasta que exista uno.",
+    "noBucketsPicked": "ningún cubo elegido"
   },
   "menu": {
     "account": "Cuenta"
@@ -198,5 +208,37 @@
     "author": "伊欧",
     "copyright": "Celestia Island",
     "engineVersion": "Versión del motor"
+  },
+  "buckets": {
+    "title": "Cubos",
+    "create": "Crear cubo",
+    "empty": "No hay cubos registrados",
+    "slug": "Slug",
+    "displayName": "Nombre visible",
+    "backend": "Backend",
+    "backend_local": "Local",
+    "backend_s3": "S3",
+    "backend_ipfs": "IPFS",
+    "flags": "Marcas",
+    "anonymousRead": "Lectura anónima",
+    "grantOnSignup": "Permisos por defecto al registrarse",
+    "bootstrap": "Arranque",
+    "enabled": "Habilitado",
+    "disabled": "Deshabilitado",
+    "edit": "Editar cubo",
+    "saved": "Cubo guardado",
+    "deleted": "Cubo eliminado",
+    "deleteConfirm": "¿Eliminar el cubo {slug}? Sus filas de permisos desaparecen con él.",
+    "defaultBucket": "Cubo de subida por defecto",
+    "defaultUnset": "sin definir",
+    "defaultSaved": "Cubo de subida por defecto guardado",
+    "grants": "Permisos",
+    "grantsTitle": "Permisos de {slug}",
+    "grant_read": "Leer",
+    "grant_write": "Escribir",
+    "grant_share": "Compartir",
+    "grantSaved": "Permisos guardados",
+    "grantHint": "Guardar los tres interruptores apagados escribe una fila de denegación explícita — sigue denegando aunque el cubo se abra por defecto más tarde.",
+    "noMembers": "No hay miembros a quienes dar permisos."
   }
 }

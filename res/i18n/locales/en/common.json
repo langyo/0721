@@ -48,7 +48,9 @@
     "uploading": "Uploading {name}",
     "uploadFailed": "Upload failed",
     "deleteConfirm": "Delete this file? Its public link stops working.",
-    "openOriginal": "Open original"
+    "openOriginal": "Open original",
+    "uploadBucket": "Upload to bucket",
+    "uploadDefaultBucket": "Default (admin-set)"
   },
   "users": {
     "title": "Users",
@@ -148,7 +150,10 @@
     "kind": "Kind",
     "kindFolder": "Folder",
     "details": "Details",
-    "pickHint": "Select an item to inspect it"
+    "pickHint": "Select an item to inspect it",
+    "noReadPermission": "no read permission",
+    "bucketRoot": "Bucket root",
+    "bucketAll": "All buckets"
   },
   "keys": {
     "title": "API Keys",
@@ -180,7 +185,12 @@
     "edit": "Edit API key",
     "updated": "API key updated",
     "opsRequired": "Select at least one permission",
-    "expiryFuture": "Expiry must be in the future"
+    "expiryFuture": "Expiry must be in the future",
+    "buckets": "Buckets",
+    "bucketsHint": "Empty selection = no buckets (explicit). Leave this dialog without picking to let the server snapshot the current grants.",
+    "noBuckets": "no buckets",
+    "noBucketsAvailable": "No buckets registered — the key will have none until one exists.",
+    "noBucketsPicked": "no buckets picked"
   },
   "menu": {
     "account": "Account"
@@ -198,5 +208,37 @@
     "author": "伊欧",
     "copyright": "Celestia Island",
     "engineVersion": "Engine version"
+  },
+  "buckets": {
+    "title": "Buckets",
+    "create": "Create bucket",
+    "empty": "No buckets registered",
+    "slug": "Slug",
+    "displayName": "Display name",
+    "backend": "Backend",
+    "backend_local": "Local",
+    "backend_s3": "S3",
+    "backend_ipfs": "IPFS",
+    "flags": "Flags",
+    "anonymousRead": "Anonymous read",
+    "grantOnSignup": "Default grants on signup",
+    "bootstrap": "Bootstrap",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "edit": "Edit bucket",
+    "saved": "Bucket saved",
+    "deleted": "Bucket deleted",
+    "deleteConfirm": "Delete bucket {slug}? Its grant rows go with it.",
+    "defaultBucket": "Default upload bucket",
+    "defaultUnset": "not set",
+    "defaultSaved": "Default upload bucket saved",
+    "grants": "Grants",
+    "grantsTitle": "Grants on {slug}",
+    "grant_read": "Read",
+    "grant_write": "Write",
+    "grant_share": "Share",
+    "grantSaved": "Grants saved",
+    "grantHint": "Saving all three switches off writes an explicit deny row — it stays a deny even if this bucket later becomes default-open.",
+    "noMembers": "No members to grant."
   }
 }

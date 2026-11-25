@@ -20,6 +20,7 @@ import { RouterLink } from "vue-router";
 
 import * as files from "@/api/files";
 import type { ChainEntry } from "@/api/files";
+import { listBuckets, type StorageBucket } from "@/api/buckets";
 import { useActionBar } from "@/composables/useActionBar";
 import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
@@ -47,6 +48,51 @@ export default defineComponent({
       return typeof id === "string" && id ? id : null;
     });
 
+    // ── the per-bucket root (P2a) ──────────────────────────────────────
+    //
+    // The tree's root selector lists the actor's VISIBLE buckets from
+    // the visibility-scoped `storage.buckets.list` (Q14: visibility by
+    // any grant bit — `enabled` does not filter). A bucket the actor
+    // cannot READ stays in the selector marked「无读取权限」per §7's
+    // files.list row (its rows never list). The chosen slug rides every
+    // files.list / files.chain call and the upload's `?bucket=`.
+    // MUT:B-P2A-ROOT-PARAM — dropping the slug from the list call turns
+    // the wire test red.
+    const buckets = ref<StorageBucket[]>([]);
+    const selectedBucket = ref<string>("");
+    const bucketsLoading = ref(false);
+
+    const bucketOptions = computed(() => [
+      ...buckets.value.map((b) => ({
+        value: b.slug,
+        label:
+          b.my_access && !b.my_access.read
+            ? `${b.slug} — ${t("common.files.noReadPermission")}`
+            : b.slug,
+      })),
+    ]);
+
+    async function loadBuckets() {
+      bucketsLoading.value = true;
+      try {
+        buckets.value = (await listBuckets()).buckets;
+        // Keep the selection only while it stays visible; otherwise the
+        // first readable bucket (empty slug = the plain root).
+        if (selectedBucket.value && !buckets.value.some((b) => b.slug === selectedBucket.value)) {
+          selectedBucket.value = "";
+        }
+      } catch {
+        // A failed registry read degrades to the plain root (no slug on
+        // the wire) — never a broken file page.
+        buckets.value = [];
+        selectedBucket.value = "";
+      } finally {
+        bucketsLoading.value = false;
+      }
+    }
+
+    onMounted(() => void loadBuckets());
+
     // Quota display.
     const quotaUsed = ref(0);
     const quotaLimit = ref<number | null>(null);
@@ -54,7 +100,9 @@ export default defineComponent({
     async function load() {
       loading.value = true;
       try {
-        items.value = (await files.listFolder(folderId.value)).items;
+        items.value = (
+          await files.listFolder(folderId.value, undefined, 0, 100, selectedBucket.value || undefined)
+        ).items;
         // The pane holds an OBJECT: a reload that drops its row (deleted
         // elsewhere, moved by another tab) must not keep rendering it.
         if (selected.value && !items.value.some((f) => f.id === selected.value?.id)) {
@@ -76,6 +124,12 @@ export default defineComponent({
       // A new folder is a new roster; the pane must not keep the parent's row.
       selected.value = null;
       void load();
+    });
+    // A new bucket root is a new roster too (per-bucket trees are disjoint).
+    watch(selectedBucket, () => {
+      selected.value = null;
+      if (folderId.value) void router.push("/files");
+      else void load();
     });
     usePageRefresh(() => load(), { loading });
 
@@ -134,7 +188,7 @@ export default defineComponent({
         try {
           await files.uploadTo(f, folderId.value, (frac) => {
             uploadProgress.value.set(key, frac);
-          });
+          }, selectedBucket.value || undefined);
           uploadProgress.value.delete(key);
         } catch {
           uploadProgress.value.delete(key);
@@ -312,6 +366,21 @@ export default defineComponent({
     return () => (
       <section class="files-page">
         <input ref={fileInput} type="file" multiple hidden onChange={onFilesPicked} />
+
+        {/* The per-bucket root selector (P2a): every visible bucket, the
+            unreadable one marked「无读取权限」(§7's files.list row). */}
+        {bucketOptions.value.length > 0 ? (
+          <div class="bucket-root" data-testid="bucket-root">
+            <HkSelect
+              modelValue={selectedBucket.value}
+              options={bucketOptions.value}
+              panelTitle={t("common.files.bucketRoot")}
+              placeholder={t("common.files.bucketAll")}
+              data-testid="bucket-root-select"
+              onUpdate:modelValue={(v: string) => (selectedBucket.value = v)}
+            />
+          </div>
+        ) : null}
 
         {/* Breadcrumb */}
         <nav class="breadcrumb" aria-label={t("common.files.breadcrumbRoot")}>

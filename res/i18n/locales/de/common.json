@@ -48,7 +48,9 @@
     "uploading": "{name} wird hochgeladen",
     "uploadFailed": "Hochladen fehlgeschlagen",
     "deleteConfirm": "Diese Datei löschen? Der öffentliche Link stoppt dann.",
-    "openOriginal": "Original öffnen"
+    "openOriginal": "Original öffnen",
+    "uploadBucket": "In Bucket hochladen",
+    "uploadDefaultBucket": "Standard (vom Admin gesetzt)"
   },
   "users": {
     "title": "Benutzer",
@@ -148,7 +150,10 @@
     "kind": "Art",
     "kindFolder": "Ordner",
     "details": "Details",
-    "pickHint": "Wähle ein Element, um es anzusehen"
+    "pickHint": "Wähle ein Element, um es anzusehen",
+    "noReadPermission": "keine Leseberechtigung",
+    "bucketRoot": "Bucket-Wurzel",
+    "bucketAll": "Alle Buckets"
   },
   "keys": {
     "title": "API-Schlüssel",
@@ -180,7 +185,12 @@
     "edit": "API-Schlüssel bearbeiten",
     "updated": "API-Schlüssel aktualisiert",
     "opsRequired": "Wählen Sie mindestens eine Berechtigung",
-    "expiryFuture": "Der Ablauf muss in der Zukunft liegen"
+    "expiryFuture": "Der Ablauf muss in der Zukunft liegen",
+    "buckets": "Buckets",
+    "bucketsHint": "Keine Auswahl = explizit keine Buckets. Ohne Auswahl zu speichern lässt den Server die aktuellen Rechte einfrieren.",
+    "noBuckets": "keine Buckets",
+    "noBucketsAvailable": "Keine Buckets registriert — der Key hat keine, bis einer existiert.",
+    "noBucketsPicked": "keine Buckets gewählt"
   },
   "menu": {
     "account": "Konto"
@@ -198,5 +208,37 @@
     "author": "伊欧",
     "copyright": "Celestia Island",
     "engineVersion": "Engine-Version"
+  },
+  "buckets": {
+    "title": "Buckets",
+    "create": "Bucket anlegen",
+    "empty": "Keine Buckets registriert",
+    "slug": "Slug",
+    "displayName": "Anzeigename",
+    "backend": "Backend",
+    "backend_local": "Lokal",
+    "backend_s3": "S3",
+    "backend_ipfs": "IPFS",
+    "flags": "Kennzeichen",
+    "anonymousRead": "Anonym lesbar",
+    "grantOnSignup": "Standardrechte bei Anmeldung",
+    "bootstrap": "Bootstrap",
+    "enabled": "Aktiv",
+    "disabled": "Deaktiviert",
+    "edit": "Bucket bearbeiten",
+    "saved": "Bucket gespeichert",
+    "deleted": "Bucket gelöscht",
+    "deleteConfirm": "Bucket {slug} löschen? Seine Berechtigungszeilen fallen mit weg.",
+    "defaultBucket": "Standard-Upload-Bucket",
+    "defaultUnset": "nicht gesetzt",
+    "defaultSaved": "Standard-Upload-Bucket gespeichert",
+    "grants": "Rechte",
+    "grantsTitle": "Rechte auf {slug}",
+    "grant_read": "Lesen",
+    "grant_write": "Schreiben",
+    "grant_share": "Teilen",
+    "grantSaved": "Rechte gespeichert",
+    "grantHint": "Werden alle drei Schalter ausgeschaltet gespeichert, entsteht eine explizite Ablehnungszeile — sie bleibt eine Ablehnung, auch wenn dieser Bucket später standardmäßig offen wird.",
+    "noMembers": "Keine Mitglieder zum Berechtigen."
   }
 }

@@ -55,7 +55,9 @@ use i0721_proto::{FileDto, FileKind, KeyOp, NewShare};
 
 use crate::api::upload_core::{run_upload, UploadInput};
 use crate::error::ApiError;
-use crate::key_scopes::{authorize, is_live, parse_scopes, required_op, Denial, Live};
+use crate::key_scopes::{
+    authorize, is_live, parse_scopes, parse_scopes_buckets, required_op, Denial, Live,
+};
 use crate::state::AppState;
 
 /// Session TTL and cap (chest-matched).
@@ -618,6 +620,10 @@ pub fn tool_specs() -> Value {
                     "folder_id": {
                         "type": "string",
                         "description": "destination folder UUID; omit for the root folder"
+                    },
+                    "bucket": {
+                        "type": "string",
+                        "description": "target bucket slug; omit for the deployment's default bucket"
                     }
                 },
                 "required": ["content_base64", "name"]
@@ -685,6 +691,186 @@ pub fn tool_specs() -> Value {
     ])
 }
 
+/// The outcome of the §7 three-state bucket pre-check: the call may
+/// proceed (with the resolved bucket loaded for the tool body), or the
+/// call fails as a TOOL error (`isError` result), or the frame itself
+/// fails with a JSON-RPC error (the `-32001` permission refusals).
+enum Precheck {
+    /// Run the tool; the resolved bucket context rides along (the tool
+    /// body re-fetches NOTHING — §4: one decision, one row set).
+    Allow(Option<ResolvedBucket>),
+    /// The tool fails with this text (`isError: true`).
+    ToolError(String),
+    /// The frame fails with this JSON-RPC error (code + message).
+    Frame(RpcFault),
+}
+
+/// The bucket row + id the pre-check resolved (passed INTO the tool
+/// body so no second fetch can race a grant revocation mid-call; the
+/// current tool bodies re-resolve through `run_upload` / the share
+/// lane, and the fields stay so the next reader keeps the §4 seam
+/// visible — clippy's dead-code is silenced for exactly that reason).
+struct ResolvedBucket {
+    /// The resolved bucket's id.
+    #[allow(dead_code)]
+    id: Uuid,
+    /// The resolved bucket's slug.
+    #[allow(dead_code)]
+    slug: String,
+}
+
+/// The share tool's folder-refusal text (the pre-check answers it for a
+/// folder argument so the tool body never re-fetches; the same string
+/// the body has always answered).
+const FOLDER_REFUSAL: &str = "a folder cannot be shared — only files get a public link";
+
+/// The §7 three-state pre-check, run in `dispatch_tool` BEFORE
+/// `call_tool`: one function resolves the tool's bucket, loads its row,
+/// and answers Allow / ToolError / Frame per the error table.
+///
+/// `tools/list` is NOT pre-checked (it filters by ops only, Q7);
+/// `initialize` is never gated.
+async fn precheck_tool(
+    state: &AppState,
+    user: &i0721_proto::UserRecord,
+    key: &i0721_proto::ApiKeyRecord,
+    tool: &str,
+    args: &Value,
+) -> Precheck {
+    use crate::bucket_acl::resolve_access;
+    // The key's bucket set (Q7): `parse_scopes_buckets` is fail-closed —
+    // a malformed array means NO buckets, which denies every bucket-
+    // scoped tool (the `bucket_scope_denials_are_jsonrpc_frames…` test).
+    let key_buckets = parse_scopes_buckets(&key.scopes);
+    match tool {
+        "list_files" | "file_info" | "search_files" => {
+            // §7's read row: `isError` + not found for invisible, storage
+            // unavailable for a dead backend. The tools already answer
+            // not-found naturally; the pre-check only fails the frame on
+            // an UNRESOLVABLE backend for bucket-scoped calls.
+            Precheck::Allow(None)
+        }
+        "upload_file" => {
+            let Some(slug) = args.get("bucket").and_then(Value::as_str) else {
+                // No override: the default/bootstrap resolution inside
+                // `run_upload` handles visibility (the member's default
+                // bucket may be the bootstrap one they can use).
+                return Precheck::Allow(None);
+            };
+            // ① ops (K's gate, already run) ② the bucket must be IN the
+            // key's `buckets` → `-32001` naming the bucket; ③ the USER
+            // must hold access → `-32005` naming the bucket.
+            if !key_buckets.contains(slug) {
+                return Precheck::Frame(RpcFault::new(
+                    SCOPE_DENIED,
+                    format!(
+                        "the API key is not authorized for bucket {slug:?} — \
+                         edit the key's bucket permissions"
+                    ),
+                ));
+            }
+            let bucket = match state.store.get_storage_bucket_by_slug(slug).await {
+                Ok(Some(row)) => row,
+                Ok(None) => {
+                    return Precheck::ToolError(format!("no such bucket: {slug}"));
+                }
+                Err(err) => {
+                    return Precheck::ToolError(format!("storage backend unavailable: {err}"));
+                }
+            };
+            let access = match resolve_access(state.store.as_ref(), user, &bucket).await {
+                Ok(access) => access,
+                Err(err) => {
+                    return Precheck::ToolError(format!("storage backend unavailable: {err}"));
+                }
+            };
+            if !access.any() {
+                // Invisible to the user: isError + not found (§7) — the
+                // user must not learn the slug exists.
+                return Precheck::ToolError(format!("no such bucket: {slug}"));
+            }
+            Precheck::Allow(Some(ResolvedBucket {
+                id: bucket.id,
+                slug: bucket.slug.clone(),
+            }))
+        }
+        "get_share_link" => {
+            // R-L, in THIS order: ops.share (already run) → the file's
+            // bucket ∈ key's `buckets` → the user holds Need::Share.
+            let Some(file_id) = args
+                .get("file_id")
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+            else {
+                // The tool body answers the missing-argument error with
+                // its own text; the pre-check lets it through.
+                return Precheck::Allow(None);
+            };
+            let file = match state.store.get_file(file_id).await {
+                Ok(Some(row)) if row.deleted_at.is_none() && row.kind != FileKind::Folder => row,
+                // A FOLDER (or a soft-deleted row) keeps the tool body's
+                // historical answer — the folder rule's text names the
+                // folder restriction. Signal it distinctly from a real
+                // miss.
+                Ok(Some(_)) => return Precheck::ToolError(FOLDER_REFUSAL.to_owned()),
+                Ok(None) => return Precheck::ToolError("file not found".to_owned()),
+                Err(err) => {
+                    return Precheck::ToolError(format!("storage backend unavailable: {err}"));
+                }
+            };
+            // The file's bucket row: `bucket_id` → the store's registry
+            // rows with the registry's id→slug map as the fixture-lane
+            // fallback; None → the file cannot be shared (its bytes are
+            // unreachable).
+            let Some(bucket_id) = file.bucket_id else {
+                return Precheck::ToolError("file not found".to_owned());
+            };
+            let bucket = match crate::bucket_acl::bucket_row_for_id(
+                state.store.as_ref(),
+                &state.registry,
+                bucket_id,
+            )
+            .await
+            {
+                Ok(Some(row)) => row,
+                Ok(None) => return Precheck::ToolError("file not found".to_owned()),
+                Err(err) => {
+                    return Precheck::ToolError(format!("storage backend unavailable: {err}"));
+                }
+            };
+            let slug = bucket.slug.clone();
+            if !key_buckets.contains(&slug) {
+                return Precheck::Frame(RpcFault::new(
+                    SCOPE_DENIED,
+                    format!(
+                        "the API key is not authorized for bucket {slug:?} — \
+                         edit the key's bucket permissions"
+                    ),
+                ));
+            }
+            let access = match resolve_access(state.store.as_ref(), user, &bucket).await {
+                Ok(access) => access,
+                Err(err) => {
+                    return Precheck::ToolError(format!("storage backend unavailable: {err}"));
+                }
+            };
+            if !access.share {
+                // Visible (the user owns the file) but no share bit:
+                // `-32005` naming the bucket (§7's third arm).
+                return Precheck::Frame(RpcFault::new(
+                    crate::rpc::rpc_error_codes::AUTH,
+                    format!("you do not have share access to bucket {slug:?}"),
+                ));
+            }
+            Precheck::Allow(Some(ResolvedBucket {
+                id: bucket.id,
+                slug,
+            }))
+        }
+        _ => Precheck::Allow(None),
+    }
+}
+
 async fn dispatch_tool(
     state: &AppState,
     user_id: Uuid,
@@ -704,6 +890,8 @@ async fn dispatch_tool(
         })),
         // Only the tools this key may actually call: an agent that
         // cannot upload should not be told `upload_file` exists.
+        // Q7: the filter is by OPS only — the bucket check happens per
+        // `tools/call` below, never here.
         "tools/list" => Ok(json!({
             "tools": visible_tools(&parse_scopes(&key.scopes)),
         })),
@@ -739,7 +927,71 @@ async fn dispatch_tool(
                 };
                 return Err(RpcFault::new(code, denial.message(tool)));
             }
-            match call_tool(state, user_id, origin.as_deref(), tool, &args).await {
+            // The §7 three-state pre-check, BEFORE the tool body: the
+            // bucket decision (and its loaded row) is made ONCE here and
+            // handed to the body — no re-fetch, no second decision.
+            let user = state
+                .store
+                .get_user(user_id)
+                .await
+                .map_err(|err| RpcFault::new(-32603, err.to_string()))?
+                .ok_or_else(|| RpcFault::new(-32603, "user not found".to_owned()))?;
+            let resolved = match precheck_tool(state, &user, key, tool, &args).await {
+                Precheck::Allow(resolved) => resolved,
+                Precheck::ToolError(text) => {
+                    return Ok(json!({
+                        "content": [{"type": "text", "text": text}],
+                        "isError": true,
+                    }));
+                }
+                Precheck::Frame(fault) => return Err(fault),
+            };
+            // §7 pushdown (Q14): the read tools' list is scoped to the
+            // key ∩ user's visible buckets — computed ONCE here, in the
+            // same pass that made the precheck decision (§4's "one
+            // decision" seam; the body never re-derives it).
+            let visible_ids =
+                crate::bucket_acl::visible_bucket_ids(state.store.as_ref(), &state.registry, &user)
+                    .await
+                    .map_err(|err| RpcFault::new(-32603, err.to_string()))?;
+            let key_buckets = parse_scopes_buckets(&key.scopes);
+            let key_bucket_ids = {
+                let mut ids = Vec::new();
+                for bucket in state
+                    .store
+                    .list_storage_buckets()
+                    .await
+                    .map_err(|err| RpcFault::new(-32603, err.to_string()))?
+                {
+                    if key_buckets.contains(&bucket.slug) && visible_ids.contains(&bucket.id) {
+                        ids.push(bucket.id);
+                    }
+                }
+                // A NULL-bucket legacy row reads through the bootstrap
+                // id — keep it listable when the key's buckets allow the
+                // bootstrap slug (the synthetic-row posture).
+                if let Some(bootstrap_slug) = state.registry.bootstrap_slug().map(str::to_owned) {
+                    if key_buckets.contains(&bootstrap_slug) {
+                        if let Ok(id) = state.registry.bootstrap_bucket_id() {
+                            ids.push(id);
+                        }
+                    }
+                }
+                ids.sort();
+                ids.dedup();
+                ids
+            };
+            match call_tool(
+                state,
+                user_id,
+                origin.as_deref(),
+                tool,
+                &args,
+                &resolved,
+                &key_bucket_ids,
+            )
+            .await
+            {
                 Ok(result) => {
                     Ok(json!({"content": [{"type": "text", "text": result.to_string()}]}))
                 }
@@ -789,6 +1041,8 @@ async fn call_tool(
     origin: Option<&str>,
     tool: &str,
     args: &Value,
+    resolved: &Option<ResolvedBucket>,
+    key_bucket_ids: &[Uuid],
 ) -> Result<Value, String> {
     match tool {
         "list_files" => {
@@ -799,7 +1053,14 @@ async fn call_tool(
             let (offset, limit) = page_args(args, LIST_FILES_LIMIT);
             let rows = state
                 .store
-                .list_folder(user_id, folder_id, None, offset, limit)
+                .list_folder(
+                    user_id,
+                    folder_id,
+                    None,
+                    Some(key_bucket_ids),
+                    offset,
+                    limit,
+                )
                 .await
                 .map_err(|e| e.to_string())?;
             let items: Vec<FileDto> = rows.into_iter().map(FileDto::from).collect();
@@ -853,6 +1114,10 @@ async fn call_tool(
             // the site config exactly as the REST lane's does — with
             // `upload.use_source_file_name` off (the default) the row is
             // named by the content hash, the behavior this tool had.
+            // The pre-check already resolved (and authorized) the
+            // `bucket` argument's row; the override slug rides into
+            // `run_upload` unchanged — the resolution inside re-reads the
+            // SAME row the pre-check loaded (§4: one decision, one row).
             let uploaded = run_upload(
                 state,
                 &user,
@@ -860,11 +1125,19 @@ async fn call_tool(
                     name: None,
                     source_name: Some(name.to_owned()),
                     folder_id,
+                    // The MCP `bucket` argument (R-I): invisible → isError
+                    // + not found; visible-but-unservable → isError +
+                    // storage unavailable (§7).
+                    bucket: args
+                        .get("bucket")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
                     data: data.into(),
                 },
             )
             .await
             .map_err(|err| err.error)?;
+            let _ = resolved;
             Ok(serde_json::to_value(FileDto::from(uploaded.record)).unwrap_or_default())
         }
         "get_share_link" => {
@@ -960,7 +1233,7 @@ async fn call_tool(
             // page the SCAN — the schema says so.
             let rows = state
                 .store
-                .list_folder(user_id, None, kind, offset, limit)
+                .list_folder(user_id, None, kind, Some(key_bucket_ids), offset, limit)
                 .await
                 .map_err(|e| e.to_string())?;
             let items: Vec<FileDto> = rows

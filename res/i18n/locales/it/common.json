@@ -48,7 +48,9 @@
     "uploading": "Caricamento di {name}",
     "uploadFailed": "Caricamento non riuscito",
     "deleteConfirm": "Eliminare questo file? Il link pubblico smetterà di funzionare.",
-    "openOriginal": "Apri originale"
+    "openOriginal": "Apri originale",
+    "uploadBucket": "Caricare nel bucket",
+    "uploadDefaultBucket": "Predefinito (impostato dall'admin)"
   },
   "users": {
     "title": "Utenti",
@@ -148,7 +150,10 @@
     "kind": "Tipo",
     "kindFolder": "Cartella",
     "details": "Dettagli",
-    "pickHint": "Seleziona un elemento per ispezionarlo"
+    "pickHint": "Seleziona un elemento per ispezionarlo",
+    "noReadPermission": "senza permesso di lettura",
+    "bucketRoot": "Radice del bucket",
+    "bucketAll": "Tutti i bucket"
   },
   "keys": {
     "title": "Chiavi API",
@@ -180,7 +185,12 @@
     "edit": "Modifica chiave API",
     "updated": "Chiave API aggiornata",
     "opsRequired": "Seleziona almeno un'autorizzazione",
-    "expiryFuture": "La scadenza deve essere nel futuro"
+    "expiryFuture": "La scadenza deve essere nel futuro",
+    "buckets": "Bucket",
+    "bucketsHint": "Nessuna selezione = esplicitamente nessun bucket. Salvare senza selezionare congela i permessi attuali sul server.",
+    "noBuckets": "nessun bucket",
+    "noBucketsAvailable": "Nessun bucket registrato — la chiave non ne avrà finché non ne esiste uno.",
+    "noBucketsPicked": "nessun bucket scelto"
   },
   "menu": {
     "account": "Account"
@@ -198,5 +208,37 @@
     "author": "伊欧",
     "copyright": "Celestia Island",
     "engineVersion": "Versione del motore"
+  },
+  "buckets": {
+    "title": "Bucket",
+    "create": "Crea bucket",
+    "empty": "Nessun bucket registrato",
+    "slug": "Slug",
+    "displayName": "Nome visualizzato",
+    "backend": "Backend",
+    "backend_local": "Locale",
+    "backend_s3": "S3",
+    "backend_ipfs": "IPFS",
+    "flags": "Contrassegni",
+    "anonymousRead": "Lettura anonima",
+    "grantOnSignup": "Permessi predefiniti alla registrazione",
+    "bootstrap": "Avvio",
+    "enabled": "Attivo",
+    "disabled": "Disattivo",
+    "edit": "Modifica bucket",
+    "saved": "Bucket salvato",
+    "deleted": "Bucket eliminato",
+    "deleteConfirm": "Eliminare il bucket {slug}? Le sue righe di permessi vengono eliminate con esso.",
+    "defaultBucket": "Bucket di caricamento predefinito",
+    "defaultUnset": "non impostato",
+    "defaultSaved": "Bucket di caricamento predefinito salvato",
+    "grants": "Permessi",
+    "grantsTitle": "Permessi su {slug}",
+    "grant_read": "Leggere",
+    "grant_write": "Scrivere",
+    "grant_share": "Condividere",
+    "grantSaved": "Permessi salvati",
+    "grantHint": "Salvare i tre interruttori tutti spenti scrive una riga di diniego esplicita — resta un diniego anche se il bucket diventa aperto per impostazione predefinita.",
+    "noMembers": "Nessun membro a cui concedere permessi."
   }
 }

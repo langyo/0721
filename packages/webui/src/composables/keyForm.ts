@@ -27,6 +27,29 @@ export function canonicalOps(ops: readonly KeyOp[]): KeyOp[] {
 }
 
 /**
+ * The `scopes.buckets` canonical form (Q7): slug array, ≤ 64 items,
+ * DEDUPED, lexicographically sorted — the same canonicalization the
+ * server's `encode_scopes_with_buckets` applies. MUT:p2a-key-buckets-canonical —
+ * dropping the sort or the dedupe reddens the payload test.
+ */
+export function canonicalBuckets(buckets: readonly string[]): string[] {
+  return [...new Set(buckets)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, 64);
+}
+
+/**
+ * The key's bucket reference as the LIST row shows it. `buckets: null`
+ * means the key's scopes carry NO `buckets` array at all (a K-era row
+ * that R-T has not materialized — it renders the「无桶」marker); `[]` is
+ * an EXPLICIT empty array (the caller picked "no buckets") and renders
+ * as the plain empty state, not the marker.
+ */
+export function keyBucketsOf(
+  buckets: readonly string[] | undefined | null,
+): string[] | null {
+  return Array.isArray(buckets) ? buckets : null;
+}
+
+/**
  * A `Date`'s local wall-clock reading as a `datetime-local` field value
  * (`YYYY-MM-DDTHH:mm`).
  *

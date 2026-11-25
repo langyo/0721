@@ -48,7 +48,9 @@
     "uploading": "正在上傳 {name}",
     "uploadFailed": "上傳失敗",
     "deleteConfirm": "刪除這個檔案？公開連結將失效。",
-    "openOriginal": "檢視原圖"
+    "openOriginal": "檢視原圖",
+    "uploadBucket": "上傳到桶",
+    "uploadDefaultBucket": "預設（管理員設定）"
   },
   "users": {
     "title": "用戶",
@@ -148,7 +150,10 @@
     "kind": "類型",
     "kindFolder": "資料夾",
     "details": "詳情",
-    "pickHint": "選擇一項以查看詳情"
+    "pickHint": "選擇一項以查看詳情",
+    "noReadPermission": "無讀取權限",
+    "bucketRoot": "桶根目錄",
+    "bucketAll": "全部桶"
   },
   "keys": {
     "title": "API 密鑰",
@@ -180,7 +185,12 @@
     "edit": "編輯 API 密鑰",
     "updated": "API 密鑰已更新",
     "opsRequired": "請至少選擇一項權限",
-    "expiryFuture": "過期時間必須晚於目前時間"
+    "expiryFuture": "過期時間必須晚於目前時間",
+    "buckets": "桶",
+    "bucketsHint": "不勾選任何桶 = 明確無桶。開啟對話框後不做選擇提交，則由伺服器快照當前授權。",
+    "noBuckets": "無桶",
+    "noBucketsAvailable": "尚未註冊任何桶——桶存在前此 key 將沒有桶。",
+    "noBucketsPicked": "未選擇任何桶"
   },
   "menu": {
     "account": "帳戶"
@@ -198,5 +208,37 @@
     "author": "伊欧",
     "copyright": "Celestia Island",
     "engineVersion": "引擎版本"
+  },
+  "buckets": {
+    "title": "儲存桶",
+    "create": "新增儲存桶",
+    "empty": "尚未註冊任何儲存桶",
+    "slug": "識別",
+    "displayName": "顯示名稱",
+    "backend": "後端",
+    "backend_local": "本機",
+    "backend_s3": "S3",
+    "backend_ipfs": "IPFS",
+    "flags": "標記",
+    "anonymousRead": "匿名可讀",
+    "grantOnSignup": "註冊時預設授權",
+    "bootstrap": "引導桶",
+    "enabled": "已啟用",
+    "disabled": "已停用",
+    "edit": "編輯儲存桶",
+    "saved": "儲存桶已儲存",
+    "deleted": "儲存桶已刪除",
+    "deleteConfirm": "刪除儲存桶 {slug}？其授權列將一併刪除。",
+    "defaultBucket": "預設上傳桶",
+    "defaultUnset": "未設定",
+    "defaultSaved": "預設上傳桶已儲存",
+    "grants": "授權",
+    "grantsTitle": "{slug} 的授權",
+    "grant_read": "讀取",
+    "grant_write": "寫入",
+    "grant_share": "分享",
+    "grantSaved": "授權已儲存",
+    "grantHint": "三項全部關閉儲存後寫入一列明確拒絕——即使該桶日後改為預設開放，它仍保持拒絕。",
+    "noMembers": "沒有可授權的使用者。"
   }
 }

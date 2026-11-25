@@ -121,6 +121,10 @@ pub struct BlobRegistry {
     bootstrap: Option<String>,
     /// The bootstrap bucket's id (fresh rows' `bucket_id` value).
     bootstrap_id: Option<uuid::Uuid>,
+    /// Backend tags of NON-bootstrap buckets (the R-I upload resolution
+    /// needs the row's `storage_backend` tag; the bootstrap carries its
+    /// own field).
+    entry_backends: HashMap<String, BucketBackend>,
 }
 
 impl std::fmt::Debug for BucketEntry {
@@ -173,6 +177,14 @@ impl BlobRegistry {
             bootstrap,
             bootstrap_backend,
             bootstrap_id,
+            // Production builds from DB rows: register every
+            // non-bootstrap row's backend tag (the R-I resolution's tag
+            // source).
+            entry_backends: rows
+                .iter()
+                .filter(|row| !row.is_bootstrap)
+                .map(|row| (row.slug.clone(), row.backend))
+                .collect(),
         })
     }
 
@@ -200,6 +212,7 @@ impl BlobRegistry {
             bootstrap: Some("bootstrap".to_owned()),
             bootstrap_backend: Some(backend),
             bootstrap_id: Some(id),
+            entry_backends: HashMap::new(),
         })
     }
 
@@ -229,6 +242,10 @@ impl BlobRegistry {
             bootstrap: Some(bootstrap_slug),
             bootstrap_backend: Some(bootstrap_backend),
             bootstrap_id: Some(bootstrap_id),
+            // Fixture entries carry their tags through `register_backend_tag`
+            // (the entry type carries no backend field), so the map starts
+            // empty here.
+            entry_backends: HashMap::new(),
         })
     }
 
@@ -268,7 +285,7 @@ impl BlobRegistry {
                 // The registry keys by slug; the row carries the id. The
                 // startup-loaded map is searched by id (rows are loaded
                 // with both), keeping this O(n) over a small table.
-                self.slug_of_bucket_id(row.bucket_id)
+                self.slug_for_bucket_id(row.bucket_id.ok_or(BlobError::NoBootstrap)?)
                     .ok_or_else(|| BlobError::UnknownBucket {
                         slug: row.bucket_id.map(|id| id.to_string()).unwrap_or_default(),
                     })?
@@ -278,8 +295,21 @@ impl BlobRegistry {
         self.resolve(&slug)
     }
 
-    fn slug_of_bucket_id(&self, id: Option<uuid::Uuid>) -> Option<String> {
-        self.by_id.get(&id?).cloned()
+    /// PUB for the P2a lanes' fallback: the slug a bucket id maps to
+    /// (the fixture stores seed no `storage_buckets` rows, so the
+    /// registry is the only id→slug source there).
+    #[must_use]
+    pub fn slug_for_bucket_id(&self, id: uuid::Uuid) -> Option<String> {
+        self.by_id.get(&id).cloned()
+    }
+
+    /// The enabled bootstrap bucket's slug (the NULL-bucket rows'
+    /// resolution target, I4): the §7 pushdown and the key-buckets
+    /// intersection read this to keep those rows listable for a key
+    /// that names the bootstrap slug.
+    #[must_use]
+    pub fn bootstrap_slug(&self) -> Option<&str> {
+        self.bootstrap.as_deref()
     }
 
     /// The health view of every registered bucket.
@@ -330,28 +360,73 @@ impl BlobRegistry {
 
     /// R-I's upload-target outlet (the ONLY source `run_upload` reads).
     ///
-    /// P1 form: the override is always `None` (the `?bucket=` / MCP
-    /// `bucket` parameter arrives with P2a), so the target is the
-    /// enabled bootstrap bucket. A resolution failure is an ERROR —
-    /// never a fallback to another bucket (I2; the guard test
-    /// `upload_without_override_never_falls_back_to_the_bootstrap_bucket`
-    /// pins this and MUT:M-B3 makes the fallback red).
+    /// P2a form (spec R-I): the override (`?bucket=` / MCP `bucket`) wins
+    /// when present; otherwise the `storage_defaults` setting's bucket
+    /// slug; otherwise the enabled bootstrap bucket (the P1 behavior —
+    /// the single-bucket deployment keeps working unchanged). Every arm
+    /// resolves through THIS registry and answers an error when the
+    /// target cannot serve — never a fallback to another bucket (I2).
+    ///
+    /// The caller (`run_upload`) resolves the DEFAULTS and passes the
+    /// slug override here; the visibility gate (`404` for an invisible
+    /// bucket) and the membership checks live in the caller too, because
+    /// they need the actor — this function stays actor-free.
     ///
     /// Returns `(bucket_id, backend tag, store)` — the row's `bucket_id`
     /// value, its `storage_backend` tag and the store the bytes go to.
     ///
     /// # Errors
     ///
-    /// [`BlobError::NoBootstrap`] when no enabled bootstrap bucket exists
-    /// (the caller surfaces it as an error, never a fallback).
+    /// [`BlobError`] when the slug is unknown or the bucket cannot serve
+    /// (the caller surfaces it, never a fallback).
     pub fn resolve_upload_bucket(
         &self,
-        _override: Option<&str>,
+        override_slug: Option<&str>,
+        default_slug: Option<&str>,
     ) -> Result<(uuid::Uuid, BucketBackend, Arc<dyn BlobStore>), BlobError> {
-        let id = self.bootstrap_id.ok_or(BlobError::NoBootstrap)?;
-        let backend = self.bootstrap_backend.ok_or(BlobError::NoBootstrap)?;
-        let store = self.bootstrap_store()?;
+        let slug = match override_slug.or(default_slug) {
+            Some(slug) => slug.to_owned(),
+            None => self.bootstrap.clone().ok_or(BlobError::NoBootstrap)?,
+        };
+        let id = self
+            .by_id
+            .iter()
+            .find(|(_, entry_slug)| **entry_slug == slug)
+            .map(|(id, _)| *id)
+            .ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() })?;
+        let backend = self
+            .entries
+            .get(&slug)
+            .ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() })
+            .map(|entry| self.backend_of_entry(entry))
+            .and_then(|tag| tag.ok_or_else(|| BlobError::UnknownBucket { slug: slug.clone() }))?;
+        let store = self.resolve(&slug)?;
         Ok((id, backend, store))
+    }
+
+    /// The backend tag of an entry. The DB row's `backend` is the
+    /// authority; the registry knows the bootstrap's own tag and the
+    /// tags registered at build time (`entry_backends`). A fixture
+    /// entry the store never seeded answers `Local` — the fixture
+    /// stores' rows are all local anyway.
+    fn backend_of_entry(&self, entry: &BucketEntry) -> Option<BucketBackend> {
+        if Some(entry.slug.as_str()) == self.bootstrap.as_deref() {
+            return self.bootstrap_backend;
+        }
+        Some(
+            self.entry_backends
+                .get(&entry.slug)
+                .copied()
+                .unwrap_or(BucketBackend::Local),
+        )
+    }
+
+    /// Register the backend tag of a non-bootstrap bucket (fixtures and
+    /// the P2a lanes where the registry is built from explicit entries).
+    /// Production reads the tag from the DB row in the caller and
+    /// registers it once at startup.
+    pub fn register_backend_tag(&mut self, slug: &str, backend: BucketBackend) {
+        self.entry_backends.insert(slug.to_owned(), backend);
     }
 }
 

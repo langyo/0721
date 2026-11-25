@@ -15,6 +15,14 @@ key_prefix: string,
  */
 ops: Array<KeyOp>, 
 /**
+ * The key's bucket reference (Q7): `Some([])` = an EXPLICIT empty
+ * array ("no buckets" pick); `Some(slugs)` = the materialized set;
+ * `None` = the scopes carry NO `buckets` array at all (a K-era row
+ * the 0008 migration has not touched) — the webui renders the
+ *「无桶」marker from this, per §7.
+ */
+buckets?: Array<string>, 
+/**
  * RFC 3339 expiry instant, or `None` for a key that never expires.
  */
 expires_at?: string, 

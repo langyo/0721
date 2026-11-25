@@ -13,6 +13,10 @@ vi.mock("@/api", () => ({
   updateKey: (...args: unknown[]) => updateKeyMock(...args),
   revokeKey: (...args: unknown[]) => revokeKeyMock(...args),
 }));
+const listBucketsMock = vi.fn();
+vi.mock("@/api/buckets", () => ({
+  listBuckets: (...args: unknown[]) => listBucketsMock(...args),
+}));
 
 import KeysView from "./KeysView";
 import { HkToast, useToast } from "@celestia-island/hikari";
@@ -429,7 +433,9 @@ describe("KeysView create payload (permissions + expiry)", () => {
     await flushPromises();
 
     const [payload] = createKeyMock.mock.calls[0] as [Record<string, unknown>];
-    expect(payload).toEqual({ name: "agent", ops: ["read"] });
+    // The untouched picker is the EXPLICIT empty pick (Q7: `[]` = no
+    // buckets); the expiry is the only omitted-when-empty field.
+    expect(payload).toEqual({ name: "agent", ops: ["read"], buckets: [] });
     expect("expires_at" in payload).toBe(false);
     wrapper.unmount();
   });
@@ -838,5 +844,137 @@ describe("KeysView error surface (family scaffold)", () => {
     expect(w2.find(".hk-alert").exists()).toBe(true);
     expect(w2.text()).toContain(i18n.global.t("common.status.error"));
     w2.unmount();
+  });
+});
+
+describe("KeysView bucket picker (Q7)", () => {
+  // The picker's slugs come from the registry (storage.buckets.list);
+  // the create dialog's untouched picker is the EXPLICIT empty pick
+  // (`[]` = no buckets); the edit of a K-era row (scopes WITHOUT the
+  // array) starts "not picked" and its submit pins the explicit array.
+  beforeEach(() => {
+    listBucketsMock.mockReset();
+    listKeysMock.mockReset().mockResolvedValue([KEY_ROW]);
+    createKeyMock.mockReset().mockResolvedValue({ id: "k2", name: "n", key: "i0721-x" });
+    updateKeyMock.mockReset().mockResolvedValue(undefined);
+    revokeKeyMock.mockReset();
+    clearToasts();
+  });
+  afterEach(() => teardown());
+
+  it("offers the registry's slugs sorted and deduped", async () => {
+    // MUT:p2a-key-buckets-canonical — an unsorted/duplicated offer list
+    // reddens this.
+    listBucketsMock.mockResolvedValue({
+      buckets: [
+        { slug: "zeta", my_access: { read: true, write: true, share: true } },
+        { slug: "alpha", my_access: { read: true, write: true, share: true } },
+        { slug: "alpha", my_access: { read: true, write: true, share: true } },
+        { slug: "beta", my_access: { read: false, write: true, share: true } },
+      ],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    await openCreateDialog(wrapper);
+    await flushPromises();
+    // One switch per DISTINCT slug, in lexicographic order.
+    const ids = [...document.querySelectorAll('[data-testid^="create-bucket-"]')].map(
+      (el) => el.getAttribute("data-testid"),
+    );
+    expect(ids).toEqual(["create-bucket-alpha", "create-bucket-beta", "create-bucket-zeta"]);
+    wrapper.unmount();
+  });
+
+  it("sends the explicit [] when nothing was picked, and the picked set when toggled", async () => {
+    listBucketsMock.mockResolvedValue({
+      buckets: [
+        { slug: "alpha", my_access: { read: true, write: true, share: true } },
+        { slug: "beta", my_access: { read: true, write: true, share: true } },
+      ],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    await fillTestId("key-name", "agent");
+    await toggleSwitch("create-op-read");
+
+    // No bucket touched: the field is PRESENT and explicitly empty —
+    // MUT:p2a-key-buckets-omit — omitting the field here (or sending []
+    // for the null lane) reddens this.
+    footerButton("Create").click();
+    await flushPromises();
+    {
+      const [payload] = createKeyMock.mock.calls[0] as [Record<string, unknown>];
+      expect(payload.buckets).toEqual([]);
+    }
+
+    // The minted-key card replaced the form (the copy-once step); return
+    // to the form and pick one slug in non-sorted order — the payload is
+    // deduped + sorted.
+    byTestId("copy-once-done").click();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    await fillTestId("key-name", "agent");
+    await toggleSwitch("create-op-read");
+    await toggleSwitch("create-bucket-beta");
+    await toggleSwitch("create-bucket-alpha");
+    await toggleSwitch("create-bucket-beta");
+    footerButton("Create").click();
+    await flushPromises();
+    {
+      const [payload] = createKeyMock.mock.calls[1] as [Record<string, unknown>];
+      expect(payload.buckets).toEqual(["alpha"]);
+    }
+    wrapper.unmount();
+  });
+
+  it("renders the 无桶 marker for a K-era key (no buckets field)", async () => {
+    // MUT:p2a-key-no-buckets-marker — dropping the marker branch leaves
+    // the K-era row blank.
+    const kera = keyRow({ id: "legacy", buckets: undefined });
+    listKeysMock.mockResolvedValue([kera]);
+    const wrapper = mountView();
+    await flushPromises();
+    expect(byTestId("key-no-buckets-legacy")).not.toBeNull();
+    expect(byTestId("key-no-buckets-legacy").textContent).toContain("no buckets");
+    // MUT:p2a-key-no-buckets-marker — the sharper half of the pin: when
+    // the marker shows, the row's bucket LIST span must be absent (the
+    // blank-row mutant survives an assertion on the marker alone).
+    expect(document.querySelector('[data-testid="key-buckets-legacy"]')).toBeNull();
+    wrapper.unmount();
+  });
+
+  it("shows the explicit-empty state (not the marker) for a picked-none key", async () => {
+    const picked = keyRow({ id: "picked", buckets: [] });
+    listKeysMock.mockResolvedValue([picked]);
+    const wrapper = mountView();
+    await flushPromises();
+    expect(document.querySelector('[data-testid="key-no-buckets-picked"]')).toBeNull();
+    expect(byTestId("key-empty-buckets-picked")).not.toBeNull();
+    wrapper.unmount();
+  });
+
+  it("edits a materialized key with its picked set pre-filled", async () => {
+    const row = keyRow({ id: "k1", buckets: ["beta", "alpha"] });
+    listKeysMock.mockResolvedValue([row]);
+    listBucketsMock.mockResolvedValue({
+      buckets: [
+        { slug: "alpha", my_access: { read: true, write: true, share: true } },
+        { slug: "beta", my_access: { read: true, write: true, share: true } },
+      ],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await clickTestId(`edit-key-${row.id}`);
+    await flushPromises();
+    // Pre-filled from the row's own array.
+    expect(byTestId("edit-bucket-alpha").hasAttribute("data-checked")).toBe(true);
+    expect(byTestId("edit-bucket-beta").hasAttribute("data-checked")).toBe(true);
+    footerButton("Save").click();
+    await flushPromises();
+    const [, payload] = updateKeyMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(payload.buckets).toEqual(["alpha", "beta"]);
+    wrapper.unmount();
   });
 });

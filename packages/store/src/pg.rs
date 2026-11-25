@@ -19,9 +19,9 @@ use i0721_proto::{NewShare, ShareRecord};
 use crate::entity::{
     api_key_model_to_record, file_model_from_new, file_model_to_record, share_model_to_record,
     storage_bucket_model_to_record, user_model_from_new, user_model_to_record, ApiKeyColumn,
-    ApiKeyModel, FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel, SettingColumn,
-    SettingModel, ShareColumn, ShareModel, StorageBucketColumn, StorageBucketModel, UserColumn,
-    UserModel,
+    ApiKeyModel, BucketGrantColumn, BucketGrantModel, FileColumn, FileModel, OAuthIdentityColumn,
+    OAuthIdentityModel, SettingColumn, SettingModel, ShareColumn, ShareModel, StorageBucketColumn,
+    StorageBucketModel, UserColumn, UserModel,
 };
 use crate::{migrations, BootstrapBucketParams, CreateUser, Store, StoreError};
 
@@ -287,10 +287,17 @@ fn live_file_by(column: FileColumn, value: impl Into<Value>) -> Command {
 }
 
 /// The live-rows filter shared by the folder listing and its count.
+/// `buckets` is the §7 pushdown (Q14): `Some(set)` keeps only rows whose
+/// `bucket_id` is in the caller's visible set — the SQL is the ONLY
+/// filter site, so a count and its listing can never disagree.
+/// MUT:M3b — dropping this filter (or applying it only to one of the two
+/// lanes) lets invisible-bucket rows leak into either the items or the
+/// total, which reddens the pushdown tests.
 fn folder_filter(
     owner_id: Uuid,
     parent_id: Option<Uuid>,
     kind: Option<String>,
+    buckets: Option<&[Uuid]>,
 ) -> lacrymira::Condition {
     let mut filter = FileColumn::DeletedAt
         .is_null()
@@ -303,11 +310,28 @@ fn folder_filter(
     if let Some(kind) = kind {
         filter = filter.and(FileColumn::Kind.eq(kind).into_inner());
     }
+    if let Some(set) = buckets {
+        // A NULL-bucket row (rollback-window legacy) resolves through the
+        // bootstrap bucket by the §7 column rules; the visible set is
+        // computed from the registry, so keep NULL-bucket rows when the
+        // bootstrap is in the set. The comparison stays SQL-side (no
+        // post-fetch filtering — that would let `total` leak counts).
+        filter = filter.and(
+            FileColumn::BucketId
+                .in_(set.to_vec())
+                .into_inner()
+                .or(FileColumn::BucketId.is_null().into_inner()),
+        );
+    }
     filter
 }
 
 #[async_trait::async_trait]
 impl Store for PgStore {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     async fn list_users(&self, offset: u64, limit: u64) -> Result<Vec<UserRecord>, StoreError> {
         let cmd = Command::Select {
             table: UserModel::TABLE.to_owned(),
@@ -383,10 +407,22 @@ impl Store for PgStore {
         Ok(removed > 0)
     }
 
-    async fn list_files(&self, offset: u64, limit: u64) -> Result<Vec<FileRecord>, StoreError> {
+    async fn list_files(
+        &self,
+        buckets: Option<&[Uuid]>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError> {
+        let filter = FileColumn::DeletedAt.is_null().into_inner();
+        let filter = match buckets {
+            None => filter,
+            Some(set) => filter
+                .and(FileColumn::BucketId.in_(set.to_vec()).into_inner())
+                .or(FileColumn::BucketId.is_null().into_inner()),
+        };
         let cmd = Command::Select {
             table: FileModel::TABLE.to_owned(),
-            filter: Some(FileColumn::DeletedAt.is_null().into_inner()),
+            filter: Some(filter),
             order_by: vec![("created_at".to_owned(), true)],
             limit: Some(limit),
             offset: Some(offset),
@@ -400,11 +436,15 @@ impl Store for PgStore {
             .collect()
     }
 
-    async fn count_files(&self) -> Result<u64, StoreError> {
-        let count = self
-            .executor
-            .count::<FileModel>(Some(FileColumn::DeletedAt.is_null().into_inner()))
-            .await?;
+    async fn count_files(&self, buckets: Option<&[Uuid]>) -> Result<u64, StoreError> {
+        let filter = FileColumn::DeletedAt.is_null().into_inner();
+        let filter = match buckets {
+            None => filter,
+            Some(set) => filter
+                .and(FileColumn::BucketId.in_(set.to_vec()).into_inner())
+                .or(FileColumn::BucketId.is_null().into_inner()),
+        };
+        let count = self.executor.count::<FileModel>(Some(filter)).await?;
         Ok(count as u64)
     }
 
@@ -505,6 +545,248 @@ impl Store for PgStore {
             .await?
             .map(storage_bucket_model_to_record)
             .transpose()
+    }
+
+    async fn upsert_storage_bucket(
+        &self,
+        slug: &str,
+        display_name: &str,
+        anonymous_read: bool,
+        grant_on_signup: bool,
+        enabled: bool,
+    ) -> Result<i0721_proto::StorageBucketRecord, StoreError> {
+        // The mutable-fields UPDATE keyed by slug; the identity fields
+        // (slug/backend/location/endpoint_ref/is_bootstrap) are NOT in
+        // the SET list — the RPC layer's strict full-document gate has
+        // already refused unknown/missing fields, the store only ever
+        // writes the four mutable ones.
+        let cmd = update_command::<StorageBucketModel>(
+            vec![
+                ("display_name", Value::Text(display_name.to_owned())),
+                ("anonymous_read", Value::Bool(anonymous_read)),
+                ("grant_on_signup", Value::Bool(grant_on_signup)),
+                ("enabled", Value::Bool(enabled)),
+            ],
+            StorageBucketColumn::Slug.eq(slug).into_inner(),
+            true,
+        )?;
+        let stored = self
+            .query_one::<StorageBucketModel>(cmd)
+            .await?
+            .ok_or_else(|| StoreError::Conflict(format!("no such bucket: {slug}")))?;
+        storage_bucket_model_to_record(stored)
+    }
+
+    async fn delete_storage_bucket(&self, id: Uuid) -> Result<bool, StoreError> {
+        let removed = self
+            .executor
+            .delete::<StorageBucketModel>(Some(StorageBucketColumn::Id.eq(id).into_inner()))
+            .await?;
+        Ok(removed > 0)
+    }
+
+    async fn count_live_files_by_bucket(&self, bucket_id: Option<Uuid>) -> Result<u64, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT COUNT(*) AS n FROM files WHERE deleted_at IS NULL \
+                   AND bucket_id IS NOT DISTINCT FROM $1"
+                .to_owned(),
+            params: vec![bucket_id
+                .map(|id| Value::Uuid(id.to_string()))
+                .unwrap_or(Value::Null)],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a COUNT".to_owned()));
+        };
+        let n = rows
+            .first()
+            .and_then(|row| row.iter().next())
+            .and_then(|v| match v {
+                Value::I64(n) => Some(*n),
+                Value::I32(n) => Some(i64::from(*n)),
+                _ => None,
+            })
+            .unwrap_or(0);
+        Ok(n as u64)
+    }
+
+    async fn get_file_by_owner_bucket_and_sha256(
+        &self,
+        owner_id: Uuid,
+        bucket_id: Option<Uuid>,
+        sha256: &str,
+    ) -> Result<Option<FileRecord>, StoreError> {
+        let mut filter = FileColumn::DeletedAt
+            .is_null()
+            .into_inner()
+            .and(FileColumn::OwnerId.eq(owner_id).into_inner())
+            .and(FileColumn::Sha256.eq(sha256).into_inner());
+        filter = match bucket_id {
+            Some(id) => filter.and(FileColumn::BucketId.eq(id).into_inner()),
+            None => filter.and(FileColumn::BucketId.is_null().into_inner()),
+        };
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(filter),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        self.query_one::<FileModel>(cmd)
+            .await?
+            .map(file_model_to_record)
+            .transpose()
+    }
+
+    async fn get_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+    ) -> Result<Option<i0721_proto::BucketGrantRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: BucketGrantModel::TABLE.to_owned(),
+            filter: Some(
+                BucketGrantColumn::UserId
+                    .eq(user_id)
+                    .into_inner()
+                    .and(BucketGrantColumn::BucketId.eq(bucket_id).into_inner()),
+            ),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        Ok(self
+            .query_one::<BucketGrantModel>(cmd)
+            .await?
+            .map(crate::entity::bucket_grant_model_to_record))
+    }
+
+    async fn set_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+        can_read: bool,
+        can_write: bool,
+        can_share: bool,
+    ) -> Result<(), StoreError> {
+        // Escape hatch: the upsert needs `excluded.*` expressions.
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO bucket_grants (user_id, bucket_id, can_read, can_write, can_share) \
+                   VALUES ($1, $2, $3, $4, $5) \
+                   ON CONFLICT (user_id, bucket_id) DO UPDATE SET \
+                     can_read = excluded.can_read, can_write = excluded.can_write, \
+                     can_share = excluded.can_share"
+                .to_owned(),
+            params: vec![
+                Value::Uuid(user_id.to_string()),
+                Value::Uuid(bucket_id.to_string()),
+                Value::Bool(can_read),
+                Value::Bool(can_write),
+                Value::Bool(can_share),
+            ],
+        };
+        self.executor
+            .execute(&cmd)
+            .await
+            .map_err(StoreError::from)?;
+        Ok(())
+    }
+
+    async fn list_bucket_grants_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: BucketGrantModel::TABLE.to_owned(),
+            filter: Some(BucketGrantColumn::UserId.eq(user_id).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        Ok(self
+            .query_all::<BucketGrantModel>(cmd)
+            .await?
+            .into_iter()
+            .map(crate::entity::bucket_grant_model_to_record)
+            .collect())
+    }
+
+    async fn list_bucket_grants_for_bucket(
+        &self,
+        bucket_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: BucketGrantModel::TABLE.to_owned(),
+            filter: Some(BucketGrantColumn::BucketId.eq(bucket_id).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        Ok(self
+            .query_all::<BucketGrantModel>(cmd)
+            .await?
+            .into_iter()
+            .map(crate::entity::bucket_grant_model_to_record)
+            .collect())
+    }
+
+    async fn settings_state(&self, key: &str) -> Result<crate::SettingsState, StoreError> {
+        // The four-state read (R-F): a store failure is `Unreadable`
+        // (NOT aDb error propagated as "absent"), a row whose payload
+        // fails the strict parser is `Corrupt` with the raw text.
+        let cmd = Command::Select {
+            table: SettingModel::TABLE.to_owned(),
+            filter: Some(SettingColumn::Key.eq(key).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        match self.query_one::<SettingModel>(cmd).await {
+            Err(err) => Ok(crate::SettingsState::Unreadable {
+                err: err.to_string(),
+            }),
+            Ok(None) => Ok(crate::SettingsState::Absent),
+            Ok(Some(model)) => Ok(crate::SettingsState::Value(model.value)),
+        }
+    }
+
+    async fn a_live_key_references_bucket_slug(&self, slug: &str) -> Result<bool, StoreError> {
+        // The spec-verbatim R-B SQL (also re-run by the PG lane's tests).
+        const BUCKET_KEY_REFERENCE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM api_keys \
+             WHERE revoked_at IS NULL AND jsonb_typeof(scopes->'buckets') = 'array' \
+             AND scopes->'buckets' ? $1)";
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: BUCKET_KEY_REFERENCE_SQL.to_owned(),
+            params: vec![Value::Text(slug.to_owned())],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db(
+                "expected rows from the key-reference probe".to_owned(),
+            ));
+        };
+        Ok(rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|value| match value {
+                Value::Bool(b) => Some(*b),
+                Value::Text(text) => text.parse().ok(),
+                _ => None,
+            })
+            .unwrap_or(false))
     }
 
     async fn create_file(&self, file: NewFile) -> Result<FileRecord, StoreError> {
@@ -926,8 +1208,9 @@ impl Store for PgStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
     ) -> Result<u64, StoreError> {
-        let filter = folder_filter(owner_id, parent_id, kind);
+        let filter = folder_filter(owner_id, parent_id, kind, buckets);
         let cmd = Command::Count {
             table: FileModel::TABLE.to_owned(),
             filter: Some(filter),
@@ -946,10 +1229,11 @@ impl Store for PgStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
         offset: u64,
         limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError> {
-        let filter = folder_filter(owner_id, parent_id, kind);
+        let filter = folder_filter(owner_id, parent_id, kind, buckets);
         let cmd = Command::Select {
             table: FileModel::TABLE.to_owned(),
             filter: Some(filter),

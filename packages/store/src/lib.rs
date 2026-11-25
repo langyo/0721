@@ -21,7 +21,7 @@ pub mod pg;
 pub use memory::MemoryStore;
 pub use migrate::{
     migrations, validate_bootstrap_location, BootstrapBucketParams, MIGRATION_0007_BOOTSTRAP_SQL,
-    MIGRATION_0007_SCHEMA_SQL, ZERO_UUID_SQL,
+    MIGRATION_0007_SCHEMA_SQL, MIGRATION_0008_KEY_BUCKETS_SQL, ZERO_UUID_SQL,
 };
 pub use pg::PgStore;
 
@@ -54,6 +54,27 @@ pub struct CreateUser {
     pub password_hash: Option<String>,
 }
 
+/// The R-F four-state read of one settings row. `Corrupt` carries the
+/// raw stored text (health reports it), `Unreadable` carries the store
+/// error; everything but [`SettingsState::Value`] fails closed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingsState {
+    /// No row for the key.
+    Absent,
+    /// A row exists but its payload is not valid JSON (the raw text).
+    Corrupt {
+        /// The stored text, verbatim.
+        raw: String,
+    },
+    /// Reading the row itself failed (infrastructure).
+    Unreadable {
+        /// The underlying failure text.
+        err: String,
+    },
+    /// A parsed payload.
+    Value(serde_json::Value),
+}
+
 /// Why a store call failed.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -83,6 +104,10 @@ impl From<lacrymira::Error> for StoreError {
 /// The data access surface of the service.
 #[async_trait::async_trait]
 pub trait Store: Send + Sync {
+    /// The `dyn Any` escape hatch — the fixture lanes' downcast to the
+    /// concrete store type (the memory lane's seeding methods are
+    /// inherent, not trait methods). Never used in business code.
+    fn as_any(&self) -> &dyn std::any::Any;
     /// List users by ascending creation, paged.
     async fn list_users(&self, offset: u64, limit: u64) -> Result<Vec<UserRecord>, StoreError>;
 
@@ -105,10 +130,19 @@ pub trait Store: Send + Sync {
 
     /// List live files by descending upload time (the timeline order),
     /// paged.
-    async fn list_files(&self, offset: u64, limit: u64) -> Result<Vec<FileRecord>, StoreError>;
+    /// Every live file, newest first (the admin timeline). `buckets` is
+    /// the §7 pushdown (`None` = unfiltered; the timeline lane pushes
+    /// the caller's visible set — for an admin that is every bucket).
+    async fn list_files(
+        &self,
+        buckets: Option<&[Uuid]>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<FileRecord>, StoreError>;
 
-    /// Count live files.
-    async fn count_files(&self) -> Result<u64, StoreError>;
+    /// Count every live file (the timeline's total). `buckets` mirrors
+    /// [`Store::list_files`] so the count and the rows shrink together.
+    async fn count_files(&self, buckets: Option<&[Uuid]>) -> Result<u64, StoreError>;
 
     /// Fetch one live file by id.
     async fn get_file(&self, id: Uuid) -> Result<Option<FileRecord>, StoreError>;
@@ -195,20 +229,27 @@ pub trait Store: Send + Sync {
     // ── netdisk: scoped listing, folders, moves, shares, quota ──────
 
     /// Count the live rows in a folder listing without fetching them.
+    /// `buckets` is the §7 pushdown (Q14): the caller's VISIBLE bucket
+    /// set (`None` = unfiltered — only the lanes that never carry bucket
+    /// semantics use it); rows outside the set vanish from the count.
     async fn count_folder(
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
     ) -> Result<u64, StoreError>;
 
     /// List one folder's live children (own-tree scope): the caller's
-    /// files whose parent is `parent_id` (None = root).
+    /// files whose parent is `parent_id` (None = root), filtered by the
+    /// same §7 visible-bucket pushdown as [`Store::count_folder`] —
+    /// items AND the total must shrink together.
     async fn list_folder(
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         kind: Option<String>,
+        buckets: Option<&[Uuid]>,
         offset: u64,
         limit: u64,
     ) -> Result<Vec<FileRecord>, StoreError>;
@@ -312,6 +353,83 @@ pub trait Store: Send + Sync {
         &self,
         slug: &str,
     ) -> Result<Option<i0721_proto::StorageBucketRecord>, StoreError>;
+
+    /// Upsert the MUTABLE fields of one bucket (R-A's admin surface;
+    /// identity fields — slug / backend / location / endpoint_ref /
+    /// is_bootstrap — are NOT writable here). Answers the updated row.
+    async fn upsert_storage_bucket(
+        &self,
+        slug: &str,
+        display_name: &str,
+        anonymous_read: bool,
+        grant_on_signup: bool,
+        enabled: bool,
+    ) -> Result<i0721_proto::StorageBucketRecord, StoreError>;
+
+    /// Delete a bucket row by id (the caller has run R-B's three guards).
+    /// Answers whether a row was removed; grant rows cascade.
+    async fn delete_storage_bucket(&self, id: Uuid) -> Result<bool, StoreError>;
+
+    /// Count a bucket's LIVE file rows (folders count — R-B treats a
+    /// folder tree as live content). `bucket_id = None` counts the
+    /// legacy NULL rows the same way.
+    async fn count_live_files_by_bucket(&self, bucket_id: Option<Uuid>) -> Result<u64, StoreError>;
+
+    /// The owner's live dedupe probe WITH the bucket dimension (R-C):
+    /// `Some(row)` when this owner already holds this content in THIS
+    /// bucket; the cross-bucket probe reuses [`Store::get_file_by_owner_and_sha256`].
+    async fn get_file_by_owner_bucket_and_sha256(
+        &self,
+        owner_id: Uuid,
+        bucket_id: Option<Uuid>,
+        sha256: &str,
+    ) -> Result<Option<FileRecord>, StoreError>;
+
+    // ── bucket grants (the P2a authorization face) ──────────────────
+
+    /// One user's grant row for one bucket, if any.
+    async fn get_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+    ) -> Result<Option<i0721_proto::BucketGrantRecord>, StoreError>;
+
+    /// Upsert one grant row (the ONLY write; revocation = an all-false
+    /// row — there is no delete-row action anywhere in the service).
+    async fn set_bucket_grant(
+        &self,
+        user_id: Uuid,
+        bucket_id: Uuid,
+        can_read: bool,
+        can_write: bool,
+        can_share: bool,
+    ) -> Result<(), StoreError>;
+
+    /// Every grant row of one user (the grant-editor page).
+    async fn list_bucket_grants_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError>;
+
+    /// Every grant row on one bucket (the bucket page's grant roster).
+    async fn list_bucket_grants_for_bucket(
+        &self,
+        bucket_id: Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError>;
+
+    /// Whether any LIVE key's `scopes.buckets` array names `slug` (R-B's
+    /// `BUCKET_KEY_REFERENCE_SQL`: `SELECT EXISTS (SELECT 1 FROM api_keys
+    /// WHERE revoked_at IS NULL AND jsonb_typeof(scopes->'buckets') =
+    /// 'array' AND scopes->'buckets' ? $1)`). The PG lane runs the SQL
+    /// verbatim; the memory lane evaluates the same predicate over the
+    /// parsed scopes.
+    async fn a_live_key_references_bucket_slug(&self, slug: &str) -> Result<bool, StoreError>;
+
+    /// The R-F four-state read of one settings row: `Absent` (no row),
+    /// `Corrupt` (a row whose payload does not parse as JSON), `Unreadable`
+    /// (the store itself failed) or `Value` (a parsed payload). Callers
+    /// fail closed on everything but `Value`.
+    async fn settings_state(&self, key: &str) -> Result<SettingsState, StoreError>;
 
     // ── API keys (the MCP wave) ──────────────────────────────────────
     /// Create an API key row.

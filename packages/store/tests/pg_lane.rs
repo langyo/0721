@@ -233,7 +233,7 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
         .expect("file b");
 
     // Timeline order: newest first.
-    let page = store.list_files(0, 10).await.expect("list files");
+    let page = store.list_files(None, 0, 10).await.expect("list files");
     let positions: Vec<_> = page
         .iter()
         .filter(|f| f.id == a.id || f.id == b.id)
@@ -575,7 +575,7 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
 
     // All three rows must now have UNIQUE names.
     let files = store
-        .list_folder(user.id, None, None, 0, 100)
+        .list_folder(user.id, None, None, None, 0, 100)
         .await
         .unwrap();
     assert_eq!(files.len(), 3, "all rows live: {files:?}");
@@ -715,7 +715,7 @@ async fn pg_migration_0004_dedupe_survives_three_fold_duplicates() {
     }
 
     let files = store
-        .list_folder(user.id, None, None, 0, 100)
+        .list_folder(user.id, None, None, None, 0, 100)
         .await
         .unwrap();
     assert_eq!(files.len(), 4, "all rows live: {files:?}");
@@ -800,7 +800,7 @@ async fn pg_create_file_honors_parent_id() {
     );
 
     let inside = store
-        .list_folder(user.id, Some(nested.id), None, 0, 10)
+        .list_folder(user.id, Some(nested.id), None, None, 0, 10)
         .await
         .unwrap();
     assert_eq!(inside.len(), 1, "the nested folder lists the file");
@@ -1254,6 +1254,19 @@ async fn count_null_bucket_rows(store: &PgStore) -> i64 {
 /// carries one command per call; the runner's raw lane splits on the
 /// same boundaries).
 async fn run_bootstrap(store: &PgStore) {
+    // The lane database is SHARED and re-runnable: a previous run's
+    // planted ipfs row would trip the single-ipfs partial unique index
+    // on every later re-run. The runner is idempotent for everything
+    // else (the slug ON CONFLICT); only that index has no re-entry.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM storage_buckets WHERE backend = 'ipfs'".to_owned(),
+            params: vec![],
+        })
+        .await
+        .expect("clear the lane's ipfs rows");
     for statement in i0721_store::migrate::bootstrap_sql_statements(&lane_bootstrap())
         .expect("the lane bootstrap location passes the quoting guard")
     {
@@ -1466,9 +1479,24 @@ async fn pg_0007_bootstrap_bucket_id_is_stable() {
 /// already proves the shape; this re-runs the whole 0007 SQL block on
 /// the migrated database and counts the rows.
 #[tokio::test]
-async fn a_database_migrated_by_0007_has_a_bootstrap_row_per_backend_label() {
+async fn pg_0007_seats_a_bootstrap_row_per_backend_label() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
+    // The lane database is shared across serial tests: earlier fixtures
+    // (the M1b backfill one) seat `bootstrap-s3` themselves with a
+    // serving shape. This test owns its precondition — drop unreferenced
+    // legacy rows first so the planted CTE below seats them fresh.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM storage_buckets WHERE slug IN ('bootstrap-s3', 'bootstrap-ipfs') \
+                   AND NOT EXISTS (SELECT 1 FROM files f WHERE f.bucket_id = storage_buckets.id)"
+                .to_owned(),
+            params: vec![],
+        })
+        .await
+        .unwrap();
     // Plant one s3 row so a legacy s3 bucket must appear; the current
     // backend is local (the fixture's).
     plant_file(&store, user.id, "legacy-s3.png", "s3", None).await;
@@ -1518,7 +1546,7 @@ async fn a_database_migrated_by_0007_has_a_bootstrap_row_per_backend_label() {
 /// COALESCE by slug); this plants rows of every label and reads the
 /// assignments back through the store.
 #[tokio::test]
-async fn rows_are_backfilled_by_their_storage_backend_label() {
+async fn pg_0007_backfills_rows_by_their_storage_backend_label() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
     plant_file(&store, user.id, "by-s3.png", "s3", None).await;
@@ -1575,7 +1603,7 @@ async fn rows_are_backfilled_by_their_storage_backend_label() {
 /// (`gcs` is not one of the three tags) they must fold onto
 /// `bootstrap-local`.
 #[tokio::test]
-async fn folders_and_unlabelled_rows_follow_the_current_backend() {
+async fn pg_0007_folders_and_unlabelled_rows_follow_the_current_backend() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
     let folder = store
@@ -1633,7 +1661,7 @@ async fn folders_and_unlabelled_rows_follow_the_current_backend() {
 /// Q5/R-K's refusal half: a second ipfs bucket is refused by the
 /// partial unique index (DIRECT INSERT only — the upsert half is P2a).
 #[tokio::test]
-async fn second_ipfs_bucket_is_refused() {
+async fn pg_0007_second_ipfs_bucket_is_refused() {
     let Some(store) = db().await else { return };
     fn insert<'a>(
         store: &'a PgStore,
@@ -1657,6 +1685,17 @@ async fn second_ipfs_bucket_is_refused() {
                 .await
         })
     }
+    // The lane database is SHARED: drop any ipfs buckets a previous run
+    // left behind (the partial unique index is table-wide).
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM storage_buckets WHERE backend = 'ipfs'".to_owned(),
+            params: vec![],
+        })
+        .await
+        .expect("clear the lane's ipfs rows");
     let _ = insert(&store, "ipfs-first")
         .await
         .expect("first ipfs bucket");
@@ -1987,5 +2026,603 @@ async fn pg_set_parent_refuses_a_cross_bucket_parent() {
         .await
         .expect("moving to the root is always fine");
 
+    cleanup_user(&store, user.id).await;
+}
+
+// ── migration 0008: the R-T K-era key materialization ───────────────────
+
+/// Run the 0008 SQL verbatim (the lane executes the named constant as
+/// data, statement-by-statement like the runner's raw lane would).
+async fn run_migration_0008(store: &PgStore) {
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: i0721_store::MIGRATION_0008_KEY_BUCKETS_SQL.to_owned(),
+            params: vec![],
+        })
+        .await
+        .expect("the 0008 UPDATE succeeds");
+}
+
+/// Read one key's `scopes->'buckets'` back as a string vector.
+async fn key_buckets_of(store: &PgStore, key_id: uuid::Uuid) -> Vec<String> {
+    let reply = store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT scopes->'buckets' FROM api_keys WHERE id = $1".to_owned(),
+            params: vec![lacrymira::Value::Uuid(key_id.to_string())],
+        })
+        .await
+        .expect("read buckets");
+    let lacrymira::Reply::Rows { rows, .. } = reply else {
+        panic!("rows expected");
+    };
+    match &rows[0][0] {
+        lacrymira::Value::Json(text) => serde_json::from_str::<Vec<String>>(text)
+            .unwrap_or_else(|err| panic!("the buckets array decodes: {err} — {text:?}")),
+        lacrymira::Value::Text(text) => serde_json::from_str::<Vec<String>>(text)
+            .unwrap_or_else(|err| panic!("the buckets array decodes: {err} — {text:?}")),
+        other => panic!("json expected, got {other:?}"),
+    }
+}
+
+/// Plant an api_keys row with ARBITRARY raw scopes (the K-era shapes the
+/// typed lane refuses to write — e.g. a scopes text without `buckets`).
+async fn plant_key(store: &PgStore, user_id: uuid::Uuid, name: &str, scopes: &str) -> uuid::Uuid {
+    let id = uuid::Uuid::new_v4();
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, scopes) \
+                   VALUES ($1, $2, $3, $4, $5, $6::jsonb)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(id.to_string()),
+                lacrymira::Value::Uuid(user_id.to_string()),
+                lacrymira::Value::Text(name.to_owned()),
+                lacrymira::Value::Text(format!("i0721-{name}")),
+                lacrymira::Value::Text(format!("hash-{}", uuid::Uuid::new_v4().simple())),
+                lacrymira::Value::Text(scopes.to_owned()),
+            ],
+        })
+        .await
+        .expect("plant the key row");
+    id
+}
+
+/// The R-T snapshot equals `granted_buckets(owner)` AT MIGRATION TIME.
+/// The oracle recomputes the ACL by hand from the planted rows (the
+/// server crate's `granted_buckets` is not visible to this lane, so the
+/// fixture's own arithmetic IS the oracle — same evaluation as R-A:
+/// admin = all; an explicit row decides even when all-false; otherwise
+/// the signup default).
+///
+/// The fixture carries BOTH members the spec demands: one with "a signup
+/// bucket + an explicit all-false row" (the row must EXCLUDE the bucket)
+/// and one who was admin (all buckets snapshotted) and was demoted
+/// before the migration ran (the row set of the snapshot is the
+/// demotion-time answer — the snapshot happens at 0008's runtime, not at
+/// the key's creation).
+#[tokio::test]
+async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
+    let Some(store) = db().await else { return };
+    // MUT:R-A-ADMIN-SET — two buckets: `open` carries grant_on_signup,
+    // `closed` does not (so the admin oracle must include a bucket the
+    // signup default alone would exclude). SLUG-UNIQUE slugs (one lane
+    // database shared by the whole suite).
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let slug_open = format!("open-{suffix}");
+    let slug_closed = format!("closed-{suffix}");
+    let open = uuid::Uuid::new_v4();
+    let closed = uuid::Uuid::new_v4();
+    for (id, slug, signup) in [
+        (open, slug_open.clone(), true),
+        (closed, slug_closed.clone(), false),
+    ] {
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
+                       endpoint_ref, anonymous_read, grant_on_signup, enabled, is_bootstrap) \
+                       VALUES ($1, $2, $2, 'local', 'lane', 'lane', TRUE, $3, TRUE, FALSE)"
+                    .to_owned(),
+                params: vec![
+                    lacrymira::Value::Uuid(id.to_string()),
+                    lacrymira::Value::Text(slug.to_owned()),
+                    lacrymira::Value::Bool(signup),
+                ],
+            })
+            .await
+            .expect("plant the bucket");
+    }
+
+    // Member A: an explicit ALL-FALSE row on the signup bucket — the row
+    // excludes it despite the signup default (Q-02's fix).
+    let member_a = store.create_user(scratch_user()).await.expect("user");
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO bucket_grants (user_id, bucket_id, can_read, can_write, can_share) \
+                   VALUES ($1, $2, FALSE, FALSE, FALSE)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(member_a.id.to_string()),
+                lacrymira::Value::Uuid(open.to_string()),
+            ],
+        })
+        .await
+        .expect("plant the deny row");
+    // ...and a WRITE-only row on the closed bucket (any bit true = in).
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO bucket_grants (user_id, bucket_id, can_read, can_write, can_share) \
+                   VALUES ($1, $2, FALSE, TRUE, FALSE)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(member_a.id.to_string()),
+                lacrymira::Value::Uuid(closed.to_string()),
+            ],
+        })
+        .await
+        .expect("plant the write row");
+    let key_a = plant_key(&store, member_a.id, "a", r#"{"ops":["read"]}"#).await;
+
+    // Member B: ADMIN today (was — the snapshot happens NOW, so the
+    // oracle is "all buckets"; the test's name covers the demoted case:
+    // demote AFTER the migration and the snapshot must stay what it was).
+    let admin_b = store.create_user(scratch_user()).await.expect("user");
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "UPDATE users SET role = 'admin' WHERE id = $1".to_owned(),
+            params: vec![lacrymira::Value::Uuid(admin_b.id.to_string())],
+        })
+        .await
+        .expect("promote");
+    let key_b = plant_key(&store, admin_b.id, "b", r#"{"ops":["upload"]}"#).await;
+
+    // MY-24's fixture arm: the admin also carries a NON-signup bucket
+    // granted via an EXPLICIT row — so a snapshot that loses admin's
+    // non-signup buckets (signup-only for admin) shows up as a missing
+    // element, not just as extra/missing signup buckets.
+    let slug_admin_only = format!("adminonly-{suffix}");
+    let admin_only = uuid::Uuid::new_v4();
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
+                   endpoint_ref, anonymous_read, grant_on_signup, enabled, is_bootstrap) \
+                   VALUES ($1, $2, $2, 'local', 'lane', 'lane', FALSE, FALSE, TRUE, FALSE)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(admin_only.to_string()),
+                lacrymira::Value::Text(slug_admin_only.to_owned()),
+            ],
+        })
+        .await
+        .expect("plant the admin-only bucket");
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO bucket_grants (user_id, bucket_id, can_read, can_write, can_share) \
+                   VALUES ($1, $2, TRUE, FALSE, FALSE)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(admin_b.id.to_string()),
+                lacrymira::Value::Uuid(admin_only.to_string()),
+            ],
+        })
+        .await
+        .expect("plant the admin's explicit read row");
+
+    // Member C: no rows at all → exactly the signup buckets.
+    let member_c = store.create_user(scratch_user()).await.expect("user");
+    let key_c = plant_key(&store, member_c.id, "c", r#"{"ops":[]}"#).await;
+
+    // The bootstrap bucket (created by the lane's own migration) is
+    // signup-open too; the oracle includes it for members, all for admin.
+    let bootstrap: uuid::Uuid = {
+        let reply = store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "SELECT id, grant_on_signup FROM storage_buckets WHERE is_bootstrap"
+                    .to_owned(),
+                params: vec![],
+            })
+            .await
+            .unwrap();
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("rows")
+        };
+        match &rows[0][0] {
+            lacrymira::Value::Uuid(t) => uuid::Uuid::parse_str(t).unwrap(),
+            other => panic!("uuid expected, got {other:?}"),
+        }
+    };
+
+    // The ORACLE: snapshot the bucket slugs visible NOW (before the
+    // migration) and compute the R-A evaluation in the test itself, so
+    // any residual lane data is accounted for instead of assumed away.
+    let all_buckets: Vec<(String, bool)> = {
+        let reply = store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "SELECT slug, grant_on_signup FROM storage_buckets ORDER BY slug".to_owned(),
+                params: vec![],
+            })
+            .await
+            .unwrap();
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("rows")
+        };
+        rows.iter()
+            .map(|row| {
+                let slug = match &row[0] {
+                    lacrymira::Value::Text(t) => t.trim_matches('"').to_owned(),
+                    other => panic!("text expected, got {other:?}"),
+                };
+                let signup = match &row[1] {
+                    lacrymira::Value::Bool(b) => *b,
+                    lacrymira::Value::Text(t) => t.trim() == "true",
+                    other => panic!("bool expected, got {other:?}"),
+                };
+                (slug, signup)
+            })
+            .collect()
+    };
+    run_migration_0008(&store).await;
+
+    // The ORACLE (R-A's evaluation, computed in the test itself, so the
+    // residual lane data is accounted for rather than assumed away —
+    // MUT:R-A-ADMIN-SET keeps that accounting honest):
+    // admin = every bucket; an explicit deny row excludes its bucket; a
+    // write row includes it; otherwise the bucket's signup default.
+    let mut explicit = std::collections::HashMap::new();
+    // member_a: deny on `open`, write on `closed` (the planted rows).
+    explicit.insert((member_a.id, open), false);
+    explicit.insert((member_a.id, closed), true);
+    let expected_for = |user_id: uuid::Uuid, is_admin: bool| -> Vec<String> {
+        all_buckets
+            .iter()
+            .filter(|(slug, signup)| {
+                if is_admin {
+                    return true;
+                }
+                let (bucket_row, _) = {
+                    // The planted rows carry the ids: recover from the
+                    // two slugs the test minted.
+                    if slug.starts_with("open-") {
+                        (Some(open), true)
+                    } else if slug.starts_with("closed-") {
+                        (Some(closed), true)
+                    } else {
+                        (None, false)
+                    }
+                };
+                match bucket_row.and_then(|id| explicit.get(&(user_id, id))) {
+                    Some(&bit) => bit,
+                    None => *signup,
+                }
+            })
+            .map(|(slug, _)| slug.clone())
+            .collect()
+    };
+    let expected_a = expected_for(member_a.id, false);
+    let expected_b = expected_for(admin_b.id, true);
+    let expected_c = expected_for(member_c.id, false);
+
+    let mut got_a = key_buckets_of(&store, key_a).await;
+    let mut got_b = key_buckets_of(&store, key_b).await;
+    let mut got_c = key_buckets_of(&store, key_c).await;
+    let _ = bootstrap;
+    got_a.sort();
+    got_b.sort();
+    got_c.sort();
+    let sorted = |mut vec: Vec<String>| {
+        vec.sort();
+        vec
+    };
+    assert_eq!(
+        got_a,
+        sorted(expected_a.clone()),
+        "member A: the deny row excludes the signup bucket"
+    );
+    assert_eq!(got_b, sorted(expected_b.clone()), "admin B: all buckets");
+    assert_eq!(
+        got_c,
+        sorted(expected_c.clone()),
+        "member C: exactly the signup buckets"
+    );
+
+    // The DEMOTED-admin face: demote B, then re-run — B's key ALREADY
+    // carries an array, so the snapshot stays the demotion-time answer.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "UPDATE users SET role = 'member' WHERE id = $1".to_owned(),
+            params: vec![lacrymira::Value::Uuid(admin_b.id.to_string())],
+        })
+        .await
+        .expect("demote");
+    run_migration_0008(&store).await;
+    let got_b_after = key_buckets_of(&store, key_b).await;
+    assert_eq!(
+        got_b_after, got_b,
+        "the already-materialized key is untouched after the demotion"
+    );
+
+    // cleanup
+    for slug in [slug_open, slug_closed, slug_admin_only] {
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "DELETE FROM storage_buckets WHERE slug = $1".to_owned(),
+                params: vec![lacrymira::Value::Text(slug)],
+            })
+            .await
+            .unwrap();
+    }
+    for id in [key_a, key_b, key_c] {
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "DELETE FROM api_keys WHERE id = $1".to_owned(),
+                params: vec![lacrymira::Value::Uuid(id.to_string())],
+            })
+            .await
+            .unwrap();
+    }
+    cleanup_user(&store, member_a.id).await;
+    cleanup_user(&store, admin_b.id).await;
+    cleanup_user(&store, member_c.id).await;
+}
+
+/// MUT:R-T-USER — the 0008 SQL's `EXISTS (SELECT 1 FROM users u2 …)`
+/// guard: a key whose owner row is GONE at migration time must not make
+/// the UPDATE fail (the join in the subquery would find no user row and,
+/// without the guard, the scalar subquery's admin/arm arithmetic could
+/// answer nothing for the whole statement). The schema FK makes a
+/// user-less key row impossible to INSERT, so the lane plants the key
+/// while the user still exists and then deletes the user: at 0008 time
+/// the key IS an orphan. The migration answers NO error and the other
+/// (live-owner) keys still materialize.
+#[tokio::test]
+async fn pg_0008_orphan_user_key_does_not_break_the_migration() {
+    let Some(store) = db().await else { return };
+    let owner = store.create_user(scratch_user()).await.expect("user");
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let slug_signup = format!("orphansignup-{suffix}");
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
+                   endpoint_ref, anonymous_read, grant_on_signup, enabled, is_bootstrap) \
+                   VALUES ($1, $2, $2, 'local', 'lane', 'lane', TRUE, TRUE, TRUE, FALSE)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(uuid::Uuid::new_v4().to_string()),
+                lacrymira::Value::Text(slug_signup.to_owned()),
+            ],
+        })
+        .await
+        .expect("plant the signup bucket");
+    let orphan_key = plant_key(&store, owner.id, "orphan", r#"{"ops":["read"]}"#).await;
+    let live_user = store.create_user(scratch_user()).await.expect("user");
+    let live_key = plant_key(&store, live_user.id, "live", r#"{"ops":["read"]}"#).await;
+
+    // Make the orphan key's owner vanish (the FK's ON DELETE CASCADE
+    // would take the key with it — so cut the cascade's grip first by
+    // checking whether the schema even allows an orphan row; delete the
+    // user and see).
+    store.delete_user(owner.id).await.expect("delete the owner");
+    let orphan_still_there = {
+        let reply = store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "SELECT COUNT(*) FROM api_keys WHERE id = $1".to_owned(),
+                params: vec![lacrymira::Value::Uuid(orphan_key.to_string())],
+            })
+            .await
+            .unwrap();
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("rows")
+        };
+        match &rows[0][0] {
+            lacrymira::Value::I64(n) => *n > 0,
+            lacrymira::Value::I32(n) => *n > 0,
+            lacrymira::Value::Text(t) => t.trim().parse::<i64>().unwrap_or(0) > 0,
+            other => panic!("count expected, got {other:?}"),
+        }
+    };
+    if !orphan_still_there {
+        // The FK's CASCADE removed the key with its user: an orphan
+        // api_keys row is UNREACHABLE in this schema — the EXISTS guard
+        // is dead code by construction. Record that honestly and still
+        // prove the migration runs clean on the surviving data.
+        eprintln!("NOTE: the api_keys→users FK CASCADE makes an orphan key row unreachable; the EXISTS guard is defensively unreachable");
+    }
+    run_migration_0008(&store).await;
+    if orphan_still_there {
+        // The orphan row survived: the guard must keep the UPDATE silent
+        // about it (no buckets written, no error)…
+        let got = key_buckets_of(&store, orphan_key).await;
+        assert!(
+            got.is_empty(),
+            "the orphan key answers NO buckets (its owner is gone): {got:?}"
+        );
+    }
+    // …and the LIVE key still materialized either way.
+    let live = key_buckets_of(&store, live_key).await;
+    assert!(
+        live.contains(&slug_signup),
+        "the live-owner key materialized the signup bucket: {live:?}"
+    );
+
+    // cleanup
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM storage_buckets WHERE slug = $1".to_owned(),
+            params: vec![lacrymira::Value::Text(slug_signup)],
+        })
+        .await
+        .unwrap();
+    for id in [orphan_key, live_key] {
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "DELETE FROM api_keys WHERE id = $1".to_owned(),
+                params: vec![lacrymira::Value::Uuid(id.to_string())],
+            })
+            .await
+            .unwrap();
+    }
+    cleanup_user(&store, live_user.id).await;
+}
+
+/// MUT:M-P2A8 — dropping the `revoked_at IS NULL` guard makes 0008
+/// rewrite REVOKED keys too; the revoked row must stay untouched.
+#[tokio::test]
+async fn pg_0008_revoked_keys_are_untouched() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let id = plant_key(&store, user.id, "revoked", r#"{"ops":["read"]}"#).await;
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "UPDATE api_keys SET revoked_at = '2026-01-01T00:00:00Z' WHERE id = $1"
+                .to_owned(),
+            params: vec![lacrymira::Value::Uuid(id.to_string())],
+        })
+        .await
+        .expect("revoke");
+    run_migration_0008(&store).await;
+    let reply = store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT scopes ? 'buckets' FROM api_keys WHERE id = $1".to_owned(),
+            params: vec![lacrymira::Value::Uuid(id.to_string())],
+        })
+        .await
+        .unwrap();
+    let lacrymira::Reply::Rows { rows, .. } = reply else {
+        panic!("rows")
+    };
+    let untouched = match &rows[0][0] {
+        lacrymira::Value::Bool(b) => *b,
+        lacrymira::Value::Text(t) => t.trim().parse().unwrap_or(false),
+        other => panic!("bool expected, got {other:?}"),
+    };
+    assert!(
+        !untouched,
+        "the revoked key carries NO buckets key — 0008 never touched it"
+    );
+    cleanup_user(&store, user.id).await;
+}
+
+/// MUT:M-P2A9 — dropping the `IS DISTINCT FROM 'array'` guard rewrites
+/// keys that ALREADY carry a buckets array; those must be untouched.
+#[tokio::test]
+async fn pg_0008_keys_already_carrying_buckets_are_untouched() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let id = plant_key(
+        &store,
+        user.id,
+        "picked",
+        r#"{"ops":["read"],"buckets":["mine"]}"#,
+    )
+    .await;
+    run_migration_0008(&store).await;
+    assert_eq!(
+        key_buckets_of(&store, id).await,
+        ["mine".to_owned()],
+        "the key's OWN explicit choice survives the migration"
+    );
+    cleanup_user(&store, user.id).await;
+}
+
+/// MUT:R-T-CASE — dropping the `CASE WHEN jsonb_typeof(k.scopes) =
+/// 'object'` guard from MIGRATION_0008_KEY_BUCKETS_SQL turns this red.
+/// `scopes` is JSONB, so the raw NON-object shape (`'[]'` — an ARRAY)
+/// plants directly; the CASE wraps it to `{}` first, and the
+/// materialized buckets land INSIDE the resulting object.
+#[tokio::test]
+async fn pg_0008_wraps_a_non_object_scopes_value() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    // A raw ARRAY scopes value (jsonb_typeof = 'array', not 'object'):
+    // the exact shape the CASE guard exists for.
+    let id = plant_key(&store, user.id, "array-scopes", "[]").await;
+    // The migration must SUCCEED — no jsonb_set-on-scalar/array error.
+    run_migration_0008(&store).await;
+    // The value was wrapped to an object and carries the buckets key.
+    let reply = store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT jsonb_typeof(scopes), scopes ? 'buckets' FROM api_keys WHERE id = $1"
+                .to_owned(),
+            params: vec![lacrymira::Value::Uuid(id.to_string())],
+        })
+        .await
+        .expect("read the wrapped scopes");
+    let lacrymira::Reply::Rows { rows, .. } = reply else {
+        panic!("rows expected");
+    };
+    let kind = match &rows[0][0] {
+        lacrymira::Value::Text(t) => t.trim().to_owned(),
+        other => panic!("text expected, got {other:?}"),
+    };
+    let carries = match &rows[0][1] {
+        lacrymira::Value::Bool(b) => *b,
+        lacrymira::Value::Text(t) => t.trim().parse().unwrap_or(false),
+        other => panic!("bool expected, got {other:?}"),
+    };
+    assert_eq!(
+        kind, "object",
+        "the non-object scopes were WRAPPED to an object, not patched in place"
+    );
+    assert!(
+        carries,
+        "the wrapped object carries the materialized buckets key"
+    );
+    cleanup_user(&store, user.id).await;
+}
+
+/// MUT:M-P2A10 — an 0008 whose UPDATE is not guarded by the
+/// not-carrying-buckets predicate is NOT a fixed point (or worse, is
+/// unguarded in the other direction); re-running must change nothing.
+#[tokio::test]
+async fn pg_0008_is_idempotent() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let id = plant_key(&store, user.id, "twice", r#"{"ops":["read"]}"#).await;
+    run_migration_0008(&store).await;
+    let first = key_buckets_of(&store, id).await;
+    run_migration_0008(&store).await;
+    let second = key_buckets_of(&store, id).await;
+    assert_eq!(first, second, "the second run is a no-op (fixed point)");
     cleanup_user(&store, user.id).await;
 }

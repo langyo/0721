@@ -12,6 +12,10 @@ vi.mock("@/api", () => ({
   uploadFile: (...args: unknown[]) => uploadFileMock(...args),
   deleteFile: (...args: unknown[]) => deleteFileMock(...args),
 }));
+const listBucketsMock = vi.fn();
+vi.mock("@/api/buckets", () => ({
+  listBuckets: (...args: unknown[]) => listBucketsMock(...args),
+}));
 
 import PortalView from "./PortalView";
 import { HkToast, useToast } from "@celestia-island/hikari";
@@ -235,5 +239,67 @@ describe("PortalView", () => {
     );
     // The row survives a failed delete.
     expect(wrapper.findAll(".portal-tile").length).toBe(1);
+  });
+});
+
+describe("PortalView upload bucket dropdown (P2a / R-I)", () => {
+  // The dropdown feeds from the visibility-scoped registry list; the
+  // picked slug rides the upload call as its third argument (the api
+  // layer turns it into `?bucket=`). MUT:B-P2A-UPLOAD-PARAM — dropping
+  // the picked slug from the upload call reddens this.
+  beforeEach(() => {
+    listFilesMock.mockReset().mockResolvedValue({ total: 0, offset: 0, limit: 30, items: [] });
+    uploadFileMock.mockReset().mockResolvedValue(undefined);
+    deleteFileMock.mockReset();
+    listBucketsMock.mockReset().mockResolvedValue({
+      buckets: [
+        { slug: "media", my_access: { read: true, write: true, share: true } },
+        { slug: "archive", my_access: { read: true, write: true, share: true } },
+      ],
+    });
+  });
+
+  it("renders the picker when readable buckets exist", async () => {
+    const wrapper = await mountView();
+    expect(wrapper.find('[data-testid="upload-bucket-select"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("sends the picked slug with the upload", async () => {
+    const wrapper = await mountView();
+    // Pick "archive" by driving the picker's select.
+    const select = wrapper.find('[data-testid="upload-bucket-select"]');
+    await select.find(".hk-select-trigger").trigger("click");
+    await flushPromises();
+    // The popup layer carries per-instance state; a second open attempt
+    // is a no-op when already open but recovers a swallowed first click.
+    if (select.find(".hk-select-trigger").attributes("data-state") !== "open") {
+      await select.find(".hk-select-trigger").trigger("click");
+      await flushPromises();
+    }
+
+    // The panel TELEPORTS to <body> and a previous case's leftover panel
+    // is not removed by wrapper.unmount — take the LAST match (the live
+    // panel), not a stale leftover.
+    const option = [...document.querySelectorAll(".hk-select-option")]
+      .filter((el) => el.textContent?.trim() === "archive")
+      .at(-1) as HTMLElement | undefined;
+    expect(option).toBeDefined();
+
+    option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    const input = wrapper.find('[data-testid="upload-input"]').element as HTMLInputElement;
+    const file = new File(["x"], "a.png");
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    input.dispatchEvent(new Event("change"));
+    await flushPromises();
+
+    // An earlier case's upload rode the same mock — assert THIS case's
+    // call (the last one).
+
+    const [, , bucket] = uploadFileMock.mock.calls.at(-1) as [File, unknown, string | undefined];
+    expect(bucket).toBe("archive");
+    wrapper.unmount();
   });
 });

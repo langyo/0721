@@ -21,6 +21,7 @@
 //! one chain means the next lane cannot repeat that.
 
 use bytes::Bytes;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::api::settings::site_config;
@@ -49,6 +50,10 @@ pub struct UploadInput {
     pub folder_id: Option<Uuid>,
     /// The uploaded bytes, exactly as the client sent them.
     pub data: Bytes,
+    /// The target-bucket slug override (REST `?bucket=`, MCP
+    /// `upload_file.bucket`). `None` = the `storage_defaults` default
+    /// bucket, then the bootstrap bucket — R-I's only outlet.
+    pub bucket: Option<String>,
 }
 
 /// What [`run_upload`] produced.
@@ -59,6 +64,90 @@ pub struct Uploaded {
     /// dedupe answered with an existing one — the REST lane's `201` vs
     /// `200`.
     pub created: bool,
+}
+
+/// The default-bucket settings key (R-F / R-I): its value is the JSON
+/// string of ONE bucket slug. Written only by `storage.defaults.set`.
+pub const DEFAULT_BUCKET_SETTINGS_KEY: &str = "storage_defaults";
+
+/// The R-F four-state read of the default-bucket setting, collapsed to
+/// the upload lane's decision: `Some(slug)` only from a `Value` holding
+/// a non-empty JSON string; `Absent` → `None` (unconfigured = bootstrap);
+/// everything else is an ERROR naming the key and its state (fail-closed,
+/// never a silent fallback — I2).
+async fn default_bucket_slug(state: &AppState) -> Result<Option<String>, ApiError> {
+    use i0721_store::SettingsState;
+    match state
+        .store
+        .settings_state(DEFAULT_BUCKET_SETTINGS_KEY)
+        .await?
+    {
+        SettingsState::Absent => Ok(None),
+        SettingsState::Value(value) => match value.as_str() {
+            Some(slug) if !slug.is_empty() => Ok(Some(slug.to_owned())),
+            _ => Err(ApiError::internal(format!(
+                "the {DEFAULT_BUCKET_SETTINGS_KEY} setting is corrupt (not a bucket slug): {value}"
+            ))),
+        },
+        SettingsState::Corrupt { raw } => Err(ApiError::internal(format!(
+            "the {DEFAULT_BUCKET_SETTINGS_KEY} setting is corrupt: {raw:?}"
+        ))),
+        SettingsState::Unreadable { err } => Err(ApiError::internal(format!(
+            "the {DEFAULT_BUCKET_SETTINGS_KEY} setting is unreadable: {err}"
+        ))),
+    }
+}
+
+/// Resolve the upload target bucket with R-A visibility (the ONLY place
+/// `run_upload` gets a bucket — R-I). The override wins; then the
+/// default slug; then the bootstrap bucket. An INVISIBLE bucket answers
+/// 404 (§7: a member must not learn that a hidden slug exists); a
+/// VISIBLE but unservable bucket answers 500 / `-32010`.
+async fn resolve_target_bucket(
+    state: &AppState,
+    user: &UserRecord,
+    override_slug: Option<&str>,
+) -> Result<
+    (
+        Uuid,
+        i0721_proto::BucketBackend,
+        Arc<dyn crate::blob::BlobStore>,
+    ),
+    ApiError,
+> {
+    use crate::bucket_acl::resolve_access;
+    let default_slug = default_bucket_slug(state).await?;
+    let effective = override_slug.or(default_slug.as_deref());
+    let Some(slug) = effective else {
+        // Neither override nor default: the bootstrap bucket (P1's
+        // behavior; admins need no grant row for it).
+        return state
+            .registry
+            .resolve_upload_bucket(None, None)
+            .map_err(registry_error);
+    };
+    // An explicit slug: load the row, gate visibility, then resolve.
+    let bucket = state
+        .store
+        .get_storage_bucket_by_slug(slug)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("no such bucket: {slug}")))?;
+    let access = resolve_access(state.store.as_ref(), user, &bucket).await?;
+    if !access.any() {
+        // Invisible to this user: 404 (§7 REST column; the MCP lane maps
+        // it onto `isError` + not found).
+        return Err(ApiError::not_found(format!("no such bucket: {slug}")));
+    }
+    state
+        .registry
+        .resolve_upload_bucket(Some(slug), None)
+        .map_err(registry_error)
+}
+
+/// The registry failure → the §7 storage-unavailable shape (500; the RPC
+/// lanes map `internal` onto `-32010`).
+fn registry_error(err: crate::blob_registry::BlobError) -> ApiError {
+    ApiError::internal(format!("storage backend unavailable: {err}"))
 }
 
 /// Run the upload chain for one authenticated user.
@@ -79,6 +168,7 @@ pub async fn run_upload(
         source_name,
         folder_id,
         data,
+        bucket,
     } = input;
 
     // 1. The site config drives the pipeline (size limit + WebP), read
@@ -155,14 +245,21 @@ pub async fn run_upload(
         .unwrap_or_else(|| processed.sha256.clone());
     validate_file_name(&display_name).map_err(|err| ApiError::bad_request(err.to_string()))?;
 
-    // 8. Dedupe runs AFTER the gates on purpose: a re-upload of content
-    // the caller already owns still has to satisfy the folder/quota/name
-    // gates of THIS request — otherwise an over-quota or foreign-folder
-    // re-upload would answer 200 without ever being checked (the hole
-    // this ordering closes; pinned by the over-quota re-upload test).
+    // 8. The dedupe probes run AFTER the gates on purpose (see the
+    // comment above the old ordering — the over-quota re-upload test).
+    //
+    // R-C, two steps with the bucket dimension:
+    //   (a) same-bucket probe: `(owner, THIS bucket, sha)` hit → 200 with
+    //       the existing row (the historical behavior, now bucket-aware);
+    //   (b) cross-bucket probe: the SAME content live in ANOTHER of the
+    //       owner's buckets → the explicit `-32007` conflict naming no
+    //       bucket ("delete it there first").
+    let (bucket_id, backend_tag, bucket_store) =
+        resolve_target_bucket(state, user, bucket.as_deref()).await?;
+    let storage_backend = backend_tag.as_str().to_owned();
     if let Some(existing) = state
         .store
-        .get_file_by_owner_and_sha256(user.id, &processed.sha256)
+        .get_file_by_owner_bucket_and_sha256(user.id, Some(bucket_id), &processed.sha256)
         .await?
     {
         return Ok(Uploaded {
@@ -170,21 +267,28 @@ pub async fn run_upload(
             created: false,
         });
     }
+    if let Some(elsewhere) = state
+        .store
+        .get_file_by_owner_and_sha256(user.id, &processed.sha256)
+        .await?
+    {
+        // The old probe hit a row in ANOTHER bucket (the same-bucket arm
+        // above missed): refuse without naming the bucket (R-C).
+        let _ = elsewhere;
+        return Err(ApiError::conflict(
+            "this content is already stored in another bucket of yours; \
+             delete it there first if you want it here",
+        ));
+    }
 
     // 9. Same bytes ⇒ same key ⇒ idempotent write even when another owner
     // already placed the blob (write-then-rename underneath).
     //
-    // The bucket axis (R-I): the upload target comes ONLY from
-    // `resolve_upload_bucket` — in this slice the override is always
-    // `None`, so it resolves to the enabled bootstrap bucket. A
-    // resolution failure is an ERROR; there is no fallback to any other
-    // bucket (I2). `run_upload` never reads `config.storage_backend`:
+    // The bucket axis (R-I): the target came from
+    // `resolve_target_bucket` above — override, then default, then the
+    // bootstrap bucket; a resolution failure is an ERROR, never a
+    // fallback (I2). `run_upload` never reads `config.storage_backend`:
     // the row's tag is the resolved bucket's backend.
-    let (bucket_id, backend_tag, bucket_store) = state
-        .registry
-        .resolve_upload_bucket(None)
-        .map_err(|err| ApiError::internal(format!("storage backend unavailable: {err}")))?;
-    let storage_backend = backend_tag.as_str().to_owned();
     let storage_key = processed.sha256.clone();
     let thumbnail_key = processed
         .thumbnail
@@ -227,7 +331,7 @@ pub async fn run_upload(
         // unique index -- distinguish by looking the content up.
         Err(i0721_store::StoreError::Conflict(_)) => state
             .store
-            .get_file_by_owner_and_sha256(user.id, &processed.sha256)
+            .get_file_by_owner_bucket_and_sha256(user.id, Some(bucket_id), &processed.sha256)
             .await?
             .ok_or_else(|| {
                 ApiError::conflict("a row with this name already exists in this folder")

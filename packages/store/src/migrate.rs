@@ -123,6 +123,29 @@ pub const FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL: &str =
      COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name) \
      WHERE deleted_at IS NULL";
 
+/// The migration-0008 K-era key materialization (R-T), copied VERBATIM
+/// from B-SPEC §2 R-T: every live key whose `scopes` does not yet carry a
+/// `buckets` array gets the snapshot of its owner's granted buckets AT
+/// MIGRATION TIME (admin = every bucket; member = explicit grant rows
+/// with any bit true ∪ `grant_on_signup` buckets — an explicit all-false
+/// row therefore EXCLUDES the bucket, exactly like the R-A evaluation).
+///
+/// Idempotent by construction: the WHERE clause only touches keys whose
+/// `scopes->'buckets'` is not an array, so a re-run (or a re-apply after
+/// a partial failure) changes nothing. Dollar-quote-safe by construction:
+/// the text carries no `$` at all.
+pub const MIGRATION_0008_KEY_BUCKETS_SQL: &str = "UPDATE api_keys k SET scopes = jsonb_set(
+       CASE WHEN jsonb_typeof(k.scopes) = 'object' THEN k.scopes ELSE '{}'::jsonb END, '{buckets}',
+       COALESCE((SELECT jsonb_agg(b.slug ORDER BY b.slug) FROM (
+           SELECT sb.slug FROM storage_buckets sb JOIN users u ON u.id = k.user_id
+            WHERE (u.role = 'admin'
+                   OR COALESCE((SELECT g.can_read OR g.can_write OR g.can_share
+                                  FROM bucket_grants g
+                                 WHERE g.user_id = k.user_id AND g.bucket_id = sb.id LIMIT 1),
+                               sb.grant_on_signup))) b), '[]'::jsonb), true)
+ WHERE k.revoked_at IS NULL AND jsonb_typeof(k.scopes -> 'buckets') IS DISTINCT FROM 'array'
+   AND EXISTS (SELECT 1 FROM users u2 WHERE u2.id = k.user_id)";
+
 /// The bucket-dimension dedupe index 0007 installs (statement 6a). The
 /// legacy `(owner_id, sha256)` index is deliberately KEPT (spec Q1).
 pub const FILES_OWNER_BUCKET_SHA256_LIVE_KEY_SQL: &str =
@@ -426,10 +449,25 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
         ),
     ];
 
+    // 0008 (the P2a materialization) runs on EVERY database — it needs
+    // no bootstrap facts (it only reads tables that 0007 created, and it
+    // sorts after 0007, so the runner never sees it before them). It is
+    // pushed BEFORE the facts gate: the P1→P2a upgrade path is a database
+    // where 0007 is already applied and the env is gone (legal per R-U),
+    // and the K-era keys must still materialize there.
+    out.push(Migration::new(
+        "20261122000008",
+        "materialize scopes.buckets onto every live K-era key (R-T snapshot of granted_buckets)",
+        MIGRATION_0008_KEY_BUCKETS_SQL.to_owned(),
+    ));
+
     // 0007 (the bucket wave) is appended ONLY when the caller resolved
     // the bootstrap facts — the R-U wiring: a missing
     // `I0721_STORAGE_BACKEND` while 0007 is pending must fail the start
     // BEFORE any migration runs, never run the migration half-built.
+    // The list is kept version-sorted for every caller (the runner sorts
+    // anyway, but the static invariants read it in order).
+    out.sort_by(|a, b| a.version.cmp(&b.version));
     let Some(bootstrap) = bootstrap else {
         return out;
     };
@@ -459,6 +497,8 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
             bucket_key_index = FILES_BUCKET_STORAGE_KEY_INDEX_SQL,
         ),
     ));
+
+    out.sort_by(|a, b| a.version.cmp(&b.version));
     out
 }
 
@@ -614,15 +654,20 @@ mod tests {
         versions.dedup();
         assert_eq!(versions.len(), all.len());
         assert!(all.iter().all(|m| !m.sql.trim().is_empty()));
-        // Without the bootstrap facts 0007 is absent: the R-U wiring's
-        // "no values, no migration" shape.
+        // Without the bootstrap facts 0007 is absent (the R-U wiring's
+        // "no values, no migration" shape) while 0008 — which needs no
+        // facts — is present.
         let without = super::migrations(None);
         assert!(
             without.iter().all(|m| m.version != "20261122000007"),
             "0007 is only appended when the bootstrap facts are known"
         );
-        assert_eq!(without.len(), 6);
-        assert_eq!(all.len(), 7);
+        assert!(
+            without.iter().any(|m| m.version == "20261122000008"),
+            "0008 runs on every database"
+        );
+        assert_eq!(without.len(), 7);
+        assert_eq!(all.len(), 8);
     }
 
     /// A fixed bootstrap parameter set for the static tests.
@@ -677,6 +722,35 @@ mod tests {
                 .sql
                 .contains(MIGRATION_0006_NORMALIZE_SQL.trim_end_matches(';')),
             "the migration runs the SHARED normalization the PG lane re-runs"
+        );
+        // ...and the same static shape holds for 0008: version after
+        // 0007, idempotent by its WHERE guard, needs no bootstrap facts.
+        let all = migrations(Some(&bootstrap_params()));
+        assert!(
+            all.iter()
+                .filter(|m| m.version.as_str() >= "20261122000008")
+                .count()
+                == 1
+                && all.iter().any(|m| m.version == "20261122000008"
+                    && m.sql
+                        .contains(MIGRATION_0008_KEY_BUCKETS_SQL.trim_end_matches(';'))),
+            "0008 is present, carries the verbatim R-T SQL and runs once"
+        );
+        // 0008 rides BOTH lists: it needs no facts (its UPDATE reads only
+        // tables 0007 created, and it sorts after 0007, so a with-facts
+        // database always has them first), and the P1→P2a upgrade path —
+        // 0007 applied, env gone, `None` facts — must still materialize
+        // the K-era keys.
+        let none = migrations(None);
+        assert!(
+            none.iter()
+                .filter(|m| m.version.as_str() == "20261122000008")
+                .count()
+                == 1
+                && none.iter().any(|m| m.version == "20261122000008"
+                    && m.sql
+                        .contains(MIGRATION_0008_KEY_BUCKETS_SQL.trim_end_matches(';'))),
+            "0008 runs on every database, facts or not"
         );
         // The shape constant is the one the normalization writes and the
         // column default carries — one source of truth, no drift.

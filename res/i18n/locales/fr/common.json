@@ -48,7 +48,9 @@
     "uploading": "Téléversement de {name}",
     "uploadFailed": "Échec du téléversement",
     "deleteConfirm": "Supprimer ce fichier ? Son lien public cessera de fonctionner.",
-    "openOriginal": "Ouvrir l'original"
+    "openOriginal": "Ouvrir l'original",
+    "uploadBucket": "Téléverser vers le seau",
+    "uploadDefaultBucket": "Par défaut (défini par l'admin)"
   },
   "users": {
     "title": "Utilisateurs",
@@ -148,7 +150,10 @@
     "kind": "Type",
     "kindFolder": "Dossier",
     "details": "Détails",
-    "pickHint": "Sélectionnez un élément pour l'inspecter"
+    "pickHint": "Sélectionnez un élément pour l'inspecter",
+    "noReadPermission": "sans permission de lecture",
+    "bucketRoot": "Racine du seau",
+    "bucketAll": "Tous les seaux"
   },
   "keys": {
     "title": "Clés API",
@@ -180,7 +185,12 @@
     "edit": "Modifier la clé API",
     "updated": "Clé API mise à jour",
     "opsRequired": "Sélectionnez au moins une autorisation",
-    "expiryFuture": "L'expiration doit être dans le futur"
+    "expiryFuture": "L'expiration doit être dans le futur",
+    "buckets": "Seaux",
+    "bucketsHint": "Aucune sélection = explicitement aucun seau. Enregistrer sans sélection gèle les droits actuels par le serveur.",
+    "noBuckets": "aucun seau",
+    "noBucketsAvailable": "Aucun seau enregistré — la clé n'en aura aucun tant qu'il n'en existe pas.",
+    "noBucketsPicked": "aucun seau choisi"
   },
   "menu": {
     "account": "Compte"
@@ -198,5 +208,37 @@
     "author": "伊欧",
     "copyright": "Celestia Island",
     "engineVersion": "Version du moteur"
+  },
+  "buckets": {
+    "title": "Seaux",
+    "create": "Créer un seau",
+    "empty": "Aucun seau enregistré",
+    "slug": "Slug",
+    "displayName": "Nom affiché",
+    "backend": "Backend",
+    "backend_local": "Local",
+    "backend_s3": "S3",
+    "backend_ipfs": "IPFS",
+    "flags": "Marqueurs",
+    "anonymousRead": "Lecture anonyme",
+    "grantOnSignup": "Droits par défaut à l'inscription",
+    "bootstrap": "Amorçage",
+    "enabled": "Activé",
+    "disabled": "Désactivé",
+    "edit": "Modifier le seau",
+    "saved": "Seau enregistré",
+    "deleted": "Seau supprimé",
+    "deleteConfirm": "Supprimer le seau {slug} ? Ses lignes de droits disparaissent avec lui.",
+    "defaultBucket": "Seau de téléversement par défaut",
+    "defaultUnset": "non défini",
+    "defaultSaved": "Seau de téléversement par défaut enregistré",
+    "grants": "Droits",
+    "grantsTitle": "Droits sur {slug}",
+    "grant_read": "Lire",
+    "grant_write": "Écrire",
+    "grant_share": "Partager",
+    "grantSaved": "Droits enregistrés",
+    "grantHint": "Enregistrer les trois commutateurs sur « désactivé » écrit une ligne de refus explicite — elle reste un refus même si ce seau devient ouvert par défaut plus tard.",
+    "noMembers": "Aucun membre à autoriser."
   }
 }
