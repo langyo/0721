@@ -1058,10 +1058,19 @@ impl Store for PgStore {
             // guard every move path shares (the RPC lane has no second
             // bypass).
             let parent_bucket = match parent_id {
-                Some(pid) => self.get_file(pid).await?.map(|r| r.bucket_id),
-                None => Some(None),
+                Some(pid) => match self.get_file(pid).await? {
+                    Some(parent) => parent.bucket_id,
+                    None => {
+                        return Err(StoreError::Conflict(
+                            "the target folder does not exist".to_owned(),
+                        ))
+                    }
+                },
+                // Root: the tree is per bucket, so a row moved to its own
+                // root keeps the bucket it already lives in.
+                None => current.bucket_id,
             };
-            if parent_bucket != Some(current.bucket_id) {
+            if parent_bucket != current.bucket_id {
                 return Err(StoreError::Conflict(
                     "cannot move a row into a folder in another bucket".to_owned(),
                 ));
