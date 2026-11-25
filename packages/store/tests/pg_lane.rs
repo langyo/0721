@@ -2187,6 +2187,42 @@ async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() 
         .expect("promote");
     let key_b = plant_key(&store, admin_b.id, "b", r#"{"ops":["upload"]}"#).await;
 
+    // MY-24's fixture arm: the admin also carries a NON-signup bucket
+    // granted via an EXPLICIT row — so a snapshot that loses admin's
+    // non-signup buckets (signup-only for admin) shows up as a missing
+    // element, not just as extra/missing signup buckets.
+    let slug_admin_only = format!("adminonly-{suffix}");
+    let admin_only = uuid::Uuid::new_v4();
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
+                   endpoint_ref, anonymous_read, grant_on_signup, enabled, is_bootstrap) \
+                   VALUES ($1, $2, $2, 'local', 'lane', 'lane', FALSE, FALSE, TRUE, FALSE)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(admin_only.to_string()),
+                lacrymira::Value::Text(slug_admin_only.to_owned()),
+            ],
+        })
+        .await
+        .expect("plant the admin-only bucket");
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO bucket_grants (user_id, bucket_id, can_read, can_write, can_share) \
+                   VALUES ($1, $2, TRUE, FALSE, FALSE)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(admin_b.id.to_string()),
+                lacrymira::Value::Uuid(admin_only.to_string()),
+            ],
+        })
+        .await
+        .expect("plant the admin's explicit read row");
+
     // Member C: no rows at all → exactly the signup buckets.
     let member_c = store.create_user(scratch_user()).await.expect("user");
     let key_c = plant_key(&store, member_c.id, "c", r#"{"ops":[]}"#).await;
@@ -2326,7 +2362,7 @@ async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() 
     );
 
     // cleanup
-    for slug in [slug_open, slug_closed] {
+    for slug in [slug_open, slug_closed, slug_admin_only] {
         store
             .executor
             .execute(&lacrymira::Command::Sql {
@@ -2351,6 +2387,113 @@ async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() 
     cleanup_user(&store, member_a.id).await;
     cleanup_user(&store, admin_b.id).await;
     cleanup_user(&store, member_c.id).await;
+}
+
+/// MUT:R-T-USER — the 0008 SQL's `EXISTS (SELECT 1 FROM users u2 …)`
+/// guard: a key whose owner row is GONE at migration time must not make
+/// the UPDATE fail (the join in the subquery would find no user row and,
+/// without the guard, the scalar subquery's admin/arm arithmetic could
+/// answer nothing for the whole statement). The schema FK makes a
+/// user-less key row impossible to INSERT, so the lane plants the key
+/// while the user still exists and then deletes the user: at 0008 time
+/// the key IS an orphan. The migration answers NO error and the other
+/// (live-owner) keys still materialize.
+#[tokio::test]
+async fn pg_0008_orphan_user_key_does_not_break_the_migration() {
+    let Some(store) = db().await else { return };
+    let owner = store.create_user(scratch_user()).await.expect("user");
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let slug_signup = format!("orphansignup-{suffix}");
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "INSERT INTO storage_buckets (id, slug, display_name, backend, location, \
+                   endpoint_ref, anonymous_read, grant_on_signup, enabled, is_bootstrap) \
+                   VALUES ($1, $2, $2, 'local', 'lane', 'lane', TRUE, TRUE, TRUE, FALSE)"
+                .to_owned(),
+            params: vec![
+                lacrymira::Value::Uuid(uuid::Uuid::new_v4().to_string()),
+                lacrymira::Value::Text(slug_signup.to_owned()),
+            ],
+        })
+        .await
+        .expect("plant the signup bucket");
+    let orphan_key = plant_key(&store, owner.id, "orphan", r#"{"ops":["read"]}"#).await;
+    let live_user = store.create_user(scratch_user()).await.expect("user");
+    let live_key = plant_key(&store, live_user.id, "live", r#"{"ops":["read"]}"#).await;
+
+    // Make the orphan key's owner vanish (the FK's ON DELETE CASCADE
+    // would take the key with it — so cut the cascade's grip first by
+    // checking whether the schema even allows an orphan row; delete the
+    // user and see).
+    store.delete_user(owner.id).await.expect("delete the owner");
+    let orphan_still_there = {
+        let reply = store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "SELECT COUNT(*) FROM api_keys WHERE id = $1".to_owned(),
+                params: vec![lacrymira::Value::Uuid(orphan_key.to_string())],
+            })
+            .await
+            .unwrap();
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("rows")
+        };
+        match &rows[0][0] {
+            lacrymira::Value::I64(n) => *n > 0,
+            lacrymira::Value::I32(n) => *n > 0,
+            lacrymira::Value::Text(t) => t.trim().parse::<i64>().unwrap_or(0) > 0,
+            other => panic!("count expected, got {other:?}"),
+        }
+    };
+    if !orphan_still_there {
+        // The FK's CASCADE removed the key with its user: an orphan
+        // api_keys row is UNREACHABLE in this schema — the EXISTS guard
+        // is dead code by construction. Record that honestly and still
+        // prove the migration runs clean on the surviving data.
+        eprintln!("NOTE: the api_keys→users FK CASCADE makes an orphan key row unreachable; the EXISTS guard is defensively unreachable");
+    }
+    run_migration_0008(&store).await;
+    if orphan_still_there {
+        // The orphan row survived: the guard must keep the UPDATE silent
+        // about it (no buckets written, no error)…
+        let got = key_buckets_of(&store, orphan_key).await;
+        assert!(
+            got.is_empty(),
+            "the orphan key answers NO buckets (its owner is gone): {got:?}"
+        );
+    }
+    // …and the LIVE key still materialized either way.
+    let live = key_buckets_of(&store, live_key).await;
+    assert!(
+        live.contains(&slug_signup),
+        "the live-owner key materialized the signup bucket: {live:?}"
+    );
+
+    // cleanup
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM storage_buckets WHERE slug = $1".to_owned(),
+            params: vec![lacrymira::Value::Text(slug_signup)],
+        })
+        .await
+        .unwrap();
+    for id in [orphan_key, live_key] {
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "DELETE FROM api_keys WHERE id = $1".to_owned(),
+                params: vec![lacrymira::Value::Uuid(id.to_string())],
+            })
+            .await
+            .unwrap();
+    }
+    cleanup_user(&store, live_user.id).await;
 }
 
 /// MUT:M-P2A8 — dropping the `revoked_at IS NULL` guard makes 0008
