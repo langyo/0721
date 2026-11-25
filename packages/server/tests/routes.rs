@@ -2635,6 +2635,44 @@ async fn oauth_redirect_uri_follows_the_public_origin() {
     );
 }
 
+/// The redirect URI joins on ONE slash no matter how the origin was spelled:
+/// a `I0721_PUBLIC_ORIGIN` with a pasted trailing slash, and a `Host` header
+/// that carries one, must not produce `…//api/v1/auth/oauth/…/callback`.
+#[tokio::test]
+async fn callback_uri_has_no_double_slash_for_either_origin_source() {
+    let (mut state, _stub, base, _admin) = oauth_test_state_with_stub().await;
+    // The configured origin, spelled with a trailing slash.
+    let mut config = (*state.config).clone();
+    config.public_origin = Some(format!("{base}/"));
+    state.config = Arc::new(config);
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/stub")
+                .header(header::HOST, "irrelevant.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    serializer.append_pair("", &format!("{base}/api/v1/auth/oauth/stub/callback"));
+    let encoded = serializer.finish().trim_start_matches('=').to_owned();
+    assert!(
+        location.contains(&encoded),
+        "the redirect_uri has exactly one slash: {location}"
+    );
+}
+
 /// A JUNK kill-switch row (a JSON string) must NOT fail the password
 /// lane open or closed: it defers to the env/default (ON).
 #[tokio::test]
@@ -2942,6 +2980,218 @@ async fn login_methods_publishes_a_validated_family_policy() {
     assert!(!text.contains("s3cret-value-9999"));
 }
 
+/// `GET /api/v1/auth/login-methods` for this state, decoded.
+async fn login_methods_json(state: &i0721_server::state::AppState) -> serde_json::Value {
+    let response = app(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/login-methods")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+/// Rewrite the stored catalog to `rows` (a raw JSON array: the point of
+/// these cases is rows the RPC would have refused) and pin the password
+/// kill-switch ON, the ordinary deployed shape: with a working password form
+/// a catalog whose rows are all malformed still serves an honest page, so the
+/// malformed rows are exercised against the rendering both views share rather
+/// than against the login-less posture (`login_less_posture_publishes_the_
+/// honest_document` owns that one).
+async fn plant_catalog(state: &i0721_server::state::AppState, rows: serde_json::Value) {
+    state
+        .store
+        .set_setting("oauth_providers", rows)
+        .await
+        .unwrap();
+    state
+        .store
+        .set_setting("auth_password_login", serde_json::json!(true))
+        .await
+        .unwrap();
+}
+
+/// The ids the two renderings of one login-methods response advertise.
+fn both_id_sets(json: &serde_json::Value) -> (Vec<String>, Vec<String>) {
+    let legacy = json["providers"]
+        .as_array()
+        .expect("the legacy providers[] array")
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_owned())
+        .collect();
+    let policy = json["policy"]["methods"]
+        .as_array()
+        .expect("the policy methods array")
+        .iter()
+        .map(|method| method["id"].as_str().unwrap().to_owned())
+        .collect();
+    (legacy, policy)
+}
+
+/// A malformed row is DROPPED from BOTH renderings, not just from the
+/// policy: the login page keeps showing the entrances that work, and the
+/// response never advertises — in its legacy fields — a provider its policy
+/// has already given up on (the R2 finding: a blank `display_name` row
+/// collapsed the policy to login-less `local` while `providers[]` stayed
+/// `federated` with that row).
+#[tokio::test]
+async fn login_methods_drops_malformed_rows_from_both_renderings() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    plant_catalog(
+        &state,
+        serde_json::json!([
+            {
+                "id": "nameless", "display_name": "   ", "type": "builtin:erp",
+                "client_id": "cid", "client_secret": "", "base_url": "https://sso.example",
+                "issuer_url": null, "scopes": null, "enabled": true, "icon": null,
+            },
+            {
+                "id": "erp", "display_name": "ERP SSO", "type": "builtin:erp",
+                "client_id": "cid", "client_secret": "", "base_url": "https://sso.example",
+                "issuer_url": null, "scopes": null, "enabled": true, "icon": null,
+            },
+        ]),
+    )
+    .await;
+
+    let json = login_methods_json(&state).await;
+    let (legacy, policy) = both_id_sets(&json);
+    assert_eq!(
+        legacy,
+        vec!["erp".to_owned()],
+        "the bad row is gone: {json}"
+    );
+    assert_eq!(policy, vec!["erp".to_owned()], "the policy agrees: {json}");
+    assert_eq!(json["policy"]["mode"], "federated");
+    assert_eq!(json["policy"]["password"], true);
+    // The served policy is consistent by kirino's own contract.
+    let contract: kirino::auth::mode::LoginPolicy =
+        serde_json::from_value(json["policy"].clone()).unwrap();
+    contract.validate().expect("the served policy validates");
+}
+
+/// A catalog where EVERY row is unusable still answers 200 — an honest,
+/// EMPTY page. Dropping the malformed rows leaves no entrance, so the
+/// document is `local` with no method; with the password switch on it is
+/// still a valid `local` policy (password offered, nothing else), which is
+/// exactly what an operator whose only provider row is broken should see: a
+/// working password form and no phantom SSO button. Both renderings are
+/// empty and agree, and no 503 is raised for a catalog that is merely empty.
+#[tokio::test]
+async fn login_methods_with_every_row_unusable_serves_an_honest_empty_page() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    plant_catalog(
+        &state,
+        serde_json::json!([
+            {
+                "id": "nameless", "display_name": "", "type": "builtin:erp",
+                "client_id": "cid", "client_secret": "", "base_url": "https://sso.example",
+                "issuer_url": null, "scopes": null, "enabled": false, "icon": null,
+            },
+            {
+                "id": "", "display_name": "ERP SSO", "type": "builtin:erp",
+                "client_id": "cid", "client_secret": "", "base_url": "https://sso.example",
+                "issuer_url": null, "scopes": null, "enabled": true, "icon": null,
+            },
+        ]),
+    )
+    .await;
+
+    let json = login_methods_json(&state).await;
+    let (legacy, policy) = both_id_sets(&json);
+    assert!(legacy.is_empty(), "no entrance is advertised: {json}");
+    assert!(policy.is_empty(), "the policy lists none either: {json}");
+    assert_eq!(json["policy"]["mode"], "local");
+    // The kill-switch is ON, so the page still offers the password form.
+    assert_eq!(json["password"], true);
+    assert_eq!(json["policy"]["password"], true);
+    let contract: kirino::auth::mode::LoginPolicy =
+        serde_json::from_value(json["policy"].clone()).unwrap();
+    contract.validate().expect("an empty local policy is valid");
+}
+
+/// The two renderings NEVER disagree about which entrances exist: the ids the
+/// policy lists are exactly the ids the legacy array lists, for both catalog
+/// shapes (all rows usable, some dropped, and none usable).
+#[test]
+fn policy_and_legacy_renderings_never_disagree() {
+    let base = "https://sso.example";
+    let catalog = |rows: &[(&str, &str, bool)]| -> Vec<i0721_server::oauth::OAuthProvider> {
+        rows.iter()
+            .enumerate()
+            .map(|(index, &(id, label, enabled))| {
+                let mut row = provider_row(id, "builtin:erp");
+                row.display_name = label.to_owned();
+                row.base_url = Some(base.to_owned());
+                row.client_id = format!("cid-{index}");
+                row.enabled = enabled;
+                row
+            })
+            .collect()
+    };
+    // One usable row plus one blank label; then every row unusable.
+    for rows in [
+        catalog(&[("ok", "OK SSO", true), ("blank-label", "  ", true)]),
+        catalog(&[("blank-label", " ", true), ("blank-id", "", true)]),
+        catalog(&[]),
+    ] {
+        let document = i0721_server::oauth::login_methods_document(true, &rows)
+            .expect("a filtered catalog is servable");
+        let legacy: Vec<String> = document
+            .providers
+            .iter()
+            .map(|row| row.id.clone())
+            .collect();
+        let policy: Vec<String> = document
+            .policy
+            .methods
+            .iter()
+            .map(|m| m.id().to_owned())
+            .collect();
+        assert_eq!(legacy, policy, "one catalog, two renderings, same ids");
+    }
+}
+
+/// The row filter is TOTAL for this catalog's own row model: after it, kirino
+/// validation can only fail with the login-less posture — so the endpoint's
+/// `503` lane is a genuine "this cannot happen", never the old silent
+/// downgrade wearing a different hat. Checked against rows an operator can
+/// actually store (ids from `valid_provider_id`, labels from the form).
+#[tokio::test]
+async fn filter_makes_every_servable_catalog_a_posture_or_a_valid_policy() {
+    for (id, label) in [
+        ("erp", "ERP SSO"),
+        ("erp-2", "ERP SSO"),
+        ("", "ERP SSO"),
+        ("  ", "ERP SSO"),
+        ("padded ", "ERP SSO"),
+        ("erp", "   "),
+        (" ", ""),
+    ] {
+        let mut row = provider_row(id, "builtin:erp");
+        row.display_name = label.to_owned();
+        row.base_url = Some("https://sso.example".to_owned());
+        let document = i0721_server::oauth::login_methods_document(true, &[row])
+            .expect("no single row can make the page unservable");
+        let contract: kirino::auth::mode::LoginPolicy =
+            serde_json::from_value(serde_json::to_value(&document.policy).unwrap()).unwrap();
+        match contract.validate() {
+            Ok(()) => {}
+            Err(kirino::auth::mode::LoginPolicyViolation::PasswordMissingInLocalMode) => {
+                assert!(document.providers.is_empty() && document.policy.methods.is_empty());
+            }
+            Err(other) => panic!("catalog ({id:?}, {label:?}) served a bad policy: {other}"),
+        }
+    }
+}
+
 /// An empty catalog with the password switch on is a plain `local`
 /// deployment: no methods, password offered.
 #[test]
@@ -3180,6 +3430,36 @@ async fn erp_metadata_mounts_both_legs_under_the_api_prefix() {
     );
 }
 
+/// A `base_url` pasted WITH a trailing slash joins on exactly one `/` (an
+/// operator's copy-paste must not yield `//api/oauth/token`, which some
+/// reverse proxies treat as protocol-relative), and the issuer keeps none.
+#[tokio::test]
+async fn erp_base_url_with_a_trailing_slash_joins_on_one_slash() {
+    let (state, _admin) = test_state().await;
+    let mut row = provider_row("erp", "builtin:erp");
+    row.base_url = Some("https://sso.example/".to_owned());
+    let route = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .expect("a trailing slash is not a broken base");
+    assert_eq!(
+        route.metadata.token_url.as_str(),
+        "https://sso.example/api/oauth/token"
+    );
+    assert_eq!(
+        route.metadata.authorize_url.as_str(),
+        "https://sso.example/oauth/authorize"
+    );
+    assert_eq!(
+        route.metadata.userinfo_url.as_ref().map(url::Url::as_str),
+        Some("https://sso.example/api/oauth/userinfo")
+    );
+    assert_eq!(
+        route.metadata.issuer.as_deref(),
+        Some("https://sso.example"),
+        "the issuer carries no trailing slash"
+    );
+}
+
 /// An `oidc` row assembles from the cached discovery document, and the
 /// cache keeps answering after the issuer's document changes (the positive
 /// TTL is what makes the redirect endpoint cheap).
@@ -3247,42 +3527,6 @@ async fn oidc_metadata_assembles_from_the_discovery_cache() {
     broken.issuer_url = Some("http://127.0.0.1:1".to_owned());
     let refused = i0721_server::oauth::resolve_route(&state, &broken).await;
     assert!(refused.is_err(), "a broken issuer refuses to assemble");
-}
-
-/// The feishu shape end-to-end: its v2 token answer carries the identity
-/// behind a `data` envelope, and kirino's core reads `access_token` at the
-/// document's top level — so a wrapped answer is refused as unreadable
-/// rather than silently minting an account from the wrong place. This is
-/// the exact posture this deployment ships with (see the module docs).
-#[tokio::test]
-async fn feishu_shaped_token_response_is_refused_by_the_core() {
-    let (state, stub, _base, _admin) = spawn_provider_stub(true).await;
-    assert!(stub.feishu_identity, "the stub answers the feishu shape");
-
-    let response = oauth_login_round(&state).await;
-    assert_eq!(
-        response.status(),
-        StatusCode::BAD_GATEWAY,
-        "a wrapped token answer has no top-level access_token"
-    );
-    assert!(
-        !response
-            .headers()
-            .get_all(header::SET_COOKIE)
-            .iter()
-            .any(|v| v.to_str().unwrap().starts_with("i0721-token=")),
-        "no session is minted from a refused token answer"
-    );
-    let body = axum::body::to_bytes(response.into_body(), 8192)
-        .await
-        .unwrap();
-    let text = String::from_utf8_lossy(&body);
-    assert!(
-        text.contains("access_token"),
-        "the refusal names what it could not read: {text}"
-    );
-    // Nothing was minted on the account side either.
-    assert_eq!(state.store.count_users().await.unwrap(), 1);
 }
 
 /// A callback from a browser that never started the attempt is refused,

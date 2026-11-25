@@ -63,9 +63,11 @@
 //! [`kirino::auth::mode::LoginPolicy`] beside the legacy `password` /
 //! `providers[]` fields. The mode is derived (`federated` when the catalog
 //! offers at least one usable provider, `local` otherwise) and the document
-//! is validated before it is served.
+//! is validated before it is served. Both renderings are projected from ONE
+//! filtered row set, and a catalog that still fails validation answers `503`
+//! instead of a policy the page cannot honour.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -527,7 +529,8 @@ pub fn valid_provider_type(provider_type: &str) -> bool {
 pub struct Endpoints {
     pub authorize: String,
     pub token: String,
-    /// `None` for a provider whose token answer IS the identity (feishu).
+    /// `None` for a provider that offers no separate UserInfo leg at all
+    /// (feishu — whose identity source is undecided, see `builtin:feishu`).
     pub userinfo: Option<String>,
     pub token_body: TokenBody,
     /// The scopes requested when the operator gives none. `None` = ask for
@@ -580,21 +583,22 @@ fn builtin_endpoints(provider: &OAuthProvider) -> Option<Endpoints> {
             // {"access_token": …, "token_type": "Bearer", …}}`). The core
             // drills into that key — see `token_response_envelope` below.
             //
-            // Feishu's v2 answer has NO separate UserInfo leg, and the token
-            // answer is NOT itself the profile: `data` carries the token
-            // fields and nothing the core reads as an identity. So this type
-            // owes an identity leg it does not have: the core refuses the
+            // Identity source UNDECIDED (see PLAN, the C-lite ruling): the
+            // token answer's `data` envelope carries the token fields and no
+            // identity the core reads, and feishu's separate `user_info`
+            // response is an envelope too (no `sub`). This type therefore
+            // owes an identity leg it does not have — the core refuses the
             // callback with `no identity source: no userinfo endpoint and no
-            // ID token`, after the envelope above has already been read.
-            // Solving that is a change of shape (a host-side identity read),
-            // not a metadata flag — see the feishu cases in `tests/routes.rs`.
+            // ID token`. A feishu row is UNUSABLE until that is settled
+            // (kirino's dialects wave or a host-side identity read); the type
+            // stays in the catalog as a dormant capability, and the envelope
+            // below is kirino's contract for it, already pinned by kirino's
+            // own suite (`an_envelope_without_the_key_or_without_a_token_is_refused`
+            // and friends).
             userinfo: None,
             token_body: TokenBody::Form,
             default_scopes: None,
             issuer: Some("https://open.feishu.cn".to_owned()),
-            // MUT:feishu-envelope — without this the answer is read at the
-            // top level, finds no `access_token` there, and every feishu
-            // login dies as an unreadable token answer.
             token_response_envelope: Some("data"),
         }),
         "builtin:erp" => {
@@ -645,9 +649,13 @@ fn scopes_for(provider: &OAuthProvider, endpoints: &Endpoints) -> Vec<String> {
     }
 }
 
+/// The provider's `base_url`, trimmed and stripped of trailing slashes, so
+/// every leg derived from it joins on exactly one `/`: an operator who
+/// pastes `https://sso.example/` gets `https://sso.example/api/oauth/token`,
+/// not `…//api/oauth/token`, and an issuer with no trailing slash.
 fn absolute_base(base: &str) -> Option<&str> {
     let trimmed = base.trim();
-    (!trimmed.is_empty()).then_some(trimmed)
+    (!trimmed.is_empty()).then(|| trimmed.trim_end_matches('/'))
 }
 
 // ── OIDC discovery (cached, negative-cached) ───────────────────────────
@@ -1283,17 +1291,84 @@ fn method_href(provider_id: &str) -> String {
     format!("{OAUTH_PATH_PREFIX}/{}", urlencoding::encode(provider_id))
 }
 
+/// Why one enabled catalog row cannot be an entrance on the login page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CatalogRowDefect {
+    /// The row's id is blank, padded, or names a second entrance.
+    Id,
+    /// The row's label is blank — the panel would render a nameless button.
+    Label,
+}
+
+impl std::fmt::Display for CatalogRowDefect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Id => "its id is blank, padded or not unique",
+            Self::Label => "its display_name is blank",
+        })
+    }
+}
+
+/// The enabled catalog rows THAT CAN BE RENDERED, in catalog order — the ONE
+/// row set both renderings (the legacy `providers[]` and the family policy)
+/// are built from.
+///
+/// A row that cannot name itself (blank / padded / duplicated id) or cannot
+/// be labelled (blank `display_name`) is dropped HERE, once, with a warning
+/// naming the row and the reason: the page then shows the entrances that do
+/// work, and the disabled ones never enter. Dropping the row in one place is
+/// the whole point — filtering per rendering is how the same response used to
+/// advertise a provider in `providers[]` that its policy had already given
+/// up on.
+fn renderable_rows(providers: &[OAuthProvider]) -> Vec<&OAuthProvider> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    providers
+        .iter()
+        .filter(|provider| provider.enabled)
+        .filter(|provider| {
+            let blank_or_padded_id = provider.id.is_empty() || provider.id.trim() != provider.id;
+            let defect = if blank_or_padded_id || !seen.insert(provider.id.as_str()) {
+                Some(CatalogRowDefect::Id)
+            } else if provider.display_name.trim().is_empty() {
+                Some(CatalogRowDefect::Label)
+            } else {
+                None
+            };
+            if let Some(defect) = defect {
+                tracing::warn!(
+                    provider = %provider.id,
+                    display_name = %provider.display_name,
+                    reason = %defect,
+                    "login methods: dropping an unusable provider row from the login page"
+                );
+            }
+            defect.is_none()
+        })
+        .collect()
+}
+
 /// Assemble the login-methods document: the legacy fields plus the family
-/// [`LoginPolicy`].
+/// [`LoginPolicy`], both projected from the SAME filtered row set
+/// ([`renderable_rows`]) — the two views of one catalog cannot disagree about
+/// which entrances exist.
 ///
 /// The mode is derived, never configured: a catalog with at least one
-/// enabled provider is `federated`, an empty one is `local`. The `policy`
-/// is validated before it is returned; a document that disagrees with itself
-/// is not served (the caller answers 500 and logs it) — EXCEPT for the one
-/// reachable posture described in [`publish_policy`].
-pub fn login_methods_document(password: bool, providers: &[OAuthProvider]) -> LoginMethods {
-    let enabled: Vec<&OAuthProvider> = providers.iter().filter(|p| p.enabled).collect();
-    let legacy = enabled
+/// enabled provider is `federated`, an empty one is `local`.
+///
+/// # Errors
+///
+/// [`ApiError`] carrying `503 Service Unavailable` when the filtered catalog
+/// still fails kirino's validation for a reason other than the one reachable
+/// login-less posture (no entrance at all, published honestly — see
+/// [`publish_policy`]). Such a document means this service assembled a
+/// contradiction the operator cannot see, so the page refuses to serve a
+/// policy rather than answering with one it knows is wrong.
+pub fn login_methods_document(
+    password: bool,
+    providers: &[OAuthProvider],
+) -> Result<LoginMethods, ApiError> {
+    let rows = renderable_rows(providers);
+    let legacy = rows
         .iter()
         .map(|provider| LoginMethodProvider {
             id: provider.id.clone(),
@@ -1302,12 +1377,12 @@ pub fn login_methods_document(password: bool, providers: &[OAuthProvider]) -> Lo
             icon: provider.icon.clone(),
         })
         .collect();
-    let policy = publish_policy(password, &enabled);
-    LoginMethods {
+    let policy = publish_policy(password, &rows)?;
+    Ok(LoginMethods {
         password,
         providers: legacy,
         policy,
-    }
+    })
 }
 
 /// The family login-policy document for this deployment's catalog.
@@ -1320,11 +1395,9 @@ pub fn login_methods_document(password: bool, providers: &[OAuthProvider]) -> Lo
 ///
 /// # Errors
 ///
-/// The first [`LoginPolicyViolation`], except for the one reachable posture
-/// the login-less document below describes: a deployment that offers no
-/// login method at all is published rather than refused. Every other
-/// violation means the catalog and the mode disagree, and that must never
-/// reach a UI.
+/// The first [`LoginPolicyViolation`]. The login-methods endpoint turns all
+/// of them except the one reachable login-less posture into a `503`: a
+/// violation here names a catalog the login page cannot honour.
 pub fn build_login_policy(
     password: bool,
     providers: &[&OAuthProvider],
@@ -1364,17 +1437,17 @@ fn validated_policy(
     policy.validate().map(|()| policy)
 }
 
-/// [`build_login_policy`] for the login-methods endpoint: a document that
-/// fails validation OTHER than the reachable login-less posture is replaced
-/// by the login-less document (and logged), never handed to a UI.
-fn publish_policy(password: bool, providers: &[&OAuthProvider]) -> LoginPolicy {
+/// [`build_login_policy`] for the login-methods endpoint: the ONE document
+/// served without passing `validate()` is the login-less posture below; every
+/// other violation is a `503` refusal.
+fn publish_policy(password: bool, providers: &[&OAuthProvider]) -> Result<LoginPolicy, ApiError> {
     match validated_policy(password, providers) {
-        Ok(policy) => policy_to_wire(&policy),
+        Ok(policy) => Ok(policy_to_wire(&policy)),
         // A deployment with the local-password kill-switch off and no usable
         // provider has NO entrance at all. The contract calls that document
         // inconsistent — `local` with no password reads as "nobody can sign
         // in" — but it is a real, reachable configuration: the switch is off
-        // while the first provider is still being onboarded. Answering 500
+        // while the first provider is still being onboarded. Answering 503
         // here would empty the login page for every visitor instead of
         // showing them (and the operator) the truth, so the honest login-less
         // document is published: `local`, no password, no method. It is the
@@ -1386,26 +1459,31 @@ fn publish_policy(password: bool, providers: &[&OAuthProvider]) -> LoginPolicy {
                  password switch is off and no usable OAuth provider is configured; serving \
                  the login-less `local` document (password: false, methods: []) instead"
             );
-            policy_to_wire(&KirinoLoginPolicy {
+            Ok(policy_to_wire(&KirinoLoginPolicy {
                 version: LOGIN_POLICY_VERSION,
                 mode: KirinoAuthMode::Local,
                 password: false,
                 methods: Vec::new(),
                 relay: None,
-            })
+            }))
         }
-        // Every other violation means the catalog and the mode disagree:
-        // serve the honest login-less document rather than a policy the UI
-        // cannot honour, and name the invariant that broke.
+        // Every other violation is unreachable from a row set that already
+        // passed `renderable_rows`: the rows carry non-blank labels, unique
+        // unpadded ids, and the mode follows the method count. Reaching it
+        // means this service built a contradiction the operator cannot see,
+        // so the login page refuses to answer rather than publishing a policy
+        // it knows is wrong (and, in the old shape, than publishing a
+        // login-less document while `providers[]` still advertised one —
+        // the same response contradicting itself).
         Err(violation) => {
-            tracing::error!("login policy: {violation}; serving the login-less `local` document");
-            policy_to_wire(&KirinoLoginPolicy {
-                version: LOGIN_POLICY_VERSION,
-                mode: KirinoAuthMode::Local,
-                password: false,
-                methods: Vec::new(),
-                relay: None,
-            })
+            tracing::error!(
+                "login policy: the catalog fails validation ({violation}); refusing to serve \
+                 the login-methods document"
+            );
+            Err(ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("login methods unavailable: {violation}"),
+            ))
         }
     }
 }
