@@ -1348,14 +1348,13 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
     // row makes the mutation a same-value rewrite — invisible, M1b's
     // SURVIVED lesson.)
     run_bootstrap(&store).await;
-    for statement in i0721_store::migrate::bootstrap_sql_statements(
-        &i0721_store::BootstrapBucketParams {
+    for statement in
+        i0721_store::migrate::bootstrap_sql_statements(&i0721_store::BootstrapBucketParams {
             id: uuid::Uuid::new_v4(),
             location: "bwave-s3-lane".to_owned(),
             backend: "s3".to_owned(),
-        },
-    )
-    .expect("the s3 lane location passes the quoting guard")
+        })
+        .expect("the s3 lane location passes the quoting guard")
     {
         store
             .executor
@@ -1386,7 +1385,14 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
             other => panic!("uuid expected, got {other:?}"),
         }
     };
-    plant_file(&store, user.id, "pre-owned.png", "s3", Some(local_bucket_id)).await;
+    plant_file(
+        &store,
+        user.id,
+        "pre-owned.png",
+        "s3",
+        Some(local_bucket_id),
+    )
+    .await;
 
     // The backfill runs again — and must not rewrite the owned row's
     // bucket (the WHERE guard). A WHERE-less backfill re-seats it by
