@@ -20,7 +20,9 @@
   每 key 权限 `read`/`upload`/`share` 与可选过期，逐工具执行）。
 - **数据模型**：users（`quota_bytes`）/ `oauth_identities` / files（folder + `parent_id` + 同层唯一索引 +
   软删 + 级联回收）/ shares / `api_keys` / settings 六表。
-- **存储**：`I0721_STORAGE_BACKEND` = local | s3（`object_store` ^0.12）| ipfs（kubo RPC + MFS）。
+- **存储**：桶登记表（`storage_buckets`）+ 每行 `files.bucket_id`——字节读写按行路由到该行自己的桶；
+  `I0721_STORAGE_BACKEND` 只在首次执行桶迁移的启动时必读（0007 建出 `bootstrap-<backend>` 引导桶并回填全部行），此后忽略；
+  旧标签的行留在停用的遗留引导桶里，状态与原因见 `/api/health`。后端 = local | s3（`object_store` ^0.12）| ipfs（kubo RPC + MFS）。
 - **webui**：hikari Vue/TS，**家族范式对齐**（2026-11-23 webui 波次；参照 ayane 的迭代）：
   `HkAdminShell` 四槽壳（header/sidebar/content/footer）+ 分组侧边栏（内容/接入/管理，管理组 admin 专属）
   + `HkAdminHeader` 身份面（头像账户窗/语言级联/登出）+ `HkStatusBar` 页脚（面板版本+引擎身份+传输探针）
