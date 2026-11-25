@@ -588,6 +588,26 @@ fn split_statements(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// MUT:M-LOC — a `location` containing `$` followed by a letter or
+    /// underscore would break the bootstrap SQL's dollar-quoting: the
+    /// guard must reject it (fail-closed), never emit mis-parsed SQL.
+    #[test]
+    fn location_with_a_dollar_sign_is_rejected() {
+        assert!(validate_bootstrap_location("plain-root").is_ok());
+        assert!(validate_bootstrap_location("bucket$x-name").is_err());
+        assert!(validate_bootstrap_location("trailing$").is_ok());
+        assert!(validate_bootstrap_location("$loc$ injection").is_err());
+        let params = BootstrapBucketParams {
+            id: uuid::Uuid::new_v4(),
+            location: "bucket$x".to_owned(),
+            backend: "local".to_owned(),
+        };
+        assert!(
+            std::panic::catch_unwind(|| bootstrap_sql_statements(&params)).is_err(),
+            "the statement builder panics on a mis-quotable location"
+        );
+    }
+
     #[test]
     fn migrations_are_version_sorted_and_unique() {
         let all = super::migrations(Some(&bootstrap_params()));
