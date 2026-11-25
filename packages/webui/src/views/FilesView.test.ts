@@ -573,3 +573,38 @@ describe("FilesView per-bucket root (P2a)", () => {
     w.unmount();
   });
 });
+
+describe("FilesView create-share gating (P2b)", () => {
+  it("hides the share affordance when the current bucket lacks the share bit", async () => {
+    listBucketsMock.mockResolvedValue({
+      buckets: [
+        { slug: "open", my_access: { read: true, write: true, share: true } },
+        { slug: "sealed", my_access: { read: true, write: true, share: false } },
+      ],
+    });
+    listFolderMock.mockResolvedValue({ total: 1, offset: 0, limit: 30, items: [file("a")], crumbs: [] });
+    const { wrapper: w } = mountWithRouter(FilesView);
+    await flushPromises();
+    await w.find('[data-testid="bucket-root-select"] .hk-select-trigger').trigger("click");
+    await flushPromises();
+    // Pick the sealed bucket.
+    const sealed = Array.from(document.querySelectorAll(".hk-select-option"))
+      .find((el) => el.textContent?.trim() === "sealed");
+    expect(sealed).toBeTruthy();
+    (sealed as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+    expect(w.find('[data-testid="create-share"]').exists()).toBe(false);
+    // Back to the open bucket: the affordance returns.
+    await w.find('[data-testid="bucket-root-select"] .hk-select-trigger').trigger("click");
+    await flushPromises();
+    const open = Array.from(document.querySelectorAll(".hk-select-option"))
+      .find((el) => el.textContent?.trim() === "open");
+    expect(open).toBeTruthy();
+    (open as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+    expect(w.find('[data-testid="create-share"]').exists()).toBe(true);
+    w.unmount();
+  });
+});
