@@ -12000,7 +12000,13 @@ async fn patch_bucket(
         .expect("the bucket exists");
     state
         .store
-        .upsert_storage_bucket(slug, &row.display_name, anonymous_read, grant_on_signup, enabled)
+        .upsert_storage_bucket(
+            slug,
+            &row.display_name,
+            anonymous_read,
+            grant_on_signup,
+            enabled,
+        )
         .await
         .unwrap();
 }
@@ -12014,7 +12020,14 @@ async fn set_bucket_anonymous(state: &AppState, slug: &str, anonymous_read: bool
         .await
         .unwrap()
         .expect("the bucket exists");
-    patch_bucket(state, slug, anonymous_read, row.grant_on_signup, row.enabled).await;
+    patch_bucket(
+        state,
+        slug,
+        anonymous_read,
+        row.grant_on_signup,
+        row.enabled,
+    )
+    .await;
 }
 
 /// Flip `enabled` on a bucket row (the bucket becomes unusable).
@@ -12025,7 +12038,14 @@ async fn set_bucket_enabled(state: &AppState, slug: &str, enabled: bool) {
         .await
         .unwrap()
         .expect("the bucket exists");
-    patch_bucket(state, slug, row.anonymous_read, row.grant_on_signup, enabled).await;
+    patch_bucket(
+        state,
+        slug,
+        row.anonymous_read,
+        row.grant_on_signup,
+        enabled,
+    )
+    .await;
 }
 
 /// The cache-control header of a media response.
@@ -12382,7 +12402,8 @@ async fn a_visible_bucket_without_read_answers_403_not_404() {
         .await
         .unwrap();
     // The admin uploads INTO that bucket (the override rides ?bucket=).
-    let (status, dto) = upload_bucket(&base_state, &admin_token, tiny_png(), "b.png", "blind").await;
+    let (status, dto) =
+        upload_bucket(&base_state, &admin_token, tiny_png(), "b.png", "blind").await;
     assert_eq!(status, StatusCode::CREATED, "{dto}");
     let key = dto["sha256"].as_str().unwrap().to_owned();
 
@@ -12621,6 +12642,7 @@ async fn an_unavailable_or_forbidden_media_response_is_never_cacheable() {
 /// directive from the immutable public form to `private, no-store` —
 /// and back again when A flips TRUE once more.
 #[tokio::test]
+#[allow(non_snake_case)]
 async fn the_same_url_changes_its_cache_directive_when_A_changes() {
     let (state, _admin) = test_state().await;
     let token = login(&state, "admin", "admin-password").await;
@@ -12629,7 +12651,10 @@ async fn the_same_url_changes_its_cache_directive_when_A_changes() {
     let url = format!("/media/{key}");
 
     let public = app(&state)
-        .oneshot(bearer(Request::builder().uri(&url).body(Body::empty()).unwrap(), &token))
+        .oneshot(bearer(
+            Request::builder().uri(&url).body(Body::empty()).unwrap(),
+            &token,
+        ))
         .await
         .unwrap();
     assert_eq!(
@@ -12639,14 +12664,20 @@ async fn the_same_url_changes_its_cache_directive_when_A_changes() {
 
     set_bucket_anonymous(&state, "bootstrap", false).await;
     let private = app(&state)
-        .oneshot(bearer(Request::builder().uri(&url).body(Body::empty()).unwrap(), &token))
+        .oneshot(bearer(
+            Request::builder().uri(&url).body(Body::empty()).unwrap(),
+            &token,
+        ))
         .await
         .unwrap();
     assert_eq!(cache_of(&private).as_deref(), Some("private, no-store"));
 
     set_bucket_anonymous(&state, "bootstrap", true).await;
     let back = app(&state)
-        .oneshot(bearer(Request::builder().uri(&url).body(Body::empty()).unwrap(), &token))
+        .oneshot(bearer(
+            Request::builder().uri(&url).body(Body::empty()).unwrap(),
+            &token,
+        ))
         .await
         .unwrap();
     assert_eq!(

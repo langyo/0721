@@ -74,7 +74,10 @@ async fn media_actor(state: &AppState, headers: &HeaderMap) -> Result<MediaActor
     let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")));
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        });
     if let Some(raw) = bearer {
         if crate::mcp::KEY_PREFIX.is_empty() || raw.starts_with(crate::mcp::KEY_PREFIX) {
             let record = crate::mcp::verify_api_key(state, raw).await?;
@@ -153,11 +156,9 @@ async fn bucket_of_row(
             .registry
             .bootstrap_bucket_id()
             .map_err(|err| ApiError::internal(format!("storage backend unavailable: {err}")))?;
-        return Ok(
-            crate::bucket_acl::bucket_row_for_id(state.store.as_ref(), &state.registry, id)
-                .await
-                .map_err(ApiError::from)?,
-        );
+        return crate::bucket_acl::bucket_row_for_id(state.store.as_ref(), &state.registry, id)
+            .await
+            .map_err(ApiError::from);
     };
     crate::bucket_acl::bucket_row_for_id(state.store.as_ref(), &state.registry, bucket_id)
         .await
@@ -248,7 +249,9 @@ async fn serving_row<'a>(
 /// Whether the row's bucket (the NULL shape reads through the bootstrap
 /// bucket) is `Ready` in the registry.
 fn row_bucket_ready(state: &AppState, row: &i0721_proto::FileRecord) -> bool {
-    let bucket_id = row.bucket_id.or_else(|| state.registry.bootstrap_bucket_id().ok());
+    let bucket_id = row
+        .bucket_id
+        .or_else(|| state.registry.bootstrap_bucket_id().ok());
     bucket_id
         .and_then(|id| state.registry.slug_for_bucket_id(id))
         .is_some_and(|slug| {
@@ -408,8 +411,6 @@ pub async fn download(
     Ok(response)
 }
 
-/// Pattern helper removed — the anonymous face is matched inline.
-
 /// A 404 media answer with its no-store directive (R-S: EVERY non-2xx
 /// carries `no-store`).
 fn not_found_response() -> Response {
@@ -419,12 +420,18 @@ fn not_found_response() -> Response {
 /// A 403 media answer (the visible-but-unreadable face; session/key
 /// only).
 fn forbidden_response() -> Response {
-    error_response(StatusCode::FORBIDDEN, "you do not have read access to this media")
+    error_response(
+        StatusCode::FORBIDDEN,
+        "you do not have read access to this media",
+    )
 }
 
 /// A 503 media answer (the unusable-bucket face; session/key only).
 fn unavailable_response() -> Response {
-    error_response(StatusCode::SERVICE_UNAVAILABLE, "storage backend unavailable")
+    error_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "storage backend unavailable",
+    )
 }
 
 fn error_response(status: StatusCode, message: &str) -> Response {
