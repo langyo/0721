@@ -1373,6 +1373,39 @@ pub fn build_server(state: AppState) -> RpcServer {
                 if user.role != Role::Admin && record.owner_id != user.id {
                     return Err(api_err(ApiError::forbidden("not your file")));
                 }
+                // R-L: owner-or-admin is the WHO; the share still needs the
+                // actor's SHARE bit on the file's bucket (a write-only grant
+                // row must not publish shares through the RPC face either).
+                let bucket_id = record
+                    .bucket_id
+                    .or_else(|| state.registry.bootstrap_bucket_id().ok());
+                let Some(bucket_id) = bucket_id else {
+                    return Err(api_err(ApiError::not_found("file not found")));
+                };
+                let bucket_row = crate::bucket_acl::bucket_row_for_id(
+                    state.store.as_ref(),
+                    &state.registry,
+                    bucket_id,
+                )
+                .await
+                .map_err(store_err)?
+                .ok_or_else(|| ApiError::not_found("file not found"))
+                .map_err(api_err)?;
+                if user.role != Role::Admin {
+                    let access = crate::bucket_acl::resolve_access(
+                        state.store.as_ref(),
+                        &user,
+                        &bucket_row,
+                    )
+                    .await
+                    .map_err(store_err)?;
+                    if !access.share {
+                        return Err(api_err(ApiError::forbidden(format!(
+                            "you do not have share access to bucket {:?}",
+                            bucket_row.slug
+                        ))));
+                    }
+                }
                 let share = state
                     .store
                     .create_share(NewShare {
