@@ -2417,6 +2417,54 @@ async fn pg_0008_keys_already_carrying_buckets_are_untouched() {
     cleanup_user(&store, user.id).await;
 }
 
+/// MUT:R-T-CASE — dropping the `CASE WHEN jsonb_typeof(k.scopes) =
+/// 'object'` guard from MIGRATION_0008_KEY_BUCKETS_SQL turns this red.
+/// `scopes` is JSONB, so the raw NON-object shape (`'[]'` — an ARRAY)
+/// plants directly; the CASE wraps it to `{}` first, and the
+/// materialized buckets land INSIDE the resulting object.
+#[tokio::test]
+async fn pg_0008_wraps_a_non_object_scopes_value() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    // A raw ARRAY scopes value (jsonb_typeof = 'array', not 'object'):
+    // the exact shape the CASE guard exists for.
+    let id = plant_key(&store, user.id, "array-scopes", "[]").await;
+    // The migration must SUCCEED — no jsonb_set-on-scalar/array error.
+    run_migration_0008(&store).await;
+    // The value was wrapped to an object and carries the buckets key.
+    let reply = store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT jsonb_typeof(scopes), scopes ? 'buckets' FROM api_keys WHERE id = $1"
+                .to_owned(),
+            params: vec![lacrymira::Value::Uuid(id.to_string())],
+        })
+        .await
+        .expect("read the wrapped scopes");
+    let lacrymira::Reply::Rows { rows, .. } = reply else {
+        panic!("rows expected");
+    };
+    let kind = match &rows[0][0] {
+        lacrymira::Value::Text(t) => t.trim().to_owned(),
+        other => panic!("text expected, got {other:?}"),
+    };
+    let carries = match &rows[0][1] {
+        lacrymira::Value::Bool(b) => *b,
+        lacrymira::Value::Text(t) => t.trim().parse().unwrap_or(false),
+        other => panic!("bool expected, got {other:?}"),
+    };
+    assert_eq!(
+        kind, "object",
+        "the non-object scopes were WRAPPED to an object, not patched in place"
+    );
+    assert!(
+        carries,
+        "the wrapped object carries the materialized buckets key"
+    );
+    cleanup_user(&store, user.id).await;
+}
+
 /// MUT:M-P2A10 — an 0008 whose UPDATE is not guarded by the
 /// not-carrying-buckets predicate is NOT a fixed point (or worse, is
 /// unguarded in the other direction); re-running must change nothing.
