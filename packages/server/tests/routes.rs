@@ -10878,6 +10878,115 @@ async fn files_chain_answers_the_section7_shapes() {
     assert_eq!(rpc_error_code(&envelope), -32006, "{envelope}");
 }
 
+/// §7's files.chain VISIBLE-but-no-READ arm: the member holds an
+/// explicit write-only grant row (any bit → visible, read=false) on a
+/// non-bootstrap bucket → the -32005 AUTH fault naming the access.
+/// MUT:CHAIN-32005 — collapsing `!access.read` into the invisible
+/// branch (or dropping the read check) turns this red.
+#[tokio::test]
+async fn files_chain_visible_without_read_answers_32005() {
+    let (base_state, _admin_token) = test_state_with_token().await;
+    let (state, second_id, _store) = plant_second_bucket(&base_state, "wonly", true);
+    // The store row MUST carry the registry's id (bucket_row_for_id
+    // prefers the store's rows; a mismatched id would fall through to
+    // the registry's synthesized signup-open posture).
+    let memory = state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store");
+    memory.seed_bucket(i0721_proto::StorageBucketRecord {
+        id: second_id,
+        slug: "wonly".to_owned(),
+        display_name: "wonly".to_owned(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: "loc".to_owned(),
+        endpoint_ref: "x".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: false,
+        enabled: true,
+        is_bootstrap: false,
+        created_at: Timestamp::now(),
+    });
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    // Visible (write=true) but NOT readable.
+    state
+        .store
+        .set_bucket_grant(member.id, second_id, false, true, false)
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    // The member's OWN folder in that bucket (owner-or-admin passes).
+    let folder = state
+        .store
+        .create_folder(member.id, None, "wonly-root", Some(second_id))
+        .await
+        .unwrap();
+    let (_, envelope) = rpc(
+        &state,
+        &member_token,
+        "files.chain",
+        serde_json::json!({"folder_id": folder.id.to_string()}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "visible without read is the AUTH fault, not a 404: {envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("read access"),
+        "the fault names the missing read: {envelope}"
+    );
+}
+
+/// §7's files.chain UNSERVABLE arm: the folder's bucket's registry
+/// entry is Unavailable (backend dead) → the -32010 fault naming the
+/// backend, evaluated AFTER visibility and read (Q8's order).
+/// MUT:CHAIN-32010 — answering -32006/404 instead of -32010 when the
+/// registry resolve fails turns this red.
+#[tokio::test]
+async fn files_chain_unservable_bucket_answers_32010() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    // The folder is born while the bootstrap bucket still serves; the
+    // fixture registry with the bootstrap entry DISABLED is layered on
+    // afterwards: the row stays visible + readable (the admin holds
+    // every bit) but the backend cannot serve.
+    let folder = mk_folder(&base_state, &admin_token, "doomed", None).await;
+    let (state, _second_id, _store) = plant_second_bucket(&base_state, "spare", false);
+    let (_, envelope) = rpc(
+        &state,
+        &admin_token,
+        "files.chain",
+        serde_json::json!({"folder_id": folder}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32010,
+        "a disabled backend is the storage-unavailable fault: {envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("storage backend unavailable"),
+        "the fault names the backend failure: {envelope}"
+    );
+}
+
 /// Q7's materialization boundary: an EXPLICIT `buckets: []` is the
 /// caller's pick (an empty authorized set) — the create path must NOT
 /// silently replace it with `granted_buckets(owner)`. MUT:M-P2A7 —
