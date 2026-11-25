@@ -1787,6 +1787,18 @@ async fn pg_bucket_migration_pending_tracks_the_bookkeeping_table() {
 async fn pg_list_live_rows_orders_by_id_asc() {
     let Some(store) = db().await else { return };
     let user = store.create_user(scratch_user()).await.expect("user");
+    // The lane shares one scratch database across serial runs — clear the
+    // probe rows a previous run may have left, or the assertion below
+    // counts stale rows as traversal output.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM files WHERE storage_key = 'order-probe-key'".to_owned(),
+            params: vec![],
+        })
+        .await
+        .unwrap();
     let mut ids = Vec::new();
     for _ in 0..4 {
         let reply = store
