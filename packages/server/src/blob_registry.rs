@@ -663,8 +663,8 @@ mod tests {
                 .reason
                 .as_deref()
                 .unwrap_or_default()
-                .contains("register"),
-            "the reason names the remedy"
+                .contains("disabled in the registry"),
+            "the reason explains why the bucket is not serving"
         );
     }
 }

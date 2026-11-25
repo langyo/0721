@@ -1176,8 +1176,8 @@ async fn pg_api_key_legacy_scopes_normalize_and_expiry_round_trips() {
 // the runner's bookkeeping.
 
 use i0721_store::migrate::{
-    FILES_BUCKET_STORAGE_KEY_INDEX_SQL,
-    FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL, MIGRATION_0007_BOOTSTRAP_SQL, MIGRATION_0007_SCHEMA_SQL,
+    FILES_BUCKET_STORAGE_KEY_INDEX_SQL, FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL,
+    MIGRATION_0007_BOOTSTRAP_SQL, MIGRATION_0007_SCHEMA_SQL,
 };
 
 /// The lane's bootstrap parameter set (`bootstrap-local`, matching the
@@ -1654,9 +1654,7 @@ async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
             .executor
             .execute(&lacrymira::Command::Sql {
                 dialect: lacrymira::Dialect::Postgres,
-                text: format!(
-                    "SELECT COUNT(*) FROM pg_indexes WHERE indexname = '{indexname}'"
-                ),
+                text: format!("SELECT COUNT(*) FROM pg_indexes WHERE indexname = '{indexname}'"),
                 params: vec![],
             })
             .await
