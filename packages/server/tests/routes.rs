@@ -8594,8 +8594,8 @@ fn missing_storage_backend_env_while_0007_is_pending_fails_startup() {
     // Negative control: an explicit `local` builds `bootstrap-local`.
     let local = bootstrap_backend_for_startup(Some("local"), true).unwrap();
     assert_eq!(local, Some("local"));
-    // Applied: the env is NEVER read — `Some("gcs")` would hard-fail if
-    // it were.
+    // Applied: the env is NEVER read (MUT:M-ENV-AFTER — validating it
+    // anyway hard-fails on `Some("gcs")`).
     let applied = bootstrap_backend_for_startup(Some("gcs"), false).unwrap();
     assert_eq!(applied, None);
     let applied_unset = bootstrap_backend_for_startup(None, false).unwrap();
@@ -8680,10 +8680,11 @@ fn ipfs_location_round_trips_host_port_without_credentials() {
     assert!(health[0].reason.is_none());
 }
 
-/// `blob_registry_never_falls_back_to_another_bucket` — the guard the
-/// mutation M-REG1/M-REG2 exercises at the unit level, pinned here on
-/// the state shape: a `for_row` whose row's bucket is Unavailable
-/// answers an error NAMING that bucket, never a substitute store.
+/// MUT:M-REG1 / MUT:M-REG2 — the guard those mutations exercise at the
+/// unit level, pinned here on the state shape: a `for_row` whose row's
+/// bucket is Unavailable answers an error NAMING that bucket, never a
+/// substitute store (MUT:M2 drives the same shape through the media
+/// lane).
 #[test]
 fn blob_registry_never_falls_back_to_another_bucket() {
     use i0721_server::blob_registry::{BlobError, BlobRegistry};
@@ -8800,8 +8801,8 @@ async fn media_reads_from_the_rows_bucket() {
     // Plant a SECOND Ready bucket whose store holds DIFFERENT bytes at
     // the same key, and DISABLE the bootstrap bucket: the row's bytes
     // still come from the row's OWN (now disabled) bucket per `for_row`,
-    // never from "the first Ready bucket" (the M2 mutation's wrong
-    // shape). Serving itself answers 404 in P1 when no usable serving
+    // MUT:M2 — never from "the first Ready bucket" (that wrong shape).
+    // Serving itself answers 404 in P1 when no usable serving
     // row exists, so the assertion pins the RESOLUTION side through the
     // registry directly plus the decoy shape below.
     let (state, _second_id, second_store) = plant_second_bucket(&base_state, "satellite", false);
@@ -9113,10 +9114,10 @@ async fn folder_rows_carry_their_parents_bucket() {
     );
 }
 
-/// `folder_rows_never_resolve_to_a_store`: folder rows have no storage
-/// key and no bytes; the byte lanes never route them through the
-/// registry (the placeholder shape proves the resolution consumes only
-/// the bucket id and folders are excluded by kind before any byte work).
+/// MUT:M-FOLDER-KEY — folder rows have no storage key and no bytes, so
+/// the byte lanes have nothing to route through the registry (the
+/// placeholder shape proves the resolution consumes only the bucket id
+/// and folders are excluded by kind before any byte work).
 #[tokio::test]
 async fn folder_rows_never_resolve_to_a_store() {
     let (state, admin) = test_state().await;

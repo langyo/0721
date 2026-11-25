@@ -98,8 +98,8 @@ fn scratch_user() -> CreateUser {
 }
 
 /// A1 (R-R) — the entity layer can carry the new nullable UUID column:
-/// the column is added by plain DDL, a `create_file` INSERT that never
-/// names `bucket_id` succeeds, and the row reads back with `bucket_id`
+/// the column is added by plain DDL, a `create_file` INSERT may omit
+/// `bucket_id` and still succeeds, and the row reads back with `bucket_id`
 /// NULL through the typed entity (no `Command::Sql` fallback needed).
 /// Once migration 0007 exists the ALTER here is redundant (IF NOT
 /// EXISTS), so the check stays valid on every lane database.
@@ -1313,7 +1313,7 @@ async fn pg_0007_backfill_is_a_fixed_point() {
         .unwrap();
     let snap_before = format!("{before:?}");
 
-    // Second run (re-runnable like the lane always is).
+    // Second run (the lane is re-runnable by design).
     run_bootstrap(&store).await;
     let after = store
         .executor
@@ -1396,7 +1396,8 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
 
     // The backfill runs again — and must not rewrite the owned row's
     // bucket (the WHERE guard). A WHERE-less backfill re-seats it by
-    // label into `bootstrap-s3`, which the assertion below catches.
+    // label into `bootstrap-s3` (MUT:M1b), which the assertion below
+    // catches.
     run_bootstrap(&store).await;
     let reply = store
         .executor
@@ -1980,7 +1981,7 @@ async fn pg_set_parent_refuses_a_cross_bucket_parent() {
         .set_parent(child.id, Some(folder_a.id))
         .await
         .expect("a same-bucket parent is fine");
-    // Root (None) is always allowed.
+    // Root (None) keeps the row's own bucket (MUT:M-ROOT drives this).
     store
         .set_parent(child.id, None)
         .await
