@@ -32,12 +32,10 @@ export function login(request: LoginRequest): Promise<AuthSession> {
   });
 }
 
-export function verify(): Promise<UserDto> {
-  return wsCall<UserDto>("auth.verify");
-}
-
 /** Cookie rotation: the REST whitelist owns refresh — a WS method
- *  cannot Set-Cookie, so the RPC table refuses the name. */
+ *  cannot Set-Cookie, so the RPC table refuses the name. The response
+ *  body carries the user, so this is ALSO the session probe (R-M①): no
+ *  `auth.verify` round trip exists anywhere any more. */
 export function refresh(): Promise<AuthSession> {
   return apiFetch<AuthSession>("/api/v1/auth/refresh", { method: "POST" });
 }
@@ -63,9 +61,16 @@ export function deleteFile(id: string): Promise<void> {
 }
 
 /** Multipart upload with per-file progress (XHR): binary bodies stay on
- *  the REST whitelist — a JSON control lane carries no progress events. */
-export function uploadFile(file: File, onProgress?: (fraction: number) => void): Promise<void> {
-  return apiUpload("/api/v1/files", file, onProgress);
+ *  the REST whitelist — a JSON control lane carries no progress events.
+ *  `bucket` is the R-I override: the chosen bucket goes as `?bucket=`
+ *  and the server's `resolve_upload_bucket` resolves/refuses it. */
+export function uploadFile(
+  file: File,
+  onProgress?: (fraction: number) => void,
+  bucket?: string,
+): Promise<void> {
+  const query = bucket ? `?bucket=${encodeURIComponent(bucket)}` : "";
+  return apiUpload(`/api/v1/files${query}`, file, onProgress);
 }
 
 

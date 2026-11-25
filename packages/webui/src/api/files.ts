@@ -42,8 +42,18 @@ export function deleteFile(id: string): Promise<void> {
   return wsCall<void>("files.delete", { id });
 }
 
-export function uploadTo(file: File, folderId: string | null, onProgress?: (f: number) => void): Promise<void> {
-  const query = folderId ? `?folder_id=${encodeURIComponent(folderId)}` : "";
+/** Multipart upload into the netdisk tree. `bucket` is the R-I override
+ *  (`?bucket=<slug>`); when absent the server resolves the default. */
+export function uploadTo(
+  file: File,
+  folderId: string | null,
+  onProgress?: (f: number) => void,
+  bucket?: string,
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (folderId) params.set("folder_id", folderId);
+  if (bucket) params.set("bucket", bucket);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
   return apiUpload(`/api/v1/files${query}`, file, onProgress);
 }
 
