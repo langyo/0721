@@ -12193,35 +12193,27 @@ async fn private_bucket_thumbnail_follows_the_same_check() {
 }
 
 /// `private_media_grant_does_not_leak_through_a_shared_storage_key` —
-/// one key, two rows in two buckets: the PRIVATE bucket's row must not
-/// leak through the PUBLIC bucket's anonymous readability of the same
-/// key. MUT:P2B-LEAK — an authorized set that silently widens past the
-/// per-row bucket check turns this red.
+/// one key, two rows in two buckets, the PRIVATE row sorting FIRST by
+/// `id ASC`: the private bucket's row must not leak through the PUBLIC
+/// bucket's anonymous readability of the same key, neither to anonymous
+/// nor to a session that holds no grant on the private bucket.
+/// MUT:P2B-LEAK — an authorized set that silently widens past the
+/// per-row bucket check turns this red (the leaked row's id sorts
+/// first, so a widened set serves the private store's bytes as 200).
 #[tokio::test]
 async fn private_media_grant_does_not_leak_through_a_shared_storage_key() {
     let (base_state, _) = test_state().await;
     let token = login(&base_state, "admin", "admin-password").await;
-    let (_, dto) = upload(&base_state, &token, tiny_png(), "pub.png").await;
-    let key = dto["sha256"].as_str().unwrap().to_owned();
-    let public_bytes = base_state
-        .blobs
-        .get(i0721_server::blob::BlobSlot::Media, &key)
-        .await
-        .unwrap()
-        .expect("the public bucket holds its bytes");
 
     // A second, PRIVATE bucket whose store holds DIFFERENT bytes at the
-    // same key, with a row of ANOTHER owner in it.
+    // same key, with a row of ANOTHER owner in it — its row id must
+    // sort BEFORE the public row's (the id-ASC serving order then puts
+    // the private row ahead). Each attempt uploads distinct content
+    // into the public bucket and plants the vault row at the SAME key;
+    // a wrong ordering is soft-deleted (it leaves the live set) and the
+    // pair retries.
     let (state, second_id, second_store) = plant_second_bucket(&base_state, "vault", true);
     plant_bucket_with_id(&state, second_id, "vault", false, false, true).await;
-    second_store
-        .put(
-            i0721_server::blob::BlobSlot::Media,
-            &key,
-            b"private-bytes-must-not-leak",
-        )
-        .await
-        .unwrap();
     let other = state
         .store
         .create_user(CreateUser {
@@ -12232,24 +12224,73 @@ async fn private_media_grant_does_not_leak_through_a_shared_storage_key() {
         })
         .await
         .unwrap();
-    state
+
+    // The session face's actor: a MEMBER who owns the public row but
+    // holds NO grant on the private vault bucket (the admin reads every
+    // bucket — an admin session legitimately serves the private row and
+    // would mask the leak).
+    let reader = base_state
         .store
-        .create_file(i0721_proto::NewFile {
-            bucket_id: Some(second_id),
-            parent_id: None,
-            owner_id: other.id,
-            name: "vault.png".to_owned(),
-            kind: i0721_proto::FileKind::Image,
-            mime: "image/webp".to_owned(),
-            size: 28,
-            sha256: key.clone(),
-            storage_backend: "local".to_owned(),
-            storage_key: key.clone(),
-            thumbnail_key: None,
-            original_name: "vault.png".to_owned(),
+        .create_user(CreateUser {
+            username: "pub-reader".to_owned(),
+            display_name: "Reader".to_owned(),
+            role: Role::Member,
+            password_hash: None,
         })
         .await
         .unwrap();
+    let reader_token = base_state.signer.sign(reader.id, Timestamp::now());
+    let mut public_key: Option<String> = None;
+    let mut public_bytes: Option<bytes::Bytes> = None;
+    for attempt in 0..256u32 {
+        let mut bytes = tiny_png();
+        bytes[..4].copy_from_slice(&(attempt ^ 0x5EED).to_be_bytes());
+        let (_, dto) = upload(&base_state, &reader_token, bytes, &format!("pub-{attempt}.png")).await;
+        let attempt_key = dto["sha256"].as_str().unwrap().to_owned();
+        let attempt_id = dto["id"].as_str().unwrap().to_owned();
+        let stored = base_state
+            .blobs
+            .get(i0721_server::blob::BlobSlot::Media, &attempt_key)
+            .await
+            .unwrap()
+            .expect("the public bucket holds its bytes");
+        // The vault row: same KEY, DIFFERENT bytes in the private store.
+        second_store
+            .put(
+                i0721_server::blob::BlobSlot::Media,
+                &attempt_key,
+                b"private-bytes-must-not-leak",
+            )
+            .await
+            .unwrap();
+        let vault_row = state
+            .store
+            .create_file(i0721_proto::NewFile {
+                bucket_id: Some(second_id),
+                parent_id: None,
+                owner_id: other.id,
+                name: "vault.png".to_owned(),
+                kind: i0721_proto::FileKind::Image,
+                mime: "image/webp".to_owned(),
+                size: 28,
+                sha256: attempt_key.clone(),
+                storage_backend: "local".to_owned(),
+                storage_key: attempt_key.clone(),
+                thumbnail_key: None,
+                original_name: "vault.png".to_owned(),
+            })
+            .await
+            .unwrap();
+        if vault_row.id.to_string().as_str() < attempt_id.as_str() {
+            public_key = Some(attempt_key);
+            public_bytes = Some(stored);
+            break;
+        }
+        // Wrong order: retire this attempt's vault row and retry.
+        let _ = state.store.soft_delete_file(vault_row.id).await.unwrap();
+    }
+    let key = public_key.expect("fixture: a vault row must sort before its public twin");
+    let public_bytes = public_bytes.expect("the matched attempt's bytes");
 
     // Anonymous: 200 — but from the PUBLIC row's bucket, never the
     // private store's bytes.
@@ -12274,18 +12315,29 @@ async fn private_media_grant_does_not_leak_through_a_shared_storage_key() {
 
     // A session (the upload owner, the admin) with NO grant row on the
     // private bucket still reads through the PUBLIC witness row — the
-    // private grant of another owner leaks nothing.
+    // private grant of another owner leaks nothing, and the bytes must
+    // be the PUBLIC row's (the vault row sorts first; a widened
+    // authorized set would serve its bytes instead).
     let session = app(&state)
         .oneshot(bearer(
             Request::builder()
                 .uri(format!("/media/{key}"))
                 .body(Body::empty())
                 .unwrap(),
-            &token,
+            &reader_token,
         ))
         .await
         .unwrap();
     assert_eq!(session.status(), StatusCode::OK);
+    let session_body = axum::body::to_bytes(session.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        session_body.as_ref(),
+        public_bytes.as_ref(),
+        "the session serves the public row's bytes — the private grant of \
+         another owner leaks neither status nor content"
+    );
 }
 
 /// `shared_storage_key_resolves_identically_on_every_request` — the
