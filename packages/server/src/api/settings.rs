@@ -22,8 +22,14 @@ pub struct HealthReport {
     pub status: &'static str,
     /// Service version.
     pub version: &'static str,
-    /// Where the site configuration came from in the last read.
+    /// Where the site configuration came from in the last read:
+    /// `settings` (a valid stored row), `default` (absent or corrupt —
+    /// the documented fallback) or `unreadable` (the store itself
+    /// failed; previously this was wrongly reported as `default`).
     pub config_source: &'static str,
+    /// Every registered bucket's runtime state (empty when the registry
+    /// could not be built, which fails the start instead).
+    pub buckets: Vec<crate::blob_registry::BucketHealth>,
 }
 
 /// Read the site configuration: the stored row when present and valid,
@@ -60,14 +66,17 @@ pub async fn health(State(state): State<AppState>) -> Json<HealthReport> {
             }
         }
         Ok(_) => "default",
+        // R-P/HealthReport: a store failure is NOT a "default" — the
+        // truth ("unreadable") is a distinct fourth state.
         Err(err) => {
-            tracing::warn!(error = %err, "settings read failed — health reports default");
-            "default"
+            tracing::warn!(error = %err, "settings read failed — health reports unreadable");
+            "unreadable"
         }
     };
     Json(HealthReport {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
         config_source,
+        buckets: state.registry.health(),
     })
 }

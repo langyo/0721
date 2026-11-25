@@ -11,17 +11,25 @@ use i0721_proto::{FileRecord, NewFile, UserRecord};
 use jiff::Timestamp;
 use lacrymira::{Command, Condition, Entity, Reply, TypedColumnOps, Value};
 use lacrymira_pg::{MigrationResult, MigrationRunner, PgExecutor};
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 use i0721_proto::{NewShare, ShareRecord};
 
 use crate::entity::{
     api_key_model_to_record, file_model_from_new, file_model_to_record, share_model_to_record,
-    user_model_from_new, user_model_to_record, ApiKeyColumn, ApiKeyModel, FileColumn, FileModel,
-    OAuthIdentityColumn, OAuthIdentityModel, SettingColumn, SettingModel, ShareColumn, ShareModel,
-    UserColumn, UserModel,
+    storage_bucket_model_to_record, user_model_from_new, user_model_to_record, ApiKeyColumn,
+    ApiKeyModel, FileColumn, FileModel, OAuthIdentityColumn, OAuthIdentityModel, SettingColumn,
+    SettingModel, ShareColumn, ShareModel, StorageBucketColumn, StorageBucketModel, UserColumn,
+    UserModel,
 };
-use crate::{migrations, CreateUser, Store, StoreError};
+use crate::{migrations, BootstrapBucketParams, CreateUser, Store, StoreError};
+
+/// The process-wide bootstrap facts the bucket migration needs. Set once
+/// by the main binary after the R-U decision; [`PgStore::migrate`] reads
+/// it so every lane that calls the parameterless form still carries the
+/// facts.
+static BOOTSTRAP_PARAMS: OnceLock<BootstrapBucketParams> = OnceLock::new();
 
 /// A [`Store`] over a PostgreSQL connection pool.
 #[derive(Debug, Clone)]
@@ -52,10 +60,112 @@ impl PgStore {
     ///
     /// [`StoreError::Db`] when a migration fails to apply.
     pub async fn migrate(&self) -> Result<MigrationResult, StoreError> {
-        MigrationRunner::new(migrations())
+        self.migrate_with(BOOTSTRAP_PARAMS.get()).await
+    }
+
+    /// Same, with explicit bootstrap facts (the main binary resolves
+    /// them fail-closed from the environment and the pending set; tests
+    /// pass a fixed set). Must be called once before [`Self::migrate`]
+    /// when the process serves real migrations — see [`Self::set_bootstrap_params`].
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Db`] when a migration fails to apply.
+    pub async fn migrate_with(
+        &self,
+        bootstrap: Option<&BootstrapBucketParams>,
+    ) -> Result<MigrationResult, StoreError> {
+        MigrationRunner::new(migrations(bootstrap))
             .up(self.executor.pool())
             .await
             .map_err(StoreError::from)
+    }
+
+    /// Register the process-wide bootstrap facts. The FIRST set wins (a
+    /// process runs one migration set); later differing sets are a
+    /// programming error and fail loudly at debug, quietly at release —
+    /// the migration facts of a process must not change mid-flight.
+    pub fn set_bootstrap_params(params: BootstrapBucketParams) {
+        match BOOTSTRAP_PARAMS.get() {
+            Some(existing) => assert!(
+                *existing == params,
+                "bootstrap bucket params must be set once, consistently"
+            ),
+            None => {
+                let _ = BOOTSTRAP_PARAMS.set(params);
+            }
+        }
+    }
+
+    /// The recorded (already applied) migration versions on this
+    /// database — the R-U wiring's pending-set source. Empty when the
+    /// bookkeeping table has no rows (a fresh database).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Db`] when the bookkeeping table cannot be read.
+    pub async fn applied_versions(&self) -> Result<Vec<String>, StoreError> {
+        // A FRESH database has no bookkeeping table yet — the runner
+        // creates it as the first step of `up`. Probe before querying so
+        // the startup gate reads "nothing applied" there instead of a raw
+        // missing-relation error.
+        let probe = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT (to_regclass('seaql_migrations') IS NULL)::text".to_owned(),
+            params: vec![],
+        };
+        let reply = self.executor.execute(&probe).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db(
+                "expected a row from the bookkeeping-table probe".to_owned(),
+            ));
+        };
+        let absent = rows
+            .first()
+            .and_then(|row| row.first())
+            .map(|value| matches!(value, Value::Text(text) if text == "true"))
+            .unwrap_or(false);
+        if absent {
+            return Ok(Vec::new());
+        }
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT version FROM seaql_migrations".to_owned(),
+            params: vec![],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db(
+                "expected rows from the migration bookkeeping table".to_owned(),
+            ));
+        };
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.into_iter().next())
+            .filter_map(|value| match value {
+                Value::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// Whether the bucket migration (0007) still needs to run (R-U ②).
+    ///
+    /// `migrations(None)` deliberately omits 0007 — its SQL is only
+    /// complete once the deployment facts are passed in — so the pending
+    /// set must be asked about 0007 directly. On a fresh database the
+    /// bookkeeping table does not exist yet; [`Self::applied_versions`]
+    /// reads that as an empty applied set, which makes 0007 (and every
+    /// other migration) pending.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Db`] when the bookkeeping table cannot be read.
+    pub async fn bucket_migration_pending(&self) -> Result<bool, StoreError> {
+        let applied = self.applied_versions().await?;
+        Ok(!applied
+            .iter()
+            .any(|v| v == crate::migrate::BUCKET_MIGRATION_VERSION))
     }
 
     /// Execute a rows-producing command and decode every row into the
@@ -331,10 +441,69 @@ impl Store for PgStore {
             .transpose()
     }
 
-    async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError> {
-        self.query_one::<FileModel>(live_file_by(FileColumn::StorageKey, key))
+    async fn list_live_rows_by_storage_key(
+        &self,
+        key: &str,
+    ) -> Result<Vec<FileRecord>, StoreError> {
+        // `id ASC` is the deterministic traversal order R-J pins: the
+        // same key must resolve identically on every request and on both
+        // stores.
+        let cmd = Command::Select {
+            table: FileModel::TABLE.to_owned(),
+            filter: Some(
+                FileColumn::DeletedAt
+                    .is_null()
+                    .into_inner()
+                    .and(FileColumn::StorageKey.eq(key).into_inner()),
+            ),
+            order_by: vec![("id".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        self.query_all::<FileModel>(cmd)
             .await?
+            .into_iter()
             .map(file_model_to_record)
+            .collect()
+    }
+
+    async fn list_storage_buckets(
+        &self,
+    ) -> Result<Vec<i0721_proto::StorageBucketRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: StorageBucketModel::TABLE.to_owned(),
+            filter: None,
+            order_by: vec![("created_at".to_owned(), false)],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        self.query_all::<StorageBucketModel>(cmd)
+            .await?
+            .into_iter()
+            .map(storage_bucket_model_to_record)
+            .collect()
+    }
+
+    async fn get_storage_bucket_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<i0721_proto::StorageBucketRecord>, StoreError> {
+        let cmd = Command::Select {
+            table: StorageBucketModel::TABLE.to_owned(),
+            filter: Some(StorageBucketColumn::Slug.eq(slug).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
+        };
+        self.query_one::<StorageBucketModel>(cmd)
+            .await?
+            .map(storage_bucket_model_to_record)
             .transpose()
     }
 
@@ -362,7 +531,13 @@ impl Store for PgStore {
         // exclude self; friendly Conflict instead of a raw 23505).
         if let Some(current) = self.get_file(id).await? {
             if self
-                .folder_name_taken(current.owner_id, current.parent_id, name, Some(id))
+                .folder_name_taken(
+                    current.owner_id,
+                    current.parent_id,
+                    current.bucket_id,
+                    name,
+                    Some(id),
+                )
                 .await?
             {
                 return Err(StoreError::Conflict(format!(
@@ -401,17 +576,37 @@ impl Store for PgStore {
         Ok(self.query_one::<FileModel>(cmd).await?.is_some())
     }
 
-    async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError> {
-        let count = self
-            .executor
-            .count::<FileModel>(Some(
-                FileColumn::DeletedAt
-                    .is_null()
-                    .into_inner()
-                    .and(FileColumn::StorageKey.eq(key).into_inner()),
-            ))
-            .await?;
-        Ok(count as u64)
+    async fn count_live_files_by_storage_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT COUNT(*) AS n FROM files WHERE deleted_at IS NULL \
+                   AND bucket_id IS NOT DISTINCT FROM $1 AND storage_key = $2"
+                .to_owned(),
+            params: vec![
+                bucket_id
+                    .map(|id| Value::Uuid(id.to_string()))
+                    .unwrap_or(Value::Null),
+                Value::Text(key.to_owned()),
+            ],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a COUNT".to_owned()));
+        };
+        let n = rows
+            .first()
+            .and_then(|row| row.iter().next())
+            .and_then(|v| match v {
+                Value::I64(n) => Some(*n),
+                Value::I32(n) => Some(i64::from(*n)),
+                _ => None,
+            })
+            .unwrap_or(0);
+        Ok(n as u64)
     }
 
     async fn get_oauth_identity(
@@ -495,22 +690,37 @@ impl Store for PgStore {
         Ok(providers)
     }
 
-    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError> {
-        let cmd = Command::Select {
-            table: FileModel::TABLE.to_owned(),
-            filter: Some(
-                FileColumn::DeletedAt
-                    .is_null()
-                    .into_inner()
-                    .and(FileColumn::ThumbnailKey.eq(key).into_inner()),
-            ),
-            order_by: vec![],
-            limit: None,
-            offset: None,
-            lock: None,
-            distinct: false,
+    async fn count_live_files_by_thumbnail_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT COUNT(*) AS n FROM files WHERE deleted_at IS NULL \
+                   AND bucket_id IS NOT DISTINCT FROM $1 AND thumbnail_key = $2"
+                .to_owned(),
+            params: vec![
+                bucket_id
+                    .map(|id| Value::Uuid(id.to_string()))
+                    .unwrap_or(Value::Null),
+                Value::Text(key.to_owned()),
+            ],
         };
-        Ok(self.query_all::<FileModel>(cmd).await?.len() as u64)
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a COUNT".to_owned()));
+        };
+        let n = rows
+            .first()
+            .and_then(|row| row.iter().next())
+            .and_then(|v| match v {
+                Value::I64(n) => Some(*n),
+                Value::I32(n) => Some(i64::from(*n)),
+                _ => None,
+            })
+            .unwrap_or(0);
+        Ok(n as u64)
     }
 
     async fn create_api_key(&self, record: &i0721_proto::ApiKeyRecord) -> Result<(), StoreError> {
@@ -761,17 +971,24 @@ impl Store for PgStore {
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
+        bucket_id: Option<Uuid>,
         name: &str,
         exclude: Option<Uuid>,
     ) -> Result<bool, StoreError> {
         // Entity-layer read (the raw COALESCE SQL hit the driver's
         // binary-decoding path for UUID params); the root/NULL folding
-        // that COALESCE expressed happens here in Rust.
+        // that COALESCE expressed happens here in Rust. The bucket
+        // dimension folds the same way (R-G: same-layer uniqueness is
+        // bucket-aware — identical names in different buckets coexist).
         let mut filter = FileColumn::DeletedAt
             .is_null()
             .into_inner()
             .and(FileColumn::OwnerId.eq(owner_id).into_inner())
             .and(FileColumn::Name.eq(name).into_inner());
+        filter = match bucket_id {
+            Some(bid) => filter.and(FileColumn::BucketId.eq(bid).into_inner()),
+            None => filter.and(FileColumn::BucketId.is_null().into_inner()),
+        };
         filter = match parent_id {
             Some(pid) => filter.and(FileColumn::ParentId.eq(pid).into_inner()),
             None => filter.and(FileColumn::ParentId.is_null().into_inner()),
@@ -796,14 +1013,26 @@ impl Store for PgStore {
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         name: &str,
+        bucket_id: Option<Uuid>,
     ) -> Result<FileRecord, StoreError> {
         if self
-            .folder_name_taken(owner_id, parent_id, name, None)
+            .folder_name_taken(owner_id, parent_id, bucket_id, name, None)
             .await?
         {
             return Err(StoreError::Conflict(format!(
                 "name {name:?} already exists in this folder"
             )));
+        }
+        // R-G: a child inherits its parent's bucket — a caller passing a
+        // different bucket than the parent's is refused, not silently
+        // re-seated (the same refusal `set_parent` gives a move).
+        if let Some(parent) = parent_id {
+            let parent_row = self.get_file(parent).await?;
+            if parent_row.map(|r| r.bucket_id) != Some(bucket_id) {
+                return Err(StoreError::Conflict(
+                    "cannot create a folder across buckets".to_owned(),
+                ));
+            }
         }
         let model = FileModel {
             id: Uuid::new_v4(),
@@ -814,6 +1043,7 @@ impl Store for PgStore {
             mime: "inode/directory".to_owned(),
             size: 0,
             sha256: format!("dir:{}", Uuid::new_v4().simple()),
+            bucket_id,
             storage_backend: "local".to_owned(),
             storage_key: String::new(),
             thumbnail_key: None,
@@ -833,13 +1063,41 @@ impl Store for PgStore {
         // the store layer is the final gate against a raw 23505).
         if let Some(current) = self.get_file(id).await? {
             if self
-                .folder_name_taken(current.owner_id, parent_id, &current.name, Some(id))
+                .folder_name_taken(
+                    current.owner_id,
+                    parent_id,
+                    current.bucket_id,
+                    &current.name,
+                    Some(id),
+                )
                 .await?
             {
                 return Err(StoreError::Conflict(format!(
                     "name {:?} already exists in the target folder",
                     current.name
                 )));
+            }
+            // R-G: the folder tree is per bucket. A move whose target
+            // parent sits in another bucket is refused here — the ONE
+            // guard every move path shares (the RPC lane has no second
+            // bypass).
+            let parent_bucket = match parent_id {
+                Some(pid) => match self.get_file(pid).await? {
+                    Some(parent) => parent.bucket_id,
+                    None => {
+                        return Err(StoreError::Conflict(
+                            "the target folder does not exist".to_owned(),
+                        ))
+                    }
+                },
+                // Root: the tree is per bucket, so a row moved to its own
+                // root keeps the bucket it already lives in.
+                None => current.bucket_id,
+            };
+            if parent_bucket != current.bucket_id {
+                return Err(StoreError::Conflict(
+                    "cannot move a row into a folder in another bucket".to_owned(),
+                ));
             }
         }
         let cmd = update_command::<FileModel>(

@@ -117,8 +117,14 @@ pub async fn download(
     if !referer_ok {
         return Err(ApiError::forbidden("Referer not allowed"));
     }
-    let bytes = state
-        .blobs
+    // R-D / I4: the share's bytes ride the FILE ROW's own bucket —
+    // resolved through the row's `bucket_id`, never "some row with the
+    // same storage key".
+    let store = state
+        .registry
+        .for_row(&file)
+        .map_err(|err| ApiError::not_found(format!("share blob not available: {err}")))?;
+    let bytes = store
         .get(crate::blob::BlobSlot::Media, &file.storage_key)
         .await
         .map_err(ApiError::from)?

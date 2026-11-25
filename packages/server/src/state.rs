@@ -7,6 +7,7 @@ use tokio::sync::Semaphore;
 
 use crate::auth::{JwtSigner, LoginLimiter};
 use crate::blob::BlobStore;
+use crate::blob_registry::BlobRegistry;
 use crate::config::Config;
 use crate::oauth::{DiscoveryCache, LoginAttemptStore};
 use crate::ws_tickets::WsTicketStore;
@@ -16,8 +17,12 @@ use crate::ws_tickets::WsTicketStore;
 pub struct AppState {
     /// Metadata store (PostgreSQL in production, memory in tests).
     pub store: Arc<dyn Store>,
-    /// Blob backend.
+    /// The per-bucket blob registry (stage A: every legacy call site
+    /// still sees `Arc<dyn BlobStore>` through the single-entry
+    /// registry; per-row routing lands in stage B).
     pub blobs: Arc<dyn BlobStore>,
+    /// The registry itself (per-bucket resolution + health).
+    pub registry: Arc<BlobRegistry>,
     /// Process configuration.
     pub config: Arc<Config>,
     /// Transition-era token signer.
@@ -46,11 +51,35 @@ impl AppState {
     /// Assemble a state from its parts (tests use this with fakes).
     #[must_use]
     pub fn new(store: Arc<dyn Store>, blobs: Arc<dyn BlobStore>, config: Arc<Config>) -> Self {
+        Self::with_registry(
+            store,
+            BlobRegistry::single_tagged(
+                blobs.clone(),
+                config
+                    .storage_backend
+                    .as_deref()
+                    .and_then(i0721_proto::BucketBackend::parse)
+                    .unwrap_or(i0721_proto::BucketBackend::Local),
+            ),
+            config,
+            blobs,
+        )
+    }
+
+    /// Assemble a state from an explicit registry (production path).
+    #[must_use]
+    pub fn with_registry(
+        store: Arc<dyn Store>,
+        registry: Arc<BlobRegistry>,
+        config: Arc<Config>,
+        blobs: Arc<dyn BlobStore>,
+    ) -> Self {
         let signer = Arc::new(JwtSigner::new(&config.jwt_secret));
         let upload_slots = Arc::new(Semaphore::new(config.upload_concurrency));
         Self {
             store,
             blobs,
+            registry,
             config,
             signer,
             login_limiter: Arc::new(LoginLimiter::default()),

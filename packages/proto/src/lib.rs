@@ -15,6 +15,7 @@
 //! ```
 
 pub mod api_key;
+pub mod bucket;
 pub mod config;
 pub mod file;
 pub mod page;
@@ -23,6 +24,7 @@ pub mod size;
 pub mod user;
 
 pub use api_key::{ApiKeyCreated, ApiKeyPublic, ApiKeyRecord, KeyOp};
+pub use bucket::{BucketBackend, BucketGrantRecord, StorageBucketRecord};
 pub use config::{
     default_site_config, FooterBanner, SiteConfig, SiteConfigStrict, CONFIG_SETTING_KEY,
 };

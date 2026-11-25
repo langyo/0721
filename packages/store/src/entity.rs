@@ -10,7 +10,10 @@
 //!   internal markers (soft delete / expiry), compared in Rust after
 //!   parsing — no SQL time arithmetic rides on them.
 
-use i0721_proto::{FileKind, FileRecord, NewFile, Role, UserRecord};
+use i0721_proto::{
+    BucketBackend, BucketGrantRecord, FileKind, FileRecord, NewFile, Role, StorageBucketRecord,
+    UserRecord,
+};
 use jiff::Timestamp;
 use uuid::Uuid;
 
@@ -81,6 +84,9 @@ pub struct FileModel {
     pub size: i64,
     /// Hex SHA-256 — dedupe key among live files.
     pub sha256: String,
+    /// The bucket this row lives in; NULL = legacy rows awaiting the
+    /// bootstrap backfill (the column stays nullable forever).
+    pub bucket_id: Option<Uuid>,
     /// Storage backend tag; `local` today.
     pub storage_backend: String,
     /// Blob key (public media path segment).
@@ -168,6 +174,63 @@ pub struct SettingModel {
 
 pub use settings_entity::Column as SettingColumn;
 
+// ── storage_buckets (the bucket registry; migration 0007) ──
+
+/// The `storage_buckets` table.
+#[derive(Debug, Clone, PartialEq, lacrymira::DeriveEntity)]
+#[lacrymira(table = "storage_buckets")]
+pub struct StorageBucketModel {
+    /// Primary key.
+    #[lacrymira(primary_key)]
+    pub id: Uuid,
+    /// Stable identifier.
+    pub slug: String,
+    /// Human-facing name.
+    pub display_name: String,
+    /// `s3` / `local` / `ipfs` (CHECK constraint).
+    pub backend: String,
+    /// Human-readable placement (never a credential).
+    pub location: String,
+    /// The env prefix token carrying the credentials.
+    pub endpoint_ref: String,
+    /// Whether anonymous `/media` reads may serve this bucket.
+    pub anonymous_read: bool,
+    /// Whether new signups default to grants on this bucket.
+    pub grant_on_signup: bool,
+    /// Disabled buckets never serve.
+    pub enabled: bool,
+    /// Bootstrap buckets are born in migration 0007, immutable.
+    pub is_bootstrap: bool,
+    /// Creation time.
+    pub created_at: Timestamp,
+}
+
+pub use storage_buckets_entity::Column as StorageBucketColumn;
+
+// ── bucket_grants (per user × bucket; P2a writes it) ──
+
+/// The `bucket_grants` table.
+#[derive(Debug, Clone, PartialEq, lacrymira::DeriveEntity)]
+#[lacrymira(table = "bucket_grants")]
+pub struct BucketGrantModel {
+    /// The granted user (composite PK half).
+    #[lacrymira(primary_key)]
+    pub user_id: Uuid,
+    /// The granted bucket (composite PK half).
+    #[lacrymira(primary_key)]
+    pub bucket_id: Uuid,
+    /// Read bit.
+    pub can_read: bool,
+    /// Write bit.
+    pub can_write: bool,
+    /// Share bit.
+    pub can_share: bool,
+    /// Creation time.
+    pub created_at: Timestamp,
+}
+
+pub use bucket_grants_entity::Column as BucketGrantColumn;
+
 // ── conversions ──
 
 /// Decode failures (corrupt role/kind tags) surface as [`StoreError::Db`].
@@ -230,6 +293,7 @@ pub fn file_model_to_record(model: FileModel) -> Result<FileRecord, StoreError> 
         mime: model.mime,
         size: model.size,
         sha256: model.sha256,
+        bucket_id: model.bucket_id,
         storage_backend: model.storage_backend,
         storage_key: model.storage_key,
         thumbnail_key: model.thumbnail_key,
@@ -251,12 +315,51 @@ pub fn file_model_from_new(id: Uuid, file: &NewFile, created_at: Timestamp) -> F
         mime: file.mime.clone(),
         size: file.size,
         sha256: file.sha256.clone(),
+        bucket_id: file.bucket_id,
         storage_backend: file.storage_backend.clone(),
         storage_key: file.storage_key.clone(),
         thumbnail_key: file.thumbnail_key.clone(),
         original_name: file.original_name.clone(),
         created_at,
         deleted_at: None,
+    }
+}
+
+/// Convert a [`StorageBucketModel`] into its record form.
+///
+/// # Errors
+///
+/// [`StoreError::Db`] when the backend tag is not `s3`/`local`/`ipfs`.
+pub fn storage_bucket_model_to_record(
+    model: StorageBucketModel,
+) -> Result<StorageBucketRecord, StoreError> {
+    let backend = BucketBackend::parse(&model.backend)
+        .ok_or_else(|| db_corrupt("bucket backend", &model.backend))?;
+    Ok(StorageBucketRecord {
+        id: model.id,
+        slug: model.slug,
+        display_name: model.display_name,
+        backend,
+        location: model.location,
+        endpoint_ref: model.endpoint_ref,
+        anonymous_read: model.anonymous_read,
+        grant_on_signup: model.grant_on_signup,
+        enabled: model.enabled,
+        is_bootstrap: model.is_bootstrap,
+        created_at: model.created_at,
+    })
+}
+
+/// Convert a [`BucketGrantModel`] into its record form.
+#[must_use]
+pub fn bucket_grant_model_to_record(model: BucketGrantModel) -> BucketGrantRecord {
+    BucketGrantRecord {
+        user_id: model.user_id,
+        bucket_id: model.bucket_id,
+        can_read: model.can_read,
+        can_write: model.can_write,
+        can_share: model.can_share,
+        created_at: model.created_at,
     }
 }
 

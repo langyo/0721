@@ -19,7 +19,10 @@ pub mod migrate;
 pub mod pg;
 
 pub use memory::MemoryStore;
-pub use migrate::migrations;
+pub use migrate::{
+    migrations, validate_bootstrap_location, BootstrapBucketParams, MIGRATION_0007_BOOTSTRAP_SQL,
+    MIGRATION_0007_SCHEMA_SQL, ZERO_UUID_SQL,
+};
 pub use pg::PgStore;
 
 use i0721_proto::{FileRecord, NewShare, Role, ShareRecord, UserRecord};
@@ -118,20 +121,34 @@ pub trait Store: Send + Sync {
         sha256: &str,
     ) -> Result<Option<FileRecord>, StoreError>;
 
-    /// Fetch a live file by its public storage key (the `/media/:key`
-    /// lookup). Several rows may share one storage key (per-owner dedupe
-    /// keeps the blob content-addressed); any of them authorizes serving.
-    async fn get_file_by_storage_key(&self, key: &str) -> Result<Option<FileRecord>, StoreError>;
+    /// ALL live rows sharing a storage key, `id ASC` — the set the
+    /// `/media` lane's serving-row decision and the share lane's
+    /// per-row routing consume (spec R-J: the determination is a set
+    /// predicate and the order is a single deterministic key, identical
+    /// on both stores).
+    async fn list_live_rows_by_storage_key(&self, key: &str)
+        -> Result<Vec<FileRecord>, StoreError>;
 
     /// Count live rows sharing a storage key — the caller's blob-reclaim
     /// probe (a blob goes away only with its last live row; full GC is a
-    /// netdisk-wave concern).
-    async fn count_live_files_by_storage_key(&self, key: &str) -> Result<u64, StoreError>;
+    /// netdisk-wave concern). B-P1 onward the count is scoped to ONE
+    /// bucket: `media/` and `cache/` namespaces are per bucket, and
+    /// reclaiming in bucket A must never consult bucket B's rows.
+    async fn count_live_files_by_storage_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError>;
 
     /// Live rows referencing a thumbnail key (the Cache-slot blob's
     /// liveness signal — distinct from storage_key because thumbnails
-    /// are shared across owners whose blobs dedupe by content).
-    async fn count_live_files_by_thumbnail_key(&self, key: &str) -> Result<u64, StoreError>;
+    /// are shared across owners whose blobs dedupe by content), scoped
+    /// to one bucket (see [`Store::count_live_files_by_storage_key`]).
+    async fn count_live_files_by_thumbnail_key(
+        &self,
+        bucket_id: Option<Uuid>,
+        key: &str,
+    ) -> Result<u64, StoreError>;
 
     /// Record a freshly uploaded file; `(owner_id, sha256)` must be
     /// unique among that owner's live files ([`StoreError::Conflict`]
@@ -198,23 +215,38 @@ pub trait Store: Send + Sync {
 
     /// Whether a name is already taken in one owner's folder layer
     /// (live rows; `exclude` lets a rename/move keep its own name).
+    /// `bucket_id` scopes the check to ONE bucket layer (R-G: the
+    /// same-layer uniqueness index is bucket-aware, so identical names
+    /// in different buckets coexist); the caller passes the target
+    /// parent's bucket (or the moved/renamed row's own for the root).
     async fn folder_name_taken(
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
+        bucket_id: Option<Uuid>,
         name: &str,
         exclude: Option<Uuid>,
     ) -> Result<bool, StoreError>;
 
-    /// Create a folder row (sha256 = `dir:` placeholder).
+    /// Create a folder row (sha256 = `dir:` placeholder) in `bucket_id`.
+    ///
+    /// The bucket comes from the caller: a child inherits its parent's
+    /// bucket, a root folder takes the resolved target bucket (the
+    /// bootstrap bucket in this slice). `parent_id = Some(parent)` with
+    /// a parent in another bucket is a `Conflict` (R-G's cross-bucket
+    /// guard; the same refusal `set_parent` gives a move).
     async fn create_folder(
         &self,
         owner_id: Uuid,
         parent_id: Option<Uuid>,
         name: &str,
+        bucket_id: Option<Uuid>,
     ) -> Result<FileRecord, StoreError>;
 
     /// Move a row to a new parent (caller pre-validates name/cycles).
+    /// Refuses a target parent whose `bucket_id` differs from the
+    /// moved row's own (R-G: the folder tree is per bucket; every
+    /// move path shares this one guard). `Conflict` on refusal.
     async fn set_parent(&self, id: Uuid, parent_id: Option<Uuid>) -> Result<(), StoreError>;
 
     /// The chain of ancestors of `id` (nearest first, excluding self).
@@ -267,8 +299,21 @@ pub trait Store: Send + Sync {
         quota_bytes: Option<i64>,
     ) -> Result<(), StoreError>;
 
-    // ── API keys (the MCP wave) ──────────────────────────────────────
+    // ── bucket registry (the B-P1 slice; the write RPC arrives in P2a) ──
 
+    /// Every registered bucket (the registry's startup load and the
+    /// health lane's row source).
+    async fn list_storage_buckets(
+        &self,
+    ) -> Result<Vec<i0721_proto::StorageBucketRecord>, StoreError>;
+
+    /// One bucket by its stable slug.
+    async fn get_storage_bucket_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<i0721_proto::StorageBucketRecord>, StoreError>;
+
+    // ── API keys (the MCP wave) ──────────────────────────────────────
     /// Create an API key row.
     async fn create_api_key(&self, record: &i0721_proto::ApiKeyRecord) -> Result<(), StoreError>;
 

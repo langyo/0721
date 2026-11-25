@@ -278,6 +278,31 @@ fn blob_err(err: std::io::Error) -> JsonRpcError {
     api_err(ApiError::from(err))
 }
 
+/// A placeholder row shape used ONLY to address a bucket's store through
+/// [`BlobRegistry::for_row`] during reclaim: the bucket id is what the
+/// resolution consumes, every other field is inert. Folders never reach
+/// the byte lanes, so the placeholder never resolves to a real store
+/// decision beyond the bucket id (see `folder_rows_never_resolve_to_a_store`).
+fn file_row_shape() -> i0721_proto::FileRecord {
+    i0721_proto::FileRecord {
+        id: uuid::Uuid::nil(),
+        owner_id: uuid::Uuid::nil(),
+        parent_id: None,
+        name: String::new(),
+        kind: i0721_proto::FileKind::Other,
+        mime: String::new(),
+        size: 0,
+        sha256: String::new(),
+        bucket_id: None,
+        storage_backend: String::new(),
+        storage_key: String::new(),
+        thumbnail_key: None,
+        original_name: String::new(),
+        created_at: jiff::Timestamp::MIN,
+        deleted_at: None,
+    }
+}
+
 /// Serialize a handler result value.
 fn to_value<T: serde::Serialize>(value: T) -> Result<Value, JsonRpcError> {
     serde_json::to_value(value).map_err(|err| JsonRpcError::internal_error(&err.to_string()))
@@ -561,7 +586,7 @@ pub fn build_server(state: AppState) -> RpcServer {
                 // create/move, not a raw index rejection.
                 let taken = state
                     .store
-                    .folder_name_taken(existing.owner_id, existing.parent_id, &params.name, Some(params.id))
+                    .folder_name_taken(existing.owner_id, existing.parent_id, existing.bucket_id, &params.name, Some(params.id))
                     .await
                     .map_err(store_err)?;
                 if taken {
@@ -627,52 +652,66 @@ pub fn build_server(state: AppState) -> RpcServer {
                     // Collect BOTH slot keys per row: the media blob and
                     // the thumbnail (Cache slot) — the cascade must
                     // reclaim everything the single-file lane would.
-                    let mut media_keys: HashMap<String, ()> = HashMap::new();
-                    let mut cache_keys: HashMap<String, ()> = HashMap::new();
+                    // B5: reclaim refcounts are per (bucket_id, key) —
+                    // `media/` and `cache/` are per-bucket object
+                    // namespaces, so a key is collected by bucket, and
+                    // every byte touch (snapshot / delete / restore)
+                    // goes to THAT bucket's store.
+                    let mut media_keys: HashMap<(Option<uuid::Uuid>, String), ()> = HashMap::new();
+                    let mut cache_keys: HashMap<(Option<uuid::Uuid>, String), ()> = HashMap::new();
                     for row in &rows {
                         if row.kind != i0721_proto::FileKind::Folder {
                             if !row.storage_key.is_empty() {
-                                media_keys.insert(row.storage_key.clone(), ());
+                                media_keys.insert((row.bucket_id, row.storage_key.clone()), ());
                             }
                             if let Some(thumb) = row.thumbnail_key.as_deref() {
                                 if !thumb.is_empty() {
-                                    cache_keys.insert(thumb.to_owned(), ());
+                                    cache_keys.insert((row.bucket_id, thumb.to_owned()), ());
                                 }
                             }
                         }
                     }
                     // Reclaim with the single-file lane's
-                    // compare-and-restore guard, per slot.
+                    // compare-and-restore guard, per (bucket, key).
                     async fn reclaim_media(
                         state: &AppState,
+                        bucket_id: Option<uuid::Uuid>,
                         key: &str,
                     ) -> Result<(), crate::error::ApiError> {
+                        let store = state
+                            .registry
+                            .for_row(&i0721_proto::FileRecord {
+                                bucket_id,
+                                ..file_row_shape()
+                            })
+                            .map_err(|err| {
+                                crate::error::ApiError::internal(format!(
+                                    "storage backend unavailable: {err}"
+                                ))
+                            })?;
                         let still_live = state
                             .store
-                            .count_live_files_by_storage_key(key)
+                            .count_live_files_by_storage_key(bucket_id, key)
                             .await
                             .map_err(crate::error::ApiError::from)?;
                         if still_live == 0 {
-                            let snapshot = state
-                                .blobs
+                            let snapshot = store
                                 .get(crate::blob::BlobSlot::Media, key)
                                 .await
                                 .map_err(crate::error::ApiError::from)?;
-                            state
-                                .blobs
+                            store
                                 .delete(crate::blob::BlobSlot::Media, key)
                                 .await
                                 .map_err(crate::error::ApiError::from)?;
                             if state
                                 .store
-                                .count_live_files_by_storage_key(key)
+                                .count_live_files_by_storage_key(bucket_id, key)
                                 .await
                                 .map_err(crate::error::ApiError::from)?
                                 > 0
                             {
                                 if let Some(bytes) = snapshot {
-                                    state
-                                        .blobs
+                                    store
                                         .put(crate::blob::BlobSlot::Media, key, &bytes)
                                         .await
                                         .map_err(crate::error::ApiError::from)?;
@@ -683,6 +722,7 @@ pub fn build_server(state: AppState) -> RpcServer {
                     }
                     async fn reclaim_cache(
                         state: &AppState,
+                        bucket_id: Option<uuid::Uuid>,
                         key: &str,
                     ) -> Result<(), crate::error::ApiError> {
                         // THUMBNAIL liveness: a thumbnail survives while
@@ -691,32 +731,41 @@ pub fn build_server(state: AppState) -> RpcServer {
                         // owner's same-content file shares the media
                         // blob but has its OWN thumbnail row; deleting
                         // one owner's tree must not kill the other's).
+                        // Per bucket, like the media slot.
+                        let store = state
+                            .registry
+                            .for_row(&i0721_proto::FileRecord {
+                                bucket_id,
+                                ..file_row_shape()
+                            })
+                            .map_err(|err| {
+                                crate::error::ApiError::internal(format!(
+                                    "storage backend unavailable: {err}"
+                                ))
+                            })?;
                         let still_live = state
                             .store
-                            .count_live_files_by_thumbnail_key(key)
+                            .count_live_files_by_thumbnail_key(bucket_id, key)
                             .await
                             .map_err(crate::error::ApiError::from)?;
                         if still_live == 0 {
-                            let snapshot = state
-                                .blobs
+                            let snapshot = store
                                 .get(crate::blob::BlobSlot::Cache, key)
                                 .await
                                 .map_err(crate::error::ApiError::from)?;
-                            state
-                                .blobs
+                            store
                                 .delete(crate::blob::BlobSlot::Cache, key)
                                 .await
                                 .map_err(crate::error::ApiError::from)?;
                             if state
                                 .store
-                                .count_live_files_by_thumbnail_key(key)
+                                .count_live_files_by_thumbnail_key(bucket_id, key)
                                 .await
                                 .map_err(crate::error::ApiError::from)?
                                 > 0
                             {
                                 if let Some(bytes) = snapshot {
-                                    state
-                                        .blobs
+                                    store
                                         .put(crate::blob::BlobSlot::Cache, key, &bytes)
                                         .await
                                         .map_err(crate::error::ApiError::from)?;
@@ -725,70 +774,70 @@ pub fn build_server(state: AppState) -> RpcServer {
                         }
                         Ok(())
                     }
-                    for (key, ()) in media_keys {
-                        reclaim_media(&state, &key)
+                    for ((bucket_id, key), ()) in media_keys {
+                        reclaim_media(&state, bucket_id, &key)
                             .await
                             .map_err(api_err)?;
                     }
-                    for (key, ()) in cache_keys {
-                        reclaim_cache(&state, &key)
+                    for ((bucket_id, key), ()) in cache_keys {
+                        reclaim_cache(&state, bucket_id, &key)
                             .await
                             .map_err(api_err)?;
                     }
                     return Ok(Value::Null);
                 }
+                // Single-file lane: same per-(bucket, key) refcount.
+                let record_store = state.registry.for_row(&record).map_err(|err| {
+                    api_err(ApiError::internal(format!(
+                        "storage backend unavailable: {err}"
+                    )))
+                })?;
                 if state
                     .store
-                    .count_live_files_by_storage_key(&record.storage_key)
+                    .count_live_files_by_storage_key(record.bucket_id, &record.storage_key)
                     .await
                     .map_err(store_err)?
                     == 0
                 {
                     // Compare-and-restore against a racing upload of the
                     // same content (the REST handler's guard, verbatim).
-                    let snapshot = state
-                        .blobs
+                    let snapshot = record_store
                         .get(BlobSlot::Media, &record.storage_key)
                         .await
                         .map_err(blob_err)?;
                     let thumb_key = record.thumbnail_key.clone();
                     let thumb_snapshot = match thumb_key.as_deref() {
-                        Some(key) => state
-                            .blobs
+                        Some(key) => record_store
                             .get(BlobSlot::Cache, key)
                             .await
                             .map_err(blob_err)?,
                         None => None,
                     };
-                    state
-                        .blobs
+                    record_store
                         .delete(BlobSlot::Media, &record.storage_key)
                         .await
                         .map_err(blob_err)?;
                     if let Some(key) = thumb_key.as_deref() {
-                        state
-                            .blobs
+                        record_store
                             .delete(BlobSlot::Cache, key)
                             .await
                             .map_err(blob_err)?;
                     }
                     if state
                         .store
-                        .count_live_files_by_storage_key(&record.storage_key)
+                        .count_live_files_by_storage_key(record.bucket_id, &record.storage_key)
                         .await
                         .map_err(store_err)?
                         > 0
                     {
                         if let Some(bytes) = snapshot {
-                            state
-                                .blobs
+                            record_store
                                 .put(BlobSlot::Media, &record.storage_key, &bytes)
                                 .await
                                 .map_err(blob_err)?;
                         }
                         if let (Some(key), Some(bytes)) = (thumb_key.as_deref(), thumb_snapshot) {
-                            state
-                                .blobs
+                            record_store
                                 .put(BlobSlot::Cache, key, &bytes)
                                 .await
                                 .map_err(blob_err)?;
@@ -1085,19 +1134,36 @@ pub fn build_server(state: AppState) -> RpcServer {
                 validate_file_name(&args.name)
                     .map_err(|err| ApiError::bad_request(err.to_string()))
                     .map_err(api_err)?;
-                if let Some(parent) = args.parent_id {
-                    // The parent must be the caller's live folder.
-                    let row = state.store.get_file(parent).await.map_err(store_err)?
-                        .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
-                        .ok_or_else(|| ApiError::bad_request("parent folder not found"))
-                        .map_err(api_err)?;
-                    if user.role != Role::Admin && row.owner_id != user.id {
-                        return Err(api_err(ApiError::forbidden("not your folder")));
+                // R-G: the folder tree is per bucket. A child inherits
+                // its parent's bucket; a root folder takes the resolved
+                // target bucket (in this slice the bootstrap bucket —
+                // the same outlet the upload lane reads).
+                let bucket_id = match args.parent_id {
+                    Some(parent) => {
+                        let row = state.store.get_file(parent).await.map_err(store_err)?
+                            .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
+                            .ok_or_else(|| ApiError::bad_request("parent folder not found"))
+                            .map_err(api_err)?;
+                        if user.role != Role::Admin && row.owner_id != user.id {
+                            return Err(api_err(ApiError::forbidden("not your folder")));
+                        }
+                        row.bucket_id
                     }
-                }
+                    None => Some(
+                        state
+                            .registry
+                            .resolve_upload_bucket(None)
+                            .map_err(|err| {
+                                api_err(ApiError::internal(format!(
+                                    "storage backend unavailable: {err}"
+                                )))
+                            })?
+                            .0,
+                    ),
+                };
                 let record = state
                     .store
-                    .create_folder(user.id, args.parent_id, &args.name)
+                    .create_folder(user.id, args.parent_id, &args.name, bucket_id)
                     .await
                     .map_err(|err| match err {
                         i0721_store::StoreError::Conflict(reason) => ApiError::conflict(reason),
@@ -1146,7 +1212,7 @@ pub fn build_server(state: AppState) -> RpcServer {
                 // its own layer keeping its name is a no-op, not 409).
                 let taken = state
                     .store
-                    .folder_name_taken(record.owner_id, args.parent_id, &record.name, Some(args.id))
+                    .folder_name_taken(record.owner_id, args.parent_id, record.bucket_id, &record.name, Some(args.id))
                     .await
                     .map_err(store_err)?;
                 if taken {

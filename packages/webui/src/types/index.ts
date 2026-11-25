@@ -12,6 +12,8 @@ export type { ApiKeyCreated } from "./ApiKeyCreated.ts";
 export type { ApiKeyPublic } from "./ApiKeyPublic.ts";
 export type { AuthMode } from "./AuthMode.ts";
 export type { AuthSession } from "./AuthSession.ts";
+export type { BucketBackend } from "./BucketBackend.ts";
+export type { BucketHealth } from "./BucketHealth.ts";
 export type { CreateUserRequest } from "./CreateUserRequest.ts";
 export type { FileDto } from "./FileDto.ts";
 export type { FileKind } from "./FileKind.ts";

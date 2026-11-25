@@ -52,10 +52,13 @@ backends and an MCP surface for AI agents.
 ## Storage backends
 
 The blob backend is selected at startup by `I0721_STORAGE_BACKEND`
-(`local` | `s3` | `ipfs`; default `local`). All three implement the same
-put/get/delete surface; thumbnails (the Cache slot) follow the same
-backend. Multi-backend coexistence and per-file overrides are a future
-wave — this is a deployment-shape choice.
+(`local` | `s3` | `ipfs`) — required for the first start that runs the
+bucket migration, and ignored afterwards. The migration registers one
+bootstrap bucket for the chosen backend and seats every file row in it;
+from then on bytes are routed by each row's own bucket. All backends
+implement the same put/get/delete surface; thumbnails (the Cache slot)
+follow the same backend as their row's bucket. Per-bucket registration,
+credentials and management RPC arrive with a later wave.
 
 | Backend | Env | Notes |
 | --- | --- | --- |
@@ -74,14 +77,16 @@ Semantic differences:
   node-local state; a multi-node cluster would need the mapping in the
   metadata database instead.
 
-**Backend switching**: changing `I0721_STORAGE_BACKEND` affects NEW
-uploads only, and reads always go through the single configured
-backend — the `files.storage_backend` column is per-row bookkeeping,
-never consulted on read. After a switch, blobs written to the old
-backend become unreachable until you switch back or migrate them —
-their media links answer 404 while the old backend is still reachable
-but the blob is gone, and 500 when the old backend itself is down;
-a blob-migration tool arrives with a later wave.
+**Backend switching**: there is none. Every read routes through the
+bucket each file row carries — changing `I0721_STORAGE_BACKEND` no
+longer switches backends, because the variable is only consulted for
+the first start that runs the bucket migration and is ignored
+afterwards. Each row keeps its own bucket forever; rows whose
+`storage_backend` label differs from the current backend sit in a
+DISABLED legacy bootstrap bucket, and `/api/health` reports that
+bucket's state (and the reason it cannot serve) instead of pretending
+the data is lost. To serve such rows, register that bucket's
+credentials in a later wave's bucket management.
 
 **Security note**: `I0721_S3_ENDPOINT` with `http://` sends credentials
 in cleartext — this is safe ONLY for internal-network MinIO (the
@@ -155,7 +160,7 @@ required variable or an unparseable value refuses to start):
 | `I0721_DATABASE_URL` | required | PostgreSQL URL |
 | `JWT_SECRET` (container-side; compose sets it from `I0721_JWT_SECRET`) | required | HS256 secret for the transition-era tokens |
 | `I0721_LISTEN` | `0.0.0.0:8080` | HTTP bind address (keep the port unprivileged: the image runs as a non-root user) |
-| `I0721_STORAGE_BACKEND` | `local` | blob backend selection: `local`, `s3` or `ipfs` (see [Storage backends](#storage-backends)) |
+| `I0721_STORAGE_BACKEND` | required once | blob backend selection: `local`, `s3` or `ipfs` — required for the first start that runs the bucket migration; ignored afterwards (see [Storage backends](#storage-backends)) |
 | `I0721_MEDIA_ROOT` | `data` | blob root (`media/` and `media-cache/` below it); consumed by the `local` backend only |
 | `I0721_S3_ENDPOINT` | *(empty)* | S3-compatible endpoint (MinIO/R2; http only for internal networks). Empty = AWS |
 | `I0721_S3_BUCKET` / `I0721_S3_REGION` | required with `s3` | bucket name / region (`auto` works for MinIO) |

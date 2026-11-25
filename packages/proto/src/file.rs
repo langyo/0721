@@ -132,6 +132,10 @@ pub struct FileRecord {
     pub size: i64,
     /// Hex SHA-256 of the stored blob — the dedupe key.
     pub sha256: String,
+    /// The bucket this row lives in (`None` = legacy rows before the
+    /// bucket migration's backfill; readers resolve it to the earliest
+    /// enabled bootstrap bucket).
+    pub bucket_id: Option<Uuid>,
     /// Storage backend tag; `local` today.
     pub storage_backend: String,
     /// Blob key inside the storage backend (also the public media path).
@@ -221,6 +225,10 @@ pub struct NewFile {
     pub size: i64,
     /// Hex SHA-256 of the stored blob.
     pub sha256: String,
+    /// The bucket this row is born into (`None` only in test fixtures
+    /// whose registry has no concrete bootstrap row — production
+    /// uploads always carry the resolved bucket's id).
+    pub bucket_id: Option<Uuid>,
     /// Storage backend tag.
     pub storage_backend: String,
     /// Blob key.
@@ -351,6 +359,7 @@ mod tests {
             mime: "image/webp".to_owned(),
             size: 10,
             sha256: "abc".to_owned(),
+            bucket_id: None,
             storage_backend: "local".to_owned(),
             storage_key: "deadbeef".to_owned(),
             thumbnail_key: None,

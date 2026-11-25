@@ -18,6 +18,7 @@ use sha2::Digest;
 use tower::ServiceExt;
 
 use i0721_server::auth::hash_password;
+use i0721_server::blob::BlobStore as _;
 use i0721_server::blob::MemoryBlobStore;
 use i0721_server::config::Config;
 use i0721_server::routes;
@@ -57,7 +58,7 @@ fn base_config() -> Config {
         trusted_proxies: Vec::new(),
         public_origin: None,
         cookie_secure: "auto".to_owned(),
-        storage_backend: "local".to_owned(),
+        storage_backend: None,
     }
 }
 
@@ -1069,9 +1070,17 @@ async fn blob_reclaim_restores_when_a_racing_upload_lands() {
     let file_id = dto["id"].as_str().unwrap().to_owned();
 
     // Arm the interleave: the "upload" lands its live row exactly when the
-    // delete handler reaches the unlink.
+    // delete handler reaches the unlink. The racing row shares the
+    // admin row's bucket (the same bootstrap bucket) so its refcount
+    // protects the blob.
     *racy.payload.lock().unwrap() = Some((
         i0721_proto::NewFile {
+            bucket_id: state
+                .store
+                .get_file(uuid::Uuid::parse_str(file_id.as_str()).unwrap())
+                .await
+                .unwrap()
+                .and_then(|r| r.bucket_id),
             parent_id: None,
             owner_id: other.id,
             name: "raced.png".to_owned(),
@@ -4086,7 +4095,7 @@ async fn netdisk_upload_into_folder_gates_ownership() {
         .unwrap();
     let member_folder = state
         .store
-        .create_folder(member.id, None, "theirs")
+        .create_folder(member.id, None, "theirs", None)
         .await
         .unwrap();
 
@@ -4126,6 +4135,7 @@ async fn netdisk_upload_into_folder_gates_ownership() {
                 .id,
             None,
             "mine",
+            None,
         )
         .await
         .unwrap();
@@ -4158,7 +4168,7 @@ async fn netdisk_folder_list_scope_and_timeline() {
     // Admin's own tree.
     let _folder = state
         .store
-        .create_folder(admin_id, None, "mine")
+        .create_folder(admin_id, None, "mine", None)
         .await
         .unwrap();
     let (_, dto) = upload(&state, &token, tiny_png(), "own.png").await;
@@ -4177,7 +4187,7 @@ async fn netdisk_folder_list_scope_and_timeline() {
         .unwrap();
     state
         .store
-        .create_folder(member.id, None, "theirs")
+        .create_folder(member.id, None, "theirs", None)
         .await
         .unwrap();
     let member_token = state.signer.sign(member.id, Timestamp::now());
@@ -4241,7 +4251,12 @@ async fn netdisk_folder_delete_cascades_and_reclaims_blobs() {
     // rows exist — tiny_png dedupes per owner).
     let f = state
         .store
-        .create_folder(admin_id, None, "f")
+        .create_folder(
+            admin_id,
+            None,
+            "f",
+            state.registry.bootstrap_bucket_id().ok(),
+        )
         .await
         .unwrap();
     let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
@@ -4255,7 +4270,7 @@ async fn netdisk_folder_delete_cascades_and_reclaims_blobs() {
         .unwrap();
     let sub = state
         .store
-        .create_folder(admin_id, Some(f.id), "sub")
+        .create_folder(admin_id, Some(f.id), "sub", f.bucket_id)
         .await
         .unwrap();
     let mut other_png = tiny_png();
@@ -4441,7 +4456,12 @@ async fn netdisk_cascade_reclaims_thumbnail_cache_slot() {
 
     let f = state
         .store
-        .create_folder(admin_id, None, "photos")
+        .create_folder(
+            admin_id,
+            None,
+            "photos",
+            state.registry.bootstrap_bucket_id().ok(),
+        )
         .await
         .unwrap();
     let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
@@ -4639,12 +4659,12 @@ async fn netdisk_memory_store_rename_refuses_same_layer_duplicate() {
 
     let a = state
         .store
-        .create_folder(admin_id, None, "alpha")
+        .create_folder(admin_id, None, "alpha", None)
         .await
         .unwrap();
     let b = state
         .store
-        .create_folder(admin_id, None, "beta")
+        .create_folder(admin_id, None, "beta", None)
         .await
         .unwrap();
 
@@ -4672,7 +4692,7 @@ async fn netdisk_memory_list_folder_pagination() {
     for i in 0..5 {
         state
             .store
-            .create_folder(admin_id, None, &format!("p{i}"))
+            .create_folder(admin_id, None, &format!("p{i}"), None)
             .await
             .unwrap();
     }
@@ -4766,7 +4786,12 @@ async fn c1_cross_owner_thumbnail_survives_cascade() {
     // bytes (shared blob, per-owner rows, own thumbnail).
     let f = state
         .store
-        .create_folder(admin_id, None, "mine")
+        .create_folder(
+            admin_id,
+            None,
+            "mine",
+            state.registry.bootstrap_bucket_id().ok(),
+        )
         .await
         .unwrap();
     let (_, a) = upload(&state, &token, tiny_png(), "a.png").await;
@@ -4814,12 +4839,12 @@ async fn c1_memory_rename_precheck_friendly_conflict() {
         .id;
     let a = state
         .store
-        .create_folder(admin_id, None, "one")
+        .create_folder(admin_id, None, "one", None)
         .await
         .unwrap();
     let b = state
         .store
-        .create_folder(admin_id, None, "two")
+        .create_folder(admin_id, None, "two", None)
         .await
         .unwrap();
     let result = state.store.rename_file(b.id, "one").await;
@@ -5214,7 +5239,7 @@ async fn ipfs_stub_state() -> (AppState, std::sync::Arc<KuboStub>) {
     // Rebuild state with the IPFS blob store AND the matching backend tag
     // (the config field feeds the upload's storage_backend column).
     let mut config = state.config.as_ref().clone();
-    config.storage_backend = "ipfs".to_owned();
+    config.storage_backend = Some("ipfs".to_owned());
     let new_state = i0721_server::state::AppState::new(
         state.store.clone(),
         std::sync::Arc::new(store),
@@ -8104,6 +8129,381 @@ async fn a_member_cannot_revoke_another_users_key() {
     );
 }
 
+// ── the bucket registry's guard tests (stage A) ─────────────────────────
+
+/// `health_reports_bucket_unavailable_with_the_missing_var`: a registry
+/// whose bucket lacks its env reports `unavailable` with the variable
+/// named — never `ready`.
+/// MUT:M10 — health mapping Unavailable→Ready (a deliberately wrong but
+/// compiling change to the state mapping) must turn this red.
+#[tokio::test]
+async fn health_reports_bucket_unavailable_with_the_missing_var() {
+    let bucket = i0721_proto::StorageBucketRecord {
+        id: uuid::Uuid::new_v4(),
+        slug: "bootstrap-local".to_owned(),
+        display_name: "bootstrap (local)".to_owned(),
+        backend: i0721_proto::BucketBackend::Local,
+        location: "loc".to_owned(),
+        endpoint_ref: "legacy_local_env".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: false,
+        enabled: true,
+        is_bootstrap: true,
+        created_at: Timestamp::now(),
+    };
+    let registry = i0721_server::blob_registry::BlobRegistry::build(
+        vec![bucket],
+        |_| None, // I0721_MEDIA_ROOT missing
+    )
+    .unwrap();
+    let health = registry.health();
+    assert_eq!(health.len(), 1);
+    assert_eq!(health[0].state, "unavailable", "{health:?}");
+    assert!(
+        health[0]
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("I0721_MEDIA_ROOT"),
+        "the reason names the missing variable: {:?}",
+        health[0].reason
+    );
+}
+
+/// `health_reports_unreadable_settings_instead_of_default`: a store
+/// read failure must surface as `config_source: "unreadable"`, not the
+/// old `"default"` (the value the corrupt row also produces).
+/// MUT:M10b — mapping the Err arm back to "default" must turn this red.
+#[tokio::test]
+async fn health_reports_unreadable_settings_instead_of_default() {
+    struct FailingSettings(MemoryStore);
+    #[async_trait::async_trait]
+    impl Store for FailingSettings {
+        async fn get_setting(
+            &self,
+            _key: &str,
+        ) -> Result<Option<serde_json::Value>, i0721_store::StoreError> {
+            Err(i0721_store::StoreError::Db("lane: unreadable".to_owned()))
+        }
+        async fn get_storage_bucket_by_slug(
+            &self,
+            _slug: &str,
+        ) -> Result<Option<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
+            Ok(None)
+        }
+        async fn list_storage_buckets(
+            &self,
+        ) -> Result<Vec<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
+            Ok(Vec::new())
+        }
+        // Everything else delegates to the inner memory store.
+        async fn list_users(
+            &self,
+            o: u64,
+            l: u64,
+        ) -> Result<Vec<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.list_users(o, l).await
+        }
+        async fn count_users(&self) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_users().await
+        }
+        async fn get_user(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.get_user(id).await
+        }
+        async fn get_user_by_username(
+            &self,
+            u: &str,
+        ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.get_user_by_username(u).await
+        }
+        async fn oauth_providers_for_user(
+            &self,
+            user_id: uuid::Uuid,
+        ) -> Result<Vec<String>, i0721_store::StoreError> {
+            self.0.oauth_providers_for_user(user_id).await
+        }
+        async fn create_user(
+            &self,
+            u: i0721_store::CreateUser,
+        ) -> Result<i0721_proto::UserRecord, i0721_store::StoreError> {
+            self.0.create_user(u).await
+        }
+        async fn delete_user(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_user(id).await
+        }
+        async fn list_files(
+            &self,
+            o: u64,
+            l: u64,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_files(o, l).await
+        }
+        async fn count_files(&self) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_files().await
+        }
+        async fn get_file(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_file(id).await
+        }
+        async fn get_file_by_owner_and_sha256(
+            &self,
+            o: uuid::Uuid,
+            s: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_file_by_owner_and_sha256(o, s).await
+        }
+        async fn list_live_rows_by_storage_key(
+            &self,
+            k: &str,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_live_rows_by_storage_key(k).await
+        }
+        async fn count_live_files_by_storage_key(
+            &self,
+            b: Option<uuid::Uuid>,
+            k: &str,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_storage_key(b, k).await
+        }
+        async fn count_live_files_by_thumbnail_key(
+            &self,
+            b: Option<uuid::Uuid>,
+            k: &str,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_thumbnail_key(b, k).await
+        }
+        async fn create_file(
+            &self,
+            f: i0721_proto::NewFile,
+        ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+            self.0.create_file(f).await
+        }
+        async fn rename_file(
+            &self,
+            id: uuid::Uuid,
+            n: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.rename_file(id, n).await
+        }
+        async fn soft_delete_file(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.soft_delete_file(id).await
+        }
+        async fn get_oauth_identity(
+            &self,
+            p: &str,
+            s: &str,
+        ) -> Result<Option<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.get_oauth_identity(p, s).await
+        }
+        async fn link_oauth_identity(
+            &self,
+            p: &str,
+            s: &str,
+            u: uuid::Uuid,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.link_oauth_identity(p, s, u).await
+        }
+        async fn count_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            k: Option<String>,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_folder(o, p, k).await
+        }
+        async fn list_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            k: Option<String>,
+            off: u64,
+            lim: u64,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_folder(o, p, k, off, lim).await
+        }
+        async fn folder_name_taken(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            b: Option<uuid::Uuid>,
+            n: &str,
+            e: Option<uuid::Uuid>,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.folder_name_taken(o, p, b, n, e).await
+        }
+        async fn create_folder(
+            &self,
+            o: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+            n: &str,
+            b: Option<uuid::Uuid>,
+        ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+            self.0.create_folder(o, p, n, b).await
+        }
+        async fn set_parent(
+            &self,
+            id: uuid::Uuid,
+            p: Option<uuid::Uuid>,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_parent(id, p).await
+        }
+        async fn ancestor_ids(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.ancestor_ids(id).await
+        }
+        async fn subtree_live_ids(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.subtree_live_ids(id).await
+        }
+        async fn soft_delete_many(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.soft_delete_many(ids).await
+        }
+        async fn get_files_by_ids(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_files_by_ids(ids).await
+        }
+        async fn create_share(
+            &self,
+            s: i0721_proto::NewShare,
+        ) -> Result<i0721_proto::ShareRecord, i0721_store::StoreError> {
+            self.0.create_share(s).await
+        }
+        async fn get_share(
+            &self,
+            t: &str,
+        ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.get_share(t).await
+        }
+        async fn find_share_by_file(
+            &self,
+            o: uuid::Uuid,
+            f: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.find_share_by_file(o, f).await
+        }
+        async fn list_shares(
+            &self,
+            o: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.list_shares(o).await
+        }
+        async fn delete_share(&self, t: &str) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_share(t).await
+        }
+        async fn delete_shares_for_files(
+            &self,
+            f: &[uuid::Uuid],
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.delete_shares_for_files(f).await
+        }
+        async fn sum_live_sizes(&self, o: uuid::Uuid) -> Result<i64, i0721_store::StoreError> {
+            self.0.sum_live_sizes(o).await
+        }
+        async fn set_user_quota(
+            &self,
+            u: uuid::Uuid,
+            q: Option<i64>,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_user_quota(u, q).await
+        }
+        async fn create_api_key(
+            &self,
+            r: &i0721_proto::ApiKeyRecord,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.create_api_key(r).await
+        }
+        async fn list_api_keys(
+            &self,
+            u: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.list_api_keys(u).await
+        }
+        async fn revoke_api_key(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.revoke_api_key(id).await
+        }
+        async fn update_api_key(
+            &self,
+            id: uuid::Uuid,
+            n: &str,
+            s: &str,
+            e: Option<&str>,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.update_api_key(id, n, s, e).await
+        }
+        async fn find_api_key_by_hash(
+            &self,
+            h: &str,
+        ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.find_api_key_by_hash(h).await
+        }
+        async fn find_api_key_by_id(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.find_api_key_by_id(id).await
+        }
+        async fn touch_api_key(&self, id: uuid::Uuid) -> Result<(), i0721_store::StoreError> {
+            self.0.touch_api_key(id).await
+        }
+        async fn set_setting(
+            &self,
+            k: &str,
+            v: serde_json::Value,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_setting(k, v).await
+        }
+    }
+    let store = Arc::new(FailingSettings(MemoryStore::new()));
+    let password_hash = hash_password("admin-password").unwrap();
+    let admin = store
+        .create_user(CreateUser {
+            username: "admin".to_owned(),
+            display_name: "Administrator".to_owned(),
+            role: Role::Admin,
+            password_hash: Some(password_hash),
+        })
+        .await
+        .unwrap();
+    let _ = admin;
+    let state = AppState::new(
+        store,
+        Arc::new(MemoryBlobStore::new()),
+        Arc::new(test_config()),
+    );
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["config_source"], "unreadable",
+        "a store read failure is its OWN state, never 'default': {json}"
+    );
+    assert!(json["buckets"].is_array(), "{json}");
+}
 // ── the account-first ladder's discovery endpoint ──────────────────────
 
 /// A raw `POST /api/v1/auth/account-methods` — status plus the decoded
@@ -8132,6 +8532,971 @@ async fn account_methods_raw(
         status,
         serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
     )
+}
+
+/// `legacy_backend_rows_are_disabled_and_explained_in_health`: a
+/// `legacy_unknown` bucket is Unavailable/Disabled with the
+/// actionable reason (register the credentials to serve it).
+/// MUT:M10 — mapping Unavailable→Ready in the state classification
+/// must turn this red too.
+#[tokio::test]
+async fn legacy_backend_rows_are_disabled_and_explained_in_health() {
+    let legacy = i0721_proto::StorageBucketRecord {
+        id: uuid::Uuid::new_v4(),
+        slug: "bootstrap-s3".to_owned(),
+        display_name: "bootstrap (s3) — legacy, not registered".to_owned(),
+        backend: i0721_proto::BucketBackend::S3,
+        location: "legacy:s3 (unknown — register its bucket to serve)".to_owned(),
+        endpoint_ref: "legacy_unknown".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: false,
+        enabled: true, // enabled in the DB — the UNKNOWN endpoint is the blocker
+        is_bootstrap: true,
+        created_at: Timestamp::now(),
+    };
+    let registry =
+        i0721_server::blob_registry::BlobRegistry::build(vec![legacy], |_| None).unwrap();
+    let health = registry.health();
+    assert_eq!(health.len(), 1);
+    assert_eq!(health[0].state, "unavailable", "{health:?}");
+    let reason = health[0].reason.as_deref().unwrap_or_default();
+    assert!(
+        reason.contains("register this bucket's credentials"),
+        "the reason explains the remedy: {reason}"
+    );
+}
+
+/// The bootstrap bucket's IDENTITY fields are pinned by the PG lane
+/// (`pg_0007_seats_the_bootstrap_bucket_with_its_identity_fields`):
+/// a structural no-mutator argument cannot be pinned by a runtime
+/// test, and an existence pin has no defensive value. P2a's upsert
+/// rejection adds the runtime half.
+/// `missing_storage_backend_env_while_0007_is_pending_fails_startup`
+/// (+ negative control: an explicit `local` passes through):
+/// the pure function's contract.
+/// MUT:M-RU — inverting the pending branch (reading the env only when
+/// 0007 is applied) must turn this red.
+#[test]
+fn missing_storage_backend_env_while_0007_is_pending_fails_startup() {
+    use i0721_server::blob_selection::{bootstrap_backend_for_startup, StartupError};
+    let missing = bootstrap_backend_for_startup(None, true);
+    match missing {
+        Err(StartupError::MissingBackend { var }) => {
+            assert_eq!(var, "I0721_STORAGE_BACKEND");
+        }
+        other => panic!("missing env while 0007 is pending must fail: {other:?}"),
+    }
+    let invalid = bootstrap_backend_for_startup(Some("gcs"), true);
+    assert!(
+        matches!(invalid, Err(StartupError::InvalidBackend { .. })),
+        "an invalid label is refused too: {invalid:?}"
+    );
+    // Negative control: an explicit `local` builds `bootstrap-local`.
+    let local = bootstrap_backend_for_startup(Some("local"), true).unwrap();
+    assert_eq!(local, Some("local"));
+    // Applied: the env is NEVER read (MUT:M-ENV-AFTER — validating it
+    // anyway hard-fails on `Some("gcs")`).
+    let applied = bootstrap_backend_for_startup(Some("gcs"), false).unwrap();
+    assert_eq!(applied, None);
+    let applied_unset = bootstrap_backend_for_startup(None, false).unwrap();
+    assert_eq!(applied_unset, None);
+}
+
+/// `env_backend_is_ignored_once_0007_is_applied` — the sibling of the
+/// missing-env failure: a set variable after the migration must not
+/// change the answer (the startup logs an info, nothing else).
+#[test]
+fn env_backend_is_ignored_once_0007_is_applied() {
+    use i0721_server::blob_selection::bootstrap_backend_for_startup;
+    for env in [None, Some("local"), Some("s3"), Some("gcs")] {
+        let decided = bootstrap_backend_for_startup(env, false).unwrap();
+        assert_eq!(decided, None, "env {env:?} must be ignored once applied");
+    }
+}
+
+/// `migrated_database_with_zero_bucket_rows_fails_startup` — the
+/// registry's empty-table failure (R-O): only a hand-cleared table
+/// produces this, and the registry refuses to invent rows.
+#[test]
+fn migrated_database_with_zero_bucket_rows_fails_startup() {
+    use i0721_server::blob_registry::{BlobRegistry, RegistryError};
+    let err = BlobRegistry::build(Vec::new(), |_| None).err().unwrap();
+    assert!(matches!(err, RegistryError::EmptyRegistry));
+}
+
+/// `ipfs_api_url_with_basic_auth_fails_startup` — R-K's refusal lands
+/// at `BlobRegistry::build` (startup, not first request).
+#[test]
+fn ipfs_api_url_with_basic_auth_fails_startup() {
+    use i0721_server::blob_registry::{BlobRegistry, RegistryError};
+    let bucket = i0721_proto::StorageBucketRecord {
+        id: uuid::Uuid::new_v4(),
+        slug: "bootstrap-ipfs".to_owned(),
+        display_name: "bootstrap (ipfs)".to_owned(),
+        backend: i0721_proto::BucketBackend::Ipfs,
+        location: "127.0.0.1:5001".to_owned(),
+        endpoint_ref: "legacy_ipfs_env".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: false,
+        enabled: true,
+        is_bootstrap: true,
+        created_at: Timestamp::now(),
+    };
+    let err = BlobRegistry::build(vec![bucket], |k| {
+        (k == "I0721_IPFS_API").then(|| "http://user:secret@127.0.0.1:5001".to_owned())
+    })
+    .expect_err("basic-auth userinfo must fail the build");
+    assert!(
+        matches!(err, RegistryError::IpfsUrlUserinfo { .. }),
+        "{err}"
+    );
+}
+
+/// `ipfs_location_round_trips_host_port_without_credentials` — the
+/// location is the host:port form, the URL carries no credentials, and
+/// the bucket builds Ready with no network I/O.
+#[test]
+fn ipfs_location_round_trips_host_port_without_credentials() {
+    use i0721_server::blob_registry::BlobRegistry;
+    let bucket = i0721_proto::StorageBucketRecord {
+        id: uuid::Uuid::new_v4(),
+        slug: "bootstrap-ipfs".to_owned(),
+        display_name: "bootstrap (ipfs)".to_owned(),
+        backend: i0721_proto::BucketBackend::Ipfs,
+        location: "127.0.0.1:5001".to_owned(),
+        endpoint_ref: "legacy_ipfs_env".to_owned(),
+        anonymous_read: true,
+        grant_on_signup: false,
+        enabled: true,
+        is_bootstrap: true,
+        created_at: Timestamp::now(),
+    };
+    let registry = BlobRegistry::build(vec![bucket], |k| {
+        (k == "I0721_IPFS_API").then(|| "http://127.0.0.1:5001".to_owned())
+    })
+    .expect("clean ipfs env builds");
+    let health = registry.health();
+    assert_eq!(health[0].state, "ready", "{health:?}");
+    assert!(health[0].reason.is_none());
+}
+
+/// MUT:M-REG1 / MUT:M-REG2 — the guard those mutations exercise at the
+/// unit level, pinned here on the state shape: a `for_row` whose row's
+/// bucket is Unavailable answers an error NAMING that bucket, never a
+/// substitute store (MUT:M2 drives the same shape through the media
+/// lane).
+#[test]
+fn blob_registry_never_falls_back_to_another_bucket() {
+    use i0721_server::blob_registry::{BlobError, BlobRegistry};
+    fn record(slug: &str, endpoint_ref: &str, enabled: bool) -> i0721_proto::StorageBucketRecord {
+        i0721_proto::StorageBucketRecord {
+            id: uuid::Uuid::new_v4(),
+            slug: slug.to_owned(),
+            display_name: slug.to_owned(),
+            backend: i0721_proto::BucketBackend::Local,
+            location: "loc".to_owned(),
+            endpoint_ref: endpoint_ref.to_owned(),
+            anonymous_read: true,
+            grant_on_signup: false,
+            enabled,
+            is_bootstrap: true,
+            created_at: Timestamp::now(),
+        }
+    }
+    let own = record("bootstrap-local", "legacy_local_env", true);
+    let registry = BlobRegistry::build(vec![own], |_| None).unwrap();
+    let row = i0721_proto::FileRecord {
+        id: uuid::Uuid::new_v4(),
+        owner_id: uuid::Uuid::new_v4(),
+        parent_id: None,
+        name: "x".to_owned(),
+        kind: i0721_proto::FileKind::Image,
+        mime: "image/webp".to_owned(),
+        size: 1,
+        sha256: "abc".to_owned(),
+        bucket_id: None,
+        storage_backend: "local".to_owned(),
+        storage_key: "abc".to_owned(),
+        thumbnail_key: None,
+        original_name: "x".to_owned(),
+        created_at: Timestamp::now(),
+        deleted_at: None,
+    };
+    match registry.for_row(&row) {
+        Err(BlobError::Unavailable { slug, .. }) => assert_eq!(slug, "bootstrap-local"),
+        Err(other) => panic!("expected Unavailable naming the OWN bucket: {other}"),
+        Ok(_) => panic!("the unavailable bucket must not resolve"),
+    }
+}
+
+/// A second bucket layered onto `state`'s registry: its store is a
+/// DIFFERENT MemoryBlobStore. `bootstrap_enabled = false` leaves the
+/// bootstrap entry Disabled (the fail-closed fixture); `true` keeps both
+/// buckets Ready. Returns the patched state, the second bucket's id and
+/// its store.
+fn plant_second_bucket(
+    state: &AppState,
+    slug: &str,
+    bootstrap_enabled: bool,
+) -> (
+    AppState,
+    uuid::Uuid,
+    Arc<i0721_server::blob::MemoryBlobStore>,
+) {
+    let id = uuid::Uuid::new_v4();
+    let store = Arc::new(i0721_server::blob::MemoryBlobStore::new());
+    let bootstrap_id = state.registry.bootstrap_bucket_id().unwrap();
+    let bootstrap_entry = i0721_server::blob_registry::BucketEntry {
+        slug: "bootstrap".to_owned(),
+        state: if bootstrap_enabled {
+            i0721_server::blob_registry::BucketState::Ready
+        } else {
+            i0721_server::blob_registry::BucketState::Disabled
+        },
+        reason: bootstrap_enabled
+            .then_some(None)
+            .flatten()
+            .or(Some("the bucket is disabled in the registry".to_owned())),
+        // The state's OWN blob store (the fixture's bootstrap bytes).
+        store: bootstrap_enabled.then(|| state.blobs.clone()),
+    };
+    let second_entry = i0721_server::blob_registry::BucketEntry {
+        slug: slug.to_owned(),
+        state: i0721_server::blob_registry::BucketState::Ready,
+        reason: None,
+        store: Some(store.clone()),
+    };
+    let merged = i0721_server::blob_registry::BlobRegistry::from_entries(
+        vec![(bootstrap_id, bootstrap_entry), (id, second_entry)],
+        bootstrap_id,
+        i0721_proto::BucketBackend::Local,
+    );
+    let mut patched = state.clone();
+    patched.registry = merged;
+    (patched, id, store)
+}
+
+/// `media_reads_from_the_rows_bucket`: two rows share one storage key
+/// across two buckets; `/media` serves the bytes of the row that the
+/// id-ASC serving-row rule selects — its OWN bucket's bytes, never the
+/// other bucket's. MUT:M2 — `for_row`'s NULL branch resolving to "the
+/// first Ready bucket" instead of the bootstrap bucket turns this and
+/// `a_share_reads_only_bytes_from_its_own_rows_bucket` red.
+#[tokio::test]
+async fn media_reads_from_the_rows_bucket() {
+    let (base_state, admin) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    let (status, dto) = upload(&base_state, &token, tiny_png(), "a.png").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    // The pipeline converts to WebP: the row's OWN bytes are what the
+    // row's bucket store holds.
+    let bytes = base_state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the row's bucket holds its bytes");
+
+    // Plant a SECOND Ready bucket whose store holds DIFFERENT bytes at
+    // the same key, and DISABLE the bootstrap bucket: the row's bytes
+    // still come from the row's OWN (now disabled) bucket per `for_row`,
+    // MUT:M2 — never from "the first Ready bucket" (that wrong shape).
+    // Serving itself answers 404 in P1 when no usable serving
+    // row exists, so the assertion pins the RESOLUTION side through the
+    // registry directly plus the decoy shape below.
+    let (state, _second_id, second_store) = plant_second_bucket(&base_state, "satellite", false);
+    second_store
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            &key,
+            b"decoy-bytes-from-the-other-bucket",
+        )
+        .await
+        .unwrap();
+    let other = state
+        .store
+        .create_user(CreateUser {
+            username: "satellite-owner".to_owned(),
+            display_name: "Satellite".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    // A same-key row with a NULL bucket (the legacy-row shape): for_row
+    // must resolve it to the BOOTSTRAP bucket — which is disabled — and
+    // therefore to NO usable serving row. The M2 mutation (NULL → "the
+    // first Ready bucket" = satellite) would instead serve the satellite
+    // store's decoy bytes as 200.
+    state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: None,
+            parent_id: None,
+            owner_id: other.id,
+            name: "legacy.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: bytes.len() as i64,
+            sha256: key.clone(),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: "legacy.png".to_owned(),
+        })
+        .await
+        .unwrap();
+
+    // The NULL row's own bucket is disabled and the second bucket is not
+    // its bucket: 404 — and crucially NOT the satellite bytes.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "a NULL row resolves to its bootstrap bucket (disabled here): 404, never the decoy"
+    );
+
+    // With the bootstrap bucket KEPT ENABLED, the same request serves
+    // the row's OWN bytes while the decoy sits in the second store.
+    let (state, _second_id, second_store) = plant_second_bucket(&base_state, "satellite", true);
+    second_store
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            &key,
+            b"decoy-bytes-from-the-other-bucket",
+        )
+        .await
+        .unwrap();
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        bytes.as_ref(),
+        "the row's own bucket bytes serve, never the decoy's"
+    );
+
+    // And the row itself carries its bucket id (the write side of I4).
+    let row = state
+        .store
+        .get_file(uuid::Uuid::parse_str(dto["id"].as_str().unwrap()).unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let expected = state.registry.bootstrap_bucket_id().unwrap();
+    assert_eq!(row.bucket_id, Some(expected), "the row carries its bucket");
+    assert_eq!(
+        row.storage_backend, "local",
+        "the row's tag is its bucket's backend"
+    );
+    let _ = admin;
+}
+
+/// `a_share_reads_only_bytes_from_its_own_rows_bucket`: a share's
+/// download reads the FILE ROW's bucket — with a same-key decoy in the
+/// registry's other store the served bytes must still be the row's.
+/// MUT:M-B1 — share resolution reverting to "any row by storage_key"
+/// turns this red.
+#[tokio::test]
+async fn a_share_reads_only_bytes_from_its_own_rows_bucket() {
+    let (base_state, _) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    let (_, dto) = upload(&base_state, &token, tiny_png(), "share.png").await;
+    let file_id = dto["id"].as_str().unwrap().to_owned();
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let bytes = base_state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the row's bucket holds its bytes");
+
+    // Plant the second Ready bucket with DIFFERENT bytes at the same
+    // key AND a same-key row in it (another owner's): a share routed
+    // "by storage key, any row" could pick the decoy row — the served
+    // bytes must still be the share's file row's OWN bucket's.
+    let (state, second_id, second_store) = plant_second_bucket(&base_state, "satellite", true);
+    use i0721_server::blob::BlobStore as _;
+    second_store
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            &key,
+            b"decoy-bytes-from-the-other-bucket",
+        )
+        .await
+        .unwrap();
+    let other = state
+        .store
+        .create_user(CreateUser {
+            username: "satellite-owner".to_owned(),
+            display_name: "Satellite".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: Some(second_id),
+            parent_id: None,
+            owner_id: other.id,
+            name: "decoy.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: bytes.len() as i64,
+            sha256: key.clone(),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: "decoy.png".to_owned(),
+        })
+        .await
+        .unwrap();
+    let (status, envelope) = rpc(
+        &state,
+        &token,
+        "files.share_create",
+        serde_json::json!({"file_id": file_id, "allow_preview": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let token_share = envelope["result"]["token"].as_str().unwrap().to_owned();
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/share/{token_share}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        bytes.as_ref(),
+        "the share serves the file row's OWN bucket bytes"
+    );
+}
+
+/// `traversal_order_is_identical_across_stores`: `list_live_rows_by_storage_key`
+/// returns the same `id ASC` order on the memory store and (via the
+/// wrapper) any other store — the serving-row rule's determinism anchor.
+#[tokio::test]
+async fn traversal_order_is_identical_across_stores() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "trav".to_owned(),
+            display_name: "Trav".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for _ in 0..4 {
+        let record = store
+            .create_file(i0721_proto::NewFile {
+                bucket_id: None,
+                parent_id: None,
+                owner_id: owner.id,
+                name: uuid::Uuid::new_v4().simple().to_string(),
+                kind: i0721_proto::FileKind::Image,
+                mime: "image/webp".to_owned(),
+                size: 1,
+                sha256: format!("t{}", uuid::Uuid::new_v4().simple()),
+                storage_backend: "local".to_owned(),
+                storage_key: "shared-key".to_owned(),
+                thumbnail_key: None,
+                original_name: "x".to_owned(),
+            })
+            .await
+            .unwrap();
+        ids.push(record.id);
+    }
+    let rows = store
+        .list_live_rows_by_storage_key("shared-key")
+        .await
+        .unwrap();
+    let mut expect = ids.clone();
+    expect.sort();
+    assert_eq!(
+        rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+        expect,
+        "the traversal order is id ASC"
+    );
+}
+
+/// `thumbnail_bytes_come_from_the_bucket_of_the_row_that_authorised`:
+/// the `?thumbnail=true` variant serves the cache bytes of the serving
+/// row's bucket — P1 verifies the serving-row-bucket half (the full
+/// authorization predicate is P2b).
+#[tokio::test]
+async fn thumbnail_bytes_come_from_the_bucket_of_the_row_that_authorised() {
+    let (state, _) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "thumb.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let thumb_key = format!("{key}.webp");
+    // The thumbnail is in the state's blob store (the row's bucket).
+    let cached = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(cached.is_some(), "the upload produced a thumbnail");
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}?thumbnail=true"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        cached.unwrap().as_ref(),
+        "the thumbnail bytes come from the serving row's bucket"
+    );
+}
+
+/// `folder_rows_carry_their_parents_bucket`: a child folder inherits the
+/// parent's `bucket_id`; a root folder takes the resolved bootstrap
+/// bucket. MUT:M-B2 — removing the `set_parent` cross-bucket guard turns
+/// `cross_bucket_move_is_refused` red.
+#[tokio::test]
+async fn folder_rows_carry_their_parents_bucket() {
+    let (state, admin) = test_state().await;
+    let bucket = state.registry.bootstrap_bucket_id().unwrap();
+    let root = state
+        .store
+        .create_folder(admin.id, None, "root", Some(bucket))
+        .await
+        .unwrap();
+    assert_eq!(root.bucket_id, Some(bucket));
+    let child = state
+        .store
+        .create_folder(admin.id, Some(root.id), "child", root.bucket_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        child.bucket_id, root.bucket_id,
+        "the child inherits the parent's bucket"
+    );
+}
+
+/// MUT:M-FOLDER-KEY — folder rows have no storage key and no bytes, so
+/// the byte lanes have nothing to route through the registry (the
+/// placeholder shape proves the resolution consumes only the bucket id
+/// and folders are excluded by kind before any byte work).
+#[tokio::test]
+async fn folder_rows_never_resolve_to_a_store() {
+    let (state, admin) = test_state().await;
+    let bucket = state.registry.bootstrap_bucket_id().unwrap();
+    let root = state
+        .store
+        .create_folder(admin.id, None, "nofiles", Some(bucket))
+        .await
+        .unwrap();
+    // A folder row carries the bucket id but an EMPTY storage key; the
+    // delete lane excludes folders from every byte map before any store
+    // is resolved.
+    let reloaded = state.store.get_file(root.id).await.unwrap().unwrap();
+    assert_eq!(reloaded.storage_key, "", "folders have no storage key");
+    assert_eq!(reloaded.bucket_id, Some(bucket));
+}
+
+/// `cross_bucket_move_is_refused`: `files.move` into a folder of another
+/// bucket answers `-32007`. MUT:M-B2 — deleting the `set_parent`
+/// cross-bucket guard turns this red.
+#[tokio::test]
+async fn cross_bucket_move_is_refused() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "mover".to_owned(),
+            display_name: "Mover".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let bucket_a = uuid::Uuid::new_v4();
+    let bucket_b = uuid::Uuid::new_v4();
+    let folder_a = store
+        .create_folder(owner.id, None, "a", Some(bucket_a))
+        .await
+        .unwrap();
+    let folder_b = store
+        .create_folder(owner.id, None, "b", Some(bucket_b))
+        .await
+        .unwrap();
+    let child = store
+        .create_folder(owner.id, Some(folder_a.id), "child", Some(bucket_a))
+        .await
+        .unwrap();
+    let moved = store.set_parent(child.id, Some(folder_b.id)).await;
+    assert!(
+        matches!(moved, Err(i0721_store::StoreError::Conflict(_))),
+        "a cross-bucket move is refused at the store guard"
+    );
+    // And the moved row is unchanged.
+    let reloaded = store.get_file(child.id).await.unwrap().unwrap();
+    assert_eq!(reloaded.parent_id, Some(folder_a.id));
+}
+
+/// `root_folders_with_the_same_name_in_two_buckets_coexist`: the
+/// same-layer name uniqueness is bucket-aware (R-G).
+#[tokio::test]
+async fn root_folders_with_the_same_name_in_two_buckets_coexist() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "roottwin".to_owned(),
+            display_name: "RootTwin".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let a = store
+        .create_folder(owner.id, None, "docs", Some(uuid::Uuid::new_v4()))
+        .await
+        .unwrap();
+    let b = store
+        .create_folder(owner.id, None, "docs", Some(uuid::Uuid::new_v4()))
+        .await
+        .unwrap();
+    assert_ne!(a.id, b.id, "same-name roots in two buckets coexist");
+}
+
+/// `same_name_roots_are_rejected_within_one_bucket`: the bucket layer
+/// still refuses duplicates inside ONE bucket.
+#[tokio::test]
+async fn same_name_roots_are_rejected_within_one_bucket() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "rootdup".to_owned(),
+            display_name: "RootDup".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let bucket = uuid::Uuid::new_v4();
+    store
+        .create_folder(owner.id, None, "docs", Some(bucket))
+        .await
+        .unwrap();
+    let dup = store
+        .create_folder(owner.id, None, "docs", Some(bucket))
+        .await;
+    assert!(
+        matches!(dup, Err(i0721_store::StoreError::Conflict(_))),
+        "the same name in ONE bucket is a conflict"
+    );
+}
+
+/// `upload_without_override_never_falls_back_to_the_bootstrap_bucket`:
+/// P1 form — when the bootstrap bucket is UNRESOLVABLE the upload is an
+/// error, never a re-route to another bucket. MUT:M-B3 — a
+/// `resolve_upload_bucket` fallback to "some Ready bucket" turns this red.
+#[tokio::test]
+async fn upload_without_override_never_falls_back_to_the_bootstrap_bucket() {
+    // A registry whose BOOTSTRAP bucket is DISABLED while ANOTHER bucket
+    // is Ready: resolution must fail (NoBootstrap) — the M3 mutation
+    // ("fall back to the first Ready bucket") would answer Ok with the
+    // foreign bucket.
+    let (base_state, _) = test_state().await;
+    let (state, _second_id, _second_store) = plant_second_bucket(&base_state, "satellite", false);
+    let resolved = state.registry.resolve_upload_bucket(None);
+    assert!(
+        resolved.is_err(),
+        "an unresolvable upload bucket is an error, not a fallback"
+    );
+    match resolved {
+        Err(err) => assert!(
+            err.to_string().contains("bootstrap"),
+            "the error names the bootstrap resolution: {err}"
+        ),
+        Ok(_) => unreachable!(),
+    }
+}
+
+/// `reclaim_refcounts_are_per_bucket`: the reclaim probes count live
+/// rows per (bucket_id, key) — a same-key row in ANOTHER bucket does not
+/// keep this bucket's blob alive, and vice versa.
+/// MUT:M-B4 — a count scoped to the key alone (dropping the bucket
+/// dimension) turns this red.
+#[tokio::test]
+async fn reclaim_refcounts_are_per_bucket() {
+    let store = MemoryStore::new();
+    let owner = store
+        .create_user(CreateUser {
+            username: "reclaim".to_owned(),
+            display_name: "Reclaim".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let bucket_a = uuid::Uuid::new_v4();
+    let bucket_b = uuid::Uuid::new_v4();
+    let new_file = |name: &str, bucket: uuid::Uuid| i0721_proto::NewFile {
+        bucket_id: Some(bucket),
+        parent_id: None,
+        owner_id: owner.id,
+        name: name.to_owned(),
+        kind: i0721_proto::FileKind::Image,
+        mime: "image/webp".to_owned(),
+        size: 1,
+        sha256: format!("r{}", uuid::Uuid::new_v4().simple()),
+        storage_backend: "local".to_owned(),
+        storage_key: "same-key".to_owned(),
+        thumbnail_key: Some("same-key.webp".to_owned()),
+        original_name: name.to_owned(),
+    };
+    store.create_file(new_file("a", bucket_a)).await.unwrap();
+    store.create_file(new_file("b", bucket_b)).await.unwrap();
+    assert_eq!(
+        store
+            .count_live_files_by_storage_key(Some(bucket_a), "same-key")
+            .await
+            .unwrap(),
+        1,
+        "bucket A's count sees only bucket A's row"
+    );
+    assert_eq!(
+        store
+            .count_live_files_by_storage_key(Some(bucket_b), "same-key")
+            .await
+            .unwrap(),
+        1,
+        "bucket B's count sees only bucket B's row"
+    );
+    assert_eq!(
+        store
+            .count_live_files_by_thumbnail_key(Some(bucket_a), "same-key.webp")
+            .await
+            .unwrap(),
+        1,
+        "the thumbnail refcount is per bucket too"
+    );
+}
+
+/// The R-J serving-row rule when the bootstrap bucket CANNOT serve: the
+/// serving row must come from a Ready bucket and every byte must come
+/// from THAT bucket. Fixture: the bootstrap bucket is Disabled, a second
+/// bucket is Ready and holds DIFFERENT bytes at the same key, and the
+/// disabled row is forced to sort FIRST by `id ASC` — so a fallback to
+/// `rows.first()`, a "wrong store" read, or a predicate that ignores
+/// readiness all change the observable answer.
+/// MUT:M-A8 / MUT:M-A3 / MUT:M-A11 drive those three wrong shapes.
+#[tokio::test]
+async fn media_serves_from_the_first_ready_row_not_the_bootstrap_bucket() {
+    let (base_state, _admin) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    let (status, dto) = upload(&base_state, &token, tiny_png(), "served.png").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let bootstrap_bytes = base_state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the bootstrap store holds the uploaded bytes");
+
+    // Bootstrap Disabled, satellite Ready with its own store.
+    let (state, second_id, second_store) = plant_second_bucket(&base_state, "satellite", false);
+    let satellite_bytes = b"satellite-bucket-bytes-not-the-bootstrap-ones".to_vec();
+    second_store
+        .put(i0721_server::blob::BlobSlot::Media, &key, &satellite_bytes)
+        .await
+        .unwrap();
+
+    // The satellite row: same key, born in the Ready bucket.
+    let owner = state
+        .store
+        .create_user(CreateUser {
+            username: "satellite-owner".to_owned(),
+            display_name: "Satellite".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let satellite_row = state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: Some(second_id),
+            parent_id: None,
+            owner_id: owner.id,
+            name: "satellite.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: satellite_bytes.len() as i64,
+            sha256: key.clone(),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: "satellite.png".to_owned(),
+        })
+        .await
+        .unwrap();
+
+    // Force the DISABLED (bootstrap) rows to sort first: the uploaded row
+    // already sorts by its own id, so add bootstrap-bucket rows with the
+    // same key until one has a SMALLER id than the satellite row. A
+    // `rows.first()` fallback then hits a bucket that cannot serve.
+    let mut smallest: Option<uuid::Uuid> = None;
+    for attempt in 0..64 {
+        // The `(owner, sha256)` live-unique index forbids a second row for
+        // the same content under one owner, so every probe row gets its own
+        // account (a deleted owner would cascade the row away).
+        let probe_owner = state
+            .store
+            .create_user(CreateUser {
+                username: format!("probe-{attempt}"),
+                display_name: format!("Probe {attempt}"),
+                role: Role::Member,
+                password_hash: None,
+            })
+            .await
+            .unwrap();
+        let probe = state
+            .store
+            .create_file(i0721_proto::NewFile {
+                bucket_id: Some(state.registry.bootstrap_bucket_id().unwrap()),
+                parent_id: None,
+                owner_id: probe_owner.id,
+                name: format!("bootstrap-probe-{attempt}.png"),
+                kind: i0721_proto::FileKind::Image,
+                mime: "image/webp".to_owned(),
+                size: bootstrap_bytes.len() as i64,
+                sha256: key.clone(),
+                storage_backend: "local".to_owned(),
+                storage_key: key.clone(),
+                thumbnail_key: None,
+                original_name: "probe.png".to_owned(),
+            })
+            .await
+            .unwrap();
+        smallest = Some(smallest.map_or(probe.id, |current| current.min(probe.id)));
+        if smallest.is_some_and(|id| id < satellite_row.id) {
+            break;
+        }
+    }
+    assert!(
+        smallest.is_some_and(|id| id < satellite_row.id),
+        "fixture: a disabled row must sort before the satellite row"
+    );
+
+    // Correct behaviour: 200 with the SATELLITE bucket's bytes.
+    let response = ServiceExt::oneshot(
+        app(&state),
+        Request::builder()
+            .uri(format!("/media/{key}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a Ready bucket holds the key, so the media is served"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        satellite_bytes.as_slice(),
+        "the bytes come from the SERVING row's bucket (the Ready one), not the disabled bootstrap store"
+    );
+    assert_ne!(
+        body.as_ref(),
+        bootstrap_bytes.as_ref(),
+        "and certainly not from the bucket that cannot serve"
+    );
+}
+
+/// The no-fallback upload guard must hold on the REAL request path, not
+/// only when the resolver is called directly: with the bootstrap bucket
+/// Disabled, `POST /api/v1/files` must refuse and no store may receive
+/// the bytes (a fallback to a fresh in-memory store would silently accept
+/// the upload into a bucket that is not registered).
+/// MUT:M-B5 introduces exactly that fallback.
+#[tokio::test]
+async fn upload_through_the_route_refuses_when_no_bucket_can_serve() {
+    let (base_state, _admin) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    // Bootstrap Disabled; the satellite bucket exists but is Ready for a
+    // DIFFERENT purpose — the resolver must not silently pick it either,
+    // so the fixture keeps it out of the upload path by disabling nothing
+    // else: the resolved target is the bootstrap bucket, which cannot
+    // serve.
+    let (state, _second_id, second_store) = plant_second_bucket(&base_state, "satellite", false);
+    let (status, body) = upload(&state, &token, tiny_png(), "refused.png").await;
+    assert!(
+        !status.is_success(),
+        "an upload with no usable bucket is an error, not a fallback: {status} {body}"
+    );
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "the resolver failure surfaces as a server error (the bucket cannot serve)"
+    );
+    // Nothing was written: the account has no file rows after the refusal
+    // (a fallback store would have accepted the bytes and recorded a row).
+    let page = state
+        .store
+        .count_folder(user_id_of(&state, "admin").await, None, None)
+        .await
+        .unwrap();
+    assert_eq!(page, 0, "the refused upload recorded no file row: {page}");
+    let _ = &second_store;
+}
+
+/// The admin account's id (the upload test needs it to count rows).
+async fn user_id_of(state: &AppState, username: &str) -> uuid::Uuid {
+    state
+        .store
+        .get_user_by_username(username)
+        .await
+        .unwrap()
+        .expect("the seeded admin exists")
+        .id
 }
 
 async fn account_methods(state: &AppState, username: &str) -> serde_json::Value {
