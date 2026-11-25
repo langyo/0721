@@ -240,5 +240,11 @@
     "grantSaved": "Grants saved",
     "grantHint": "Saving all three switches off writes an explicit deny row — it stays a deny even if this bucket later becomes default-open.",
     "noMembers": "No members to grant."
+  },
+  "media": {
+    "signin": "Please sign in again",
+    "forbidden": "No read permission",
+    "unavailable": "Storage unavailable",
+    "missing": "Not found"
   }
 }

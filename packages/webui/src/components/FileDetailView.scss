@@ -55,3 +55,24 @@
     font-family: var(--hk-font-mono, ui-monospace, monospace);
   }
 }
+
+/* The R-M② media placeholder (private-bucket faces): the preview pane's
+   fallback block replaces the broken img entirely. */
+.media-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 8rem;
+  padding: 1rem;
+  border: 1px dashed var(--hk-border, rgba(128, 128, 128, 0.4));
+  border-radius: 8px;
+  color: var(--hk-text-muted, #888);
+
+  .placeholder-text {
+    font-size: 0.85rem;
+    text-align: center;
+  }
+}

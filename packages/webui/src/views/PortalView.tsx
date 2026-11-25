@@ -16,6 +16,7 @@ import * as api from "@/api";
 import { listBuckets, type StorageBucket } from "@/api/buckets";
 import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
+import { useMediaPlaceholderLadder } from "@/composables/mediaPlaceholderLadder";
 import type { FileDto } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
 import FileDetailView from "@/components/FileDetailView";
@@ -52,6 +53,34 @@ export default defineComponent({
     const errorText = makeErrorText(t);
     const uploadErrorText = makeErrorText(t, "common.portal.uploadFailed");
     const toast = useToast();
+    // The R-M② placeholder ladder for the grid's image tiles (the
+    // detail pane's FileDetailView runs its own).
+    const tileLadder = useMediaPlaceholderLadder();
+
+    async function onTileImageError(file: FileDto): Promise<void> {
+      await tileLadder.resolve(
+        file.url,
+        async () => {
+          try {
+            const response = await fetch("/api/v1/auth/refresh", {
+              method: "POST",
+              credentials: "same-origin",
+            });
+            return response.ok;
+          } catch {
+            return false;
+          }
+        },
+        async (url) => {
+          try {
+            const retry = await fetch(url, { credentials: "same-origin" });
+            return retry.status;
+          } catch {
+            return 0;
+          }
+        },
+      );
+    }
 
     const PAGE_SIZE = 30;
 
@@ -296,12 +325,29 @@ export default defineComponent({
                             aria-label={file.original_name || file.name}
                             onClick={() => (selected.value = file)}
                           >
-                            {file.kind === "image" ? (
+                            {file.kind === "image" && !tileLadder.faceOf(file.url) ? (
                               <img
                                 src={`${file.url}?thumbnail=true`}
                                 alt={file.original_name || file.name}
                                 loading="lazy"
+                                onError={() => void onTileImageError(file)}
+                                onLoad={() => tileLadder.clear(file.url)}
                               />
+                            ) : file.kind === "image" && tileLadder.faceOf(file.url) ? (
+                              <span
+                                class="tile-media-placeholder"
+                                data-testid={`media-placeholder-${tileLadder.faceOf(file.url)!.kind}`}
+                              >
+                                {t(
+                                  tileLadder.faceOf(file.url)!.kind === "sign-in"
+                                    ? "common.media.signin"
+                                    : tileLadder.faceOf(file.url)!.kind === "forbidden"
+                                      ? "common.media.forbidden"
+                                      : tileLadder.faceOf(file.url)!.kind === "unavailable"
+                                        ? "common.media.unavailable"
+                                        : "common.media.missing",
+                                )}
+                              </span>
                             ) : (
                               h(iconFor(file), { size: 32, class: "tile-icon" })
                             )}

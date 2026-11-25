@@ -240,5 +240,11 @@
     "grantSaved": "授權已儲存",
     "grantHint": "三項全部關閉儲存後寫入一列明確拒絕——即使該桶日後改為預設開放，它仍保持拒絕。",
     "noMembers": "沒有可授權的使用者。"
+  },
+  "media": {
+    "signin": "請重新登入",
+    "forbidden": "無讀取權限",
+    "unavailable": "儲存不可用",
+    "missing": "不存在"
   }
 }

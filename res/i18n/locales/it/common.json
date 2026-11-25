@@ -240,5 +240,11 @@
     "grantSaved": "Permessi salvati",
     "grantHint": "Salvare i tre interruttori tutti spenti scrive una riga di diniego esplicita — resta un diniego anche se il bucket diventa aperto per impostazione predefinita.",
     "noMembers": "Nessun membro a cui concedere permessi."
+  },
+  "media": {
+    "signin": "Accedi di nuovo",
+    "forbidden": "Nessun permesso di lettura",
+    "unavailable": "Archiviazione non disponibile",
+    "missing": "Non trovato"
   }
 }

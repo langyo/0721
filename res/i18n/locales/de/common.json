@@ -240,5 +240,11 @@
     "grantSaved": "Rechte gespeichert",
     "grantHint": "Werden alle drei Schalter ausgeschaltet gespeichert, entsteht eine explizite Ablehnungszeile — sie bleibt eine Ablehnung, auch wenn dieser Bucket später standardmäßig offen wird.",
     "noMembers": "Keine Mitglieder zum Berechtigen."
+  },
+  "media": {
+    "signin": "Bitte erneut anmelden",
+    "forbidden": "Keine Leseberechtigung",
+    "unavailable": "Speicher nicht verfügbar",
+    "missing": "Nicht gefunden"
   }
 }
