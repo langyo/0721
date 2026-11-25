@@ -1776,26 +1776,37 @@ async fn a_ticket_opened_socket_answers_a_real_frame() {
 
 // ── the OAuth dual-mode lane ────────────────────────────────────────────
 
-/// A local OAuth provider stub: the authorize endpoint records the
-/// PKCE challenge/method and redirects back with a code; the token
-/// endpoint validates the verifier against that challenge (S256 math)
-/// and the client secret; the userinfo endpoint answers a fixed
-/// subject. This is the flow's real evidence — the server under test
-/// performs genuine outbound HTTP against it.
+/// A local OAuth provider stub: it speaks the ERP's endpoint contract, so
+/// the flow under test is the real one — a genuine authorize leg, a
+/// genuine token exchange and a genuine UserInfo read over loopback HTTP.
+///
+/// The authorize endpoint records the PKCE challenge/method and the
+/// `state` it was handed, then redirects back with a code. The token
+/// endpoint verifies the verifier against that challenge (S256 math) and
+/// the client secret, and answers an access token — plus, for the feishu
+/// shape, the identity itself (`feishu_identity`). The userinfo endpoint
+/// answers a fixed subject.
 struct ProviderStub {
     /// (challenge, method) seen at authorize.
     challenge: std::sync::Mutex<(String, String)>,
+    /// The `state` the authorize leg was handed (the replay test spends it).
+    state_at_authorize: std::sync::Mutex<String>,
     /// The verifier seen at token (asserted against the challenge).
     verifier_at_token: std::sync::Mutex<String>,
     /// The secret the token endpoint demands.
     secret: String,
     authorize_hits: std::sync::Mutex<usize>,
+    /// `true` = the token answer carries the identity (feishu's shape: its
+    /// v2 token response IS the profile, behind a `data` envelope) and there
+    /// is no UserInfo leg.
+    feishu_identity: bool,
 }
 
 impl ProviderStub {
     fn router(self: Arc<Self>) -> Router {
         let authorize_stub = self.clone();
         let token_stub = self.clone();
+        let userinfo_stub = self.clone();
         Router::new()
             .route(
                 "/oauth/authorize",
@@ -1806,6 +1817,8 @@ impl ProviderStub {
                             q.get("code_challenge").cloned().unwrap_or_default(),
                             q.get("code_challenge_method").cloned().unwrap_or_default(),
                         );
+                        *stub.state_at_authorize.lock().unwrap() =
+                            q.get("state").cloned().unwrap_or_default();
                         *stub.authorize_hits.lock().unwrap() += 1;
                         let state = q.get("state").cloned().unwrap_or_default();
                         let redirect =
@@ -1848,6 +1861,23 @@ impl ProviderStub {
                         if form.get("code").map(String::as_str) != Some("CODE123") {
                             return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"error": "bad_code"})));
                         }
+                        if stub.feishu_identity {
+                            // feishu v2: the token answer carries the identity
+                            // behind its `data` envelope, and the access token
+                            // sits in the same envelope.
+                            return (
+                                StatusCode::OK,
+                                axum::Json(serde_json::json!({
+                                    "code": 0,
+                                    "data": {
+                                        "access_token": "stub-access-token",
+                                        "token_type": "Bearer",
+                                        "open_id": "ou_stub_feishu_01",
+                                        "name": "Feishu User",
+                                    },
+                                })),
+                            );
+                        }
                         (
                             StatusCode::OK,
                             axum::Json(serde_json::json!({
@@ -1863,39 +1893,52 @@ impl ProviderStub {
             // to the bare path makes the callback hit a 404 stub and fail.
             .route(
                 "/api/oauth/userinfo",
-                axum::routing::get(|headers: axum::http::HeaderMap| async move {
-                    let auth = headers
-                        .get(header::AUTHORIZATION)
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or_default();
-                    if auth != "Bearer stub-access-token" {
-                        return (
-                            StatusCode::UNAUTHORIZED,
-                            axum::Json(serde_json::json!({"error": "bad_token"})),
-                        );
+                axum::routing::get(move |headers: axum::http::HeaderMap| {
+                    let stub = userinfo_stub.clone();
+                    async move {
+                        let auth = headers
+                            .get(header::AUTHORIZATION)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default();
+                        if stub.feishu_identity || auth != "Bearer stub-access-token" {
+                            return (
+                                StatusCode::UNAUTHORIZED,
+                                axum::Json(serde_json::json!({"error": "bad_token"})),
+                            );
+                        }
+                        (
+                            StatusCode::OK,
+                            axum::Json(serde_json::json!({
+                                "sub": "subject-abcdef01",
+                                "name": "Stub User",
+                            })),
+                        )
                     }
-                    (
-                        StatusCode::OK,
-                        axum::Json(serde_json::json!({
-                            "sub": "subject-abcdef01",
-                            "name": "Stub User",
-                        })),
-                    )
                 }),
             )
     }
 }
 
 async fn oauth_test_state_with_stub() -> (AppState, Arc<ProviderStub>, String, UserRecord) {
+    spawn_provider_stub(false).await
+}
+
+/// Start the provider stub on a loopback port and point an `builtin:erp`
+/// row at it. `feishu_identity` switches the stub into the feishu answer
+/// shape (identity in the token response, no UserInfo leg).
+async fn spawn_provider_stub(
+    feishu_identity: bool,
+) -> (AppState, Arc<ProviderStub>, String, UserRecord) {
     let (state, admin) = test_state().await;
-    // The stub listener.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let stub = Arc::new(ProviderStub {
         challenge: std::sync::Mutex::new((String::new(), String::new())),
+        state_at_authorize: std::sync::Mutex::new(String::new()),
         verifier_at_token: std::sync::Mutex::new(String::new()),
         secret: "stub-secret-9999".to_owned(),
         authorize_hits: std::sync::Mutex::new(0),
+        feishu_identity,
     });
     let app = stub.clone().router();
     tokio::spawn(async move {
@@ -1925,9 +1968,54 @@ async fn oauth_test_state_with_stub() -> (AppState, Arc<ProviderStub>, String, U
     (state, stub, base, admin)
 }
 
+/// The cookie value a redirect response planted (the browser binding).
+fn flow_cookie(response: &axum::http::Response<Body>) -> String {
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .expect("the redirect plants the binding cookie")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        cookie.starts_with("i0721-oauth-state="),
+        "the binding cookie keeps its name: {cookie}"
+    );
+    cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .strip_prefix("i0721-oauth-state=")
+        .unwrap()
+        .to_owned()
+}
+
+/// Drive the authorize leg against the stub (the browser leg — no redirect
+/// following, `res.test` is virtual) and return the callback's path+query.
+async fn browser_round(location: &str) -> String {
+    let browser = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let authorize = browser.get(location).send().await.expect("authorize leg");
+    assert!(
+        authorize.status().is_redirection(),
+        "the stub redirects back: {}",
+        authorize.status()
+    );
+    authorize
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .trim_start_matches("http://res.test")
+        .to_owned()
+}
+
 /// One full OAuth round against the stub: redirect entry → browser
 /// authorize leg → callback. Returns the callback's response.
-async fn oauth_login_round(state: &AppState) -> axum::http::Response<axum::body::Body> {
+async fn oauth_login_round(state: &AppState) -> axum::http::Response<Body> {
     let redirect = app(state)
         .oneshot(
             Request::builder()
@@ -1946,36 +2034,8 @@ async fn oauth_login_round(state: &AppState) -> axum::http::Response<axum::body:
         .to_str()
         .unwrap()
         .to_owned();
-    let cookie = redirect
-        .headers()
-        .get(header::SET_COOKIE)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_owned();
-    let flow_value = cookie
-        .split(';')
-        .next()
-        .unwrap()
-        .strip_prefix("i0721-oauth-state=")
-        .unwrap()
-        .to_owned();
-
-    // The browser leg (no redirect following — res.test is virtual).
-    let browser = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap();
-    let authorize = browser.get(&location).send().await.expect("authorize leg");
-    assert!(authorize.status().is_redirection());
-    let back = authorize
-        .headers()
-        .get("location")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .trim_start_matches("http://res.test")
-        .to_owned();
+    let flow_value = flow_cookie(&redirect);
+    let back = browser_round(&location).await;
 
     app(state)
         .oneshot(
@@ -2027,12 +2087,31 @@ async fn oauth_end_to_end_against_a_local_stub_provider() {
         "the flow cookie lives 600 s"
     );
     assert!(cookie.contains("SameSite=Lax"));
+    // The cookie keeps its name and path; its VALUE is now the browser
+    // binding (an opaque 32-byte hex value), never a state or a verifier.
     assert!(cookie.starts_with("i0721-oauth-state="));
+    assert!(cookie.contains("Path=/api/v1/auth/oauth"));
+    let cookie_value = cookie.split(';').next().unwrap();
+    let binding = cookie_value
+        .strip_prefix("i0721-oauth-state=")
+        .unwrap()
+        .to_owned();
+    assert_eq!(binding.len(), 64, "32 bytes of RNG, hex: {binding}");
+    assert!(
+        binding.chars().all(|c| c.is_ascii_hexdigit()),
+        "the binding is opaque hex: {binding}"
+    );
 
-    // The authorize URL carries state + PKCE S256.
+    // The authorize URL carries state + PKCE S256, and NOTHING secret: the
+    // client secret never rides the browser leg.
     assert!(location.contains("/oauth/authorize?"));
     assert!(location.contains("state="));
+    assert!(location.contains("code_challenge="));
     assert!(location.contains("code_challenge_method=S256"));
+    assert!(
+        !location.contains("stub-secret-9999"),
+        "the client secret must never reach the browser: {location}"
+    );
 
     // The BROWSER leg: follow the authorize URL against the stub (the
     // app's own HTTP client stands in for the browser). The stub
@@ -2106,7 +2185,7 @@ async fn oauth_end_to_end_against_a_local_stub_provider() {
         session.contains("SameSite=Lax"),
         "oauth session cookie: {session}"
     );
-    // The flow cookie is cleared alongside.
+    // The binding cookie is cleared alongside.
     assert!(set_cookies
         .iter()
         .any(|c| c.starts_with("i0721-oauth-state=;")));
@@ -2556,6 +2635,44 @@ async fn oauth_redirect_uri_follows_the_public_origin() {
     );
 }
 
+/// The redirect URI joins on ONE slash no matter how the origin was spelled:
+/// a `I0721_PUBLIC_ORIGIN` with a pasted trailing slash, and a `Host` header
+/// that carries one, must not produce `…//api/v1/auth/oauth/…/callback`.
+#[tokio::test]
+async fn callback_uri_has_no_double_slash_for_either_origin_source() {
+    let (mut state, _stub, base, _admin) = oauth_test_state_with_stub().await;
+    // The configured origin, spelled with a trailing slash.
+    let mut config = (*state.config).clone();
+    config.public_origin = Some(format!("{base}/"));
+    state.config = Arc::new(config);
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/stub")
+                .header(header::HOST, "irrelevant.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    serializer.append_pair("", &format!("{base}/api/v1/auth/oauth/stub/callback"));
+    let encoded = serializer.finish().trim_start_matches('=').to_owned();
+    assert!(
+        location.contains(&encoded),
+        "the redirect_uri has exactly one slash: {location}"
+    );
+}
+
 /// A JUNK kill-switch row (a JSON string) must NOT fail the password
 /// lane open or closed: it defers to the env/default (ON).
 #[tokio::test]
@@ -2588,11 +2705,12 @@ async fn junk_password_row_defers_to_the_default() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-/// A state minted for provider A cannot be replayed against provider
-/// B's callback (the provider rides the state cookie).
+/// An attempt minted for provider A cannot be finished against provider
+/// B's callback: the `state` is spent by kirino, and the attempt records
+/// which provider it was started for.
 #[tokio::test]
 async fn oauth_state_cannot_cross_providers() {
-    let (state, stub, base, admin) = oauth_test_state_with_stub().await;
+    let (state, _stub, base, admin) = oauth_test_state_with_stub().await;
     // Register a SECOND provider pointing at the same stub.
     let mut providers = serde_json::from_value::<serde_json::Value>(
         state
@@ -2614,7 +2732,7 @@ async fn oauth_state_cannot_cross_providers() {
         .await
         .unwrap();
 
-    // Mint a state for "stub", then walk it into "other"'s callback.
+    // Start the flow for "stub" — the attempt carries stub's state.
     let redirect = app(&state)
         .oneshot(
             Request::builder()
@@ -2625,21 +2743,23 @@ async fn oauth_state_cannot_cross_providers() {
         )
         .await
         .unwrap();
-    let cookie = redirect
+    assert_eq!(redirect.status(), StatusCode::FOUND);
+    let flow_value = flow_cookie(&redirect);
+    let location = redirect
         .headers()
-        .get(header::SET_COOKIE)
+        .get(header::LOCATION)
         .unwrap()
         .to_str()
         .unwrap()
         .to_owned();
-    let flow_value = cookie
-        .split(';')
-        .next()
-        .unwrap()
-        .strip_prefix("i0721-oauth-state=")
-        .unwrap()
+    // Walk the authorize leg so the stub echoes the real state back.
+    let back = browser_round(&location).await;
+    let state_param = back
+        .split("state=")
+        .nth(1)
+        .expect("the authorize leg echoes the state")
         .to_owned();
-    let state_param = flow_value.split('|').nth(1).unwrap().to_owned();
+    assert!(!state_param.is_empty());
 
     let response = app(&state)
         .oneshot(
@@ -2657,9 +2777,17 @@ async fn oauth_state_cannot_cross_providers() {
     assert_eq!(
         response.status(),
         StatusCode::FORBIDDEN,
-        "a stub-minted state must not open other's callback"
+        "a stub-minted attempt must not open other's callback"
     );
-    let _ = (stub, admin);
+    let body = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("another provider"),
+        "the refusal names the provider mismatch: {text}"
+    );
+    let _ = admin;
 }
 
 /// The dead-state guard: password OFF with no enabled provider is
@@ -2776,6 +2904,790 @@ async fn provider_scopes_round_trip_through_the_masked_list() {
     )
     .await;
     assert_eq!(envelope["result"]["scopes"], serde_json::Value::Null);
+}
+
+// ── the relying-party migration pins: LoginPolicy + metadata + refusals ──
+
+/// A provider row with every field filled (the tests tweak one at a time).
+fn provider_row(id: &str, provider_type: &str) -> i0721_server::oauth::OAuthProvider {
+    i0721_server::oauth::OAuthProvider {
+        id: id.to_owned(),
+        display_name: format!("{id} SSO"),
+        provider_type: provider_type.to_owned(),
+        client_id: "cid".to_owned(),
+        client_secret: "s3cret-value-9999".to_owned(),
+        base_url: None,
+        issuer_url: None,
+        scopes: None,
+        enabled: true,
+        icon: None,
+    }
+}
+
+/// The login-methods document: the legacy fields AND the family policy,
+/// validated, with the same catalog in both renderings.
+#[tokio::test]
+async fn login_methods_publishes_a_validated_family_policy() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/login-methods")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let policy = json
+        .get("policy")
+        .expect("login-methods publishes the family policy");
+    assert_eq!(policy["version"], 1);
+    assert_eq!(
+        policy["mode"], "federated",
+        "one usable provider makes the deployment federated"
+    );
+    assert_eq!(policy["password"], true);
+    assert_eq!(policy["relay"], serde_json::Value::Null);
+    let methods = policy["methods"].as_array().unwrap();
+    assert_eq!(methods.len(), 1);
+    assert_eq!(methods[0]["kind"], "oauth");
+    assert_eq!(methods[0]["id"], "stub");
+    assert_eq!(methods[0]["provider"], "stub");
+    assert_eq!(methods[0]["label"], "Stub SSO");
+    assert_eq!(methods[0]["href"], "/api/v1/auth/oauth/stub");
+
+    // One catalog, two renderings: the legacy array and the policy agree.
+    let legacy = json["providers"].as_array().unwrap();
+    assert_eq!(legacy.len(), methods.len());
+    for (row, method) in legacy.iter().zip(methods) {
+        assert_eq!(row["id"], method["id"]);
+        assert_eq!(row["display_name"], method["label"]);
+    }
+
+    // The published document passes kirino's own validation.
+    let policy: kirino::auth::mode::LoginPolicy =
+        serde_json::from_value(policy.clone()).expect("the wire shape round-trips");
+    policy.validate().expect("the served policy is consistent");
+
+    // No secret material anywhere in the public payload.
+    let text = String::from_utf8_lossy(&body);
+    assert!(!text.contains("s3cret-value-9999"));
+}
+
+/// `GET /api/v1/auth/login-methods` for this state, decoded.
+async fn login_methods_json(state: &i0721_server::state::AppState) -> serde_json::Value {
+    let response = app(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/login-methods")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+/// Rewrite the stored catalog to `rows` (a raw JSON array: the point of
+/// these cases is rows the RPC would have refused) and pin the password
+/// kill-switch ON, the ordinary deployed shape: with a working password form
+/// a catalog whose rows are all malformed still serves an honest page, so the
+/// malformed rows are exercised against the rendering both views share rather
+/// than against the login-less posture (`login_less_posture_publishes_the_
+/// honest_document` owns that one).
+async fn plant_catalog(state: &i0721_server::state::AppState, rows: serde_json::Value) {
+    state
+        .store
+        .set_setting("oauth_providers", rows)
+        .await
+        .unwrap();
+    state
+        .store
+        .set_setting("auth_password_login", serde_json::json!(true))
+        .await
+        .unwrap();
+}
+
+/// The ids the two renderings of one login-methods response advertise.
+fn both_id_sets(json: &serde_json::Value) -> (Vec<String>, Vec<String>) {
+    let legacy = json["providers"]
+        .as_array()
+        .expect("the legacy providers[] array")
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_owned())
+        .collect();
+    let policy = json["policy"]["methods"]
+        .as_array()
+        .expect("the policy methods array")
+        .iter()
+        .map(|method| method["id"].as_str().unwrap().to_owned())
+        .collect();
+    (legacy, policy)
+}
+
+/// A malformed row is DROPPED from BOTH renderings, not just from the
+/// policy: the login page keeps showing the entrances that work, and the
+/// response never advertises — in its legacy fields — a provider its policy
+/// has already given up on (the R2 finding: a blank `display_name` row
+/// collapsed the policy to login-less `local` while `providers[]` stayed
+/// `federated` with that row).
+#[tokio::test]
+async fn login_methods_drops_malformed_rows_from_both_renderings() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    plant_catalog(
+        &state,
+        serde_json::json!([
+            {
+                "id": "nameless", "display_name": "   ", "type": "builtin:erp",
+                "client_id": "cid", "client_secret": "", "base_url": "https://sso.example",
+                "issuer_url": null, "scopes": null, "enabled": true, "icon": null,
+            },
+            {
+                "id": "erp", "display_name": "ERP SSO", "type": "builtin:erp",
+                "client_id": "cid", "client_secret": "", "base_url": "https://sso.example",
+                "issuer_url": null, "scopes": null, "enabled": true, "icon": null,
+            },
+        ]),
+    )
+    .await;
+
+    let json = login_methods_json(&state).await;
+    let (legacy, policy) = both_id_sets(&json);
+    assert_eq!(
+        legacy,
+        vec!["erp".to_owned()],
+        "the bad row is gone: {json}"
+    );
+    assert_eq!(policy, vec!["erp".to_owned()], "the policy agrees: {json}");
+    assert_eq!(json["policy"]["mode"], "federated");
+    assert_eq!(json["policy"]["password"], true);
+    // The served policy is consistent by kirino's own contract.
+    let contract: kirino::auth::mode::LoginPolicy =
+        serde_json::from_value(json["policy"].clone()).unwrap();
+    contract.validate().expect("the served policy validates");
+}
+
+/// A catalog where EVERY row is unusable still answers 200 — an honest,
+/// EMPTY page. Dropping the malformed rows leaves no entrance, so the
+/// document is `local` with no method; with the password switch on it is
+/// still a valid `local` policy (password offered, nothing else), which is
+/// exactly what an operator whose only provider row is broken should see: a
+/// working password form and no phantom SSO button. Both renderings are
+/// empty and agree, and no 503 is raised for a catalog that is merely empty.
+#[tokio::test]
+async fn login_methods_with_every_row_unusable_serves_an_honest_empty_page() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+    plant_catalog(
+        &state,
+        serde_json::json!([
+            {
+                "id": "nameless", "display_name": "", "type": "builtin:erp",
+                "client_id": "cid", "client_secret": "", "base_url": "https://sso.example",
+                "issuer_url": null, "scopes": null, "enabled": false, "icon": null,
+            },
+            {
+                "id": "", "display_name": "ERP SSO", "type": "builtin:erp",
+                "client_id": "cid", "client_secret": "", "base_url": "https://sso.example",
+                "issuer_url": null, "scopes": null, "enabled": true, "icon": null,
+            },
+        ]),
+    )
+    .await;
+
+    let json = login_methods_json(&state).await;
+    let (legacy, policy) = both_id_sets(&json);
+    assert!(legacy.is_empty(), "no entrance is advertised: {json}");
+    assert!(policy.is_empty(), "the policy lists none either: {json}");
+    assert_eq!(json["policy"]["mode"], "local");
+    // The kill-switch is ON, so the page still offers the password form.
+    assert_eq!(json["password"], true);
+    assert_eq!(json["policy"]["password"], true);
+    let contract: kirino::auth::mode::LoginPolicy =
+        serde_json::from_value(json["policy"].clone()).unwrap();
+    contract.validate().expect("an empty local policy is valid");
+}
+
+/// The two renderings NEVER disagree about which entrances exist: the ids the
+/// policy lists are exactly the ids the legacy array lists, for both catalog
+/// shapes (all rows usable, some dropped, and none usable).
+#[test]
+fn policy_and_legacy_renderings_never_disagree() {
+    let base = "https://sso.example";
+    let catalog = |rows: &[(&str, &str, bool)]| -> Vec<i0721_server::oauth::OAuthProvider> {
+        rows.iter()
+            .enumerate()
+            .map(|(index, &(id, label, enabled))| {
+                let mut row = provider_row(id, "builtin:erp");
+                row.display_name = label.to_owned();
+                row.base_url = Some(base.to_owned());
+                row.client_id = format!("cid-{index}");
+                row.enabled = enabled;
+                row
+            })
+            .collect()
+    };
+    // One usable row plus one blank label; then every row unusable.
+    for rows in [
+        catalog(&[("ok", "OK SSO", true), ("blank-label", "  ", true)]),
+        catalog(&[("blank-label", " ", true), ("blank-id", "", true)]),
+        catalog(&[]),
+    ] {
+        let document = i0721_server::oauth::login_methods_document(true, &rows)
+            .expect("a filtered catalog is servable");
+        let legacy: Vec<String> = document
+            .providers
+            .iter()
+            .map(|row| row.id.clone())
+            .collect();
+        let policy: Vec<String> = document
+            .policy
+            .methods
+            .iter()
+            .map(|m| m.id().to_owned())
+            .collect();
+        assert_eq!(legacy, policy, "one catalog, two renderings, same ids");
+    }
+}
+
+/// The row filter is TOTAL for this catalog's own row model: after it, kirino
+/// validation can only fail with the login-less posture — so the endpoint's
+/// `503` lane is a genuine "this cannot happen", never the old silent
+/// downgrade wearing a different hat. Checked against rows an operator can
+/// actually store (ids from `valid_provider_id`, labels from the form).
+#[tokio::test]
+async fn filter_makes_every_servable_catalog_a_posture_or_a_valid_policy() {
+    for (id, label) in [
+        ("erp", "ERP SSO"),
+        ("erp-2", "ERP SSO"),
+        ("", "ERP SSO"),
+        ("  ", "ERP SSO"),
+        ("padded ", "ERP SSO"),
+        ("erp", "   "),
+        (" ", ""),
+    ] {
+        let mut row = provider_row(id, "builtin:erp");
+        row.display_name = label.to_owned();
+        row.base_url = Some("https://sso.example".to_owned());
+        let document = i0721_server::oauth::login_methods_document(true, &[row])
+            .expect("no single row can make the page unservable");
+        let contract: kirino::auth::mode::LoginPolicy =
+            serde_json::from_value(serde_json::to_value(&document.policy).unwrap()).unwrap();
+        match contract.validate() {
+            Ok(()) => {}
+            Err(kirino::auth::mode::LoginPolicyViolation::PasswordMissingInLocalMode) => {
+                assert!(document.providers.is_empty() && document.policy.methods.is_empty());
+            }
+            Err(other) => panic!("catalog ({id:?}, {label:?}) served a bad policy: {other}"),
+        }
+    }
+}
+
+/// An empty catalog with the password switch on is a plain `local`
+/// deployment: no methods, password offered.
+#[test]
+fn login_policy_local_when_no_provider_is_enabled() {
+    let policy = i0721_server::oauth::build_login_policy(true, &[])
+        .expect("a password-only policy is valid");
+    assert_eq!(policy.mode, i0721_server::oauth::AuthMode::Local);
+    assert!(policy.password);
+    assert!(policy.methods.is_empty());
+    // The published wire shape IS the family contract: it validates as
+    // kirino's own document once converted back.
+    let contract: kirino::auth::mode::LoginPolicy =
+        serde_json::from_value(serde_json::to_value(&policy).unwrap()).unwrap();
+    contract.validate().expect("validated before publication");
+}
+
+/// The published document and kirino's validated one serialise identically —
+/// the wire shape restates the contract, it does not reinterpret it.
+#[test]
+fn published_policy_round_trips_through_kirinos_contract() {
+    let mut provider = provider_row("erp", "builtin:erp");
+    provider.base_url = Some("https://sso.example".to_owned());
+    let rows = [&provider];
+    let wire = i0721_server::oauth::build_login_policy(true, &rows).unwrap();
+    let wire_json = serde_json::to_value(&wire).unwrap();
+    let contract: kirino::auth::mode::LoginPolicy =
+        serde_json::from_value(wire_json.clone()).expect("the wire shape parses as the contract");
+    contract.validate().expect("the wire shape validates");
+    let contract_json = serde_json::to_value(&contract).unwrap();
+    assert_eq!(
+        wire_json, contract_json,
+        "one document, two renderings of the same contract"
+    );
+}
+
+/// The login-less posture (chest's precedent): the password switch off and
+/// no usable provider is a REAL configuration, so the honest document is
+/// published rather than refused — and it is the one document that does not
+/// pass `validate()`.
+#[tokio::test]
+async fn login_less_posture_publishes_the_honest_document() {
+    let (state, _stub, _base, admin) = oauth_test_state_with_stub().await;
+    let admin_token = state.signer.sign(admin.id, Timestamp::now());
+    // Disable the fixture's only provider, then switch the password off
+    // directly (the RPC refuses that pair; the contract must still hold for
+    // a deployment that lands there — a hand-edited row, an upgrade).
+    let mut providers: serde_json::Value = state
+        .store
+        .get_setting("oauth_providers")
+        .await
+        .unwrap()
+        .unwrap();
+    for row in providers.as_array_mut().unwrap() {
+        row["enabled"] = serde_json::json!(false);
+    }
+    state
+        .store
+        .set_setting("oauth_providers", providers)
+        .await
+        .unwrap();
+    state
+        .store
+        .set_setting("auth_password_login", serde_json::json!(false))
+        .await
+        .unwrap();
+    let _ = admin_token;
+
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/login-methods")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["password"], false);
+    assert!(json["providers"].as_array().unwrap().is_empty());
+    assert_eq!(json["policy"]["mode"], "local");
+    assert_eq!(json["policy"]["password"], false);
+    assert!(json["policy"]["methods"].as_array().unwrap().is_empty());
+    // The posture really does violate the invariant the contract names —
+    // the document is served DESPITE it, not because it passes.
+    let policy: kirino::auth::mode::LoginPolicy =
+        serde_json::from_value(json["policy"].clone()).unwrap();
+    assert_eq!(
+        policy.validate(),
+        Err(kirino::auth::mode::LoginPolicyViolation::PasswordMissingInLocalMode)
+    );
+}
+
+/// A disabled provider never reaches the policy (it is not an entrance).
+#[test]
+fn disabled_providers_vanish_from_the_policy() {
+    let mut enabled = provider_row("erp", "builtin:erp");
+    enabled.base_url = Some("https://sso.example".to_owned());
+    let mut disabled = provider_row("old", "builtin:erp");
+    disabled.enabled = false;
+    let rows = [&enabled, &disabled];
+    let policy = i0721_server::oauth::build_login_policy(true, &rows).unwrap();
+    assert_eq!(policy.methods.len(), 1);
+    assert_eq!(policy.methods[0].id(), "erp");
+}
+
+/// GitHub's metadata: its own endpoints, form-encoded token body, the
+/// `read:user` scope, and a confidential client (the secret never rides the
+/// browser leg).
+#[tokio::test]
+async fn github_metadata_mirrors_the_endpoint_family() {
+    let (state, _admin) = test_state().await;
+    let mut row = provider_row("gh", "builtin:github");
+    let route = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .expect("github assembles without network");
+    assert_eq!(route.metadata.provider, "gh");
+    assert_eq!(
+        route.metadata.authorize_url.as_str(),
+        "https://github.com/login/oauth/authorize"
+    );
+    assert_eq!(
+        route.metadata.token_url.as_str(),
+        "https://github.com/login/oauth/access_token"
+    );
+    assert_eq!(
+        route.metadata.userinfo_url.as_ref().map(url::Url::as_str),
+        Some("https://api.github.com/user")
+    );
+    assert_eq!(
+        route.metadata.token_body,
+        kirino::auth::passport::oauth::TokenBody::Form
+    );
+    assert_eq!(route.metadata.scopes, vec!["read:user".to_owned()]);
+    assert_eq!(route.metadata.issuer.as_deref(), Some("https://github.com"));
+    assert!(
+        route.client.client_secret().is_some(),
+        "a secret makes it confidential"
+    );
+
+    // The operator's scope override wins.
+    row.scopes = Some("read:user user:email".to_owned());
+    let route = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .unwrap();
+    assert_eq!(
+        route.metadata.scopes,
+        vec!["read:user".to_owned(), "user:email".to_owned()]
+    );
+
+    // No secret = a public client: PKCE is its only proof.
+    row.client_secret.clear();
+    let route = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .unwrap();
+    assert_eq!(
+        route.client.client_secret(),
+        None,
+        "an empty secret means a public client, never an empty secret"
+    );
+}
+
+/// Feishu's metadata: its own endpoints, NO UserInfo leg (the v2 token
+/// answer carries the identity), and no scope (its authorize takes none).
+#[tokio::test]
+async fn feishu_metadata_has_no_userinfo_leg_and_no_scope() {
+    let (state, _admin) = test_state().await;
+    let row = provider_row("fs", "builtin:feishu");
+    let route = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .unwrap();
+    assert_eq!(
+        route.metadata.authorize_url.as_str(),
+        "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
+    );
+    assert_eq!(
+        route.metadata.token_url.as_str(),
+        "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
+    );
+    assert!(
+        route.metadata.userinfo_url.is_none(),
+        "feishu v2 answers the identity in its token response"
+    );
+    assert!(
+        route.metadata.scopes.is_empty(),
+        "feishu's authorize endpoint takes no scope"
+    );
+    assert_eq!(
+        route.metadata.issuer.as_deref(),
+        Some("https://open.feishu.cn")
+    );
+}
+
+/// The ERP's metadata: both legs under the `/api` prefix (MUT:erp-userinfo-
+/// prefix), the `openid profile` default scopes, and its issuer = the
+/// deployment's own base.
+#[tokio::test]
+async fn erp_metadata_mounts_both_legs_under_the_api_prefix() {
+    let (state, _admin) = test_state().await;
+    let mut row = provider_row("erp", "builtin:erp");
+    row.base_url = Some("https://sso.example".to_owned());
+    let route = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .unwrap();
+    assert_eq!(
+        route.metadata.authorize_url.as_str(),
+        "https://sso.example/oauth/authorize"
+    );
+    assert_eq!(
+        route.metadata.token_url.as_str(),
+        "https://sso.example/api/oauth/token"
+    );
+    assert_eq!(
+        route.metadata.userinfo_url.as_ref().map(url::Url::as_str),
+        Some("https://sso.example/api/oauth/userinfo"),
+        "the userinfo leg rides the /api prefix (its host split bounces the bare path)"
+    );
+    assert_eq!(
+        route.metadata.scopes,
+        vec!["openid".to_owned(), "profile".to_owned()]
+    );
+    assert_eq!(
+        route.metadata.issuer.as_deref(),
+        Some("https://sso.example")
+    );
+
+    // No base: the row cannot resolve endpoints, and says so.
+    row.base_url = None;
+    let refused = i0721_server::oauth::resolve_route(&state, &row).await;
+    assert!(
+        refused.is_err(),
+        "an erp row without a base has no endpoints"
+    );
+}
+
+/// A `base_url` pasted WITH a trailing slash joins on exactly one `/` (an
+/// operator's copy-paste must not yield `//api/oauth/token`, which some
+/// reverse proxies treat as protocol-relative), and the issuer keeps none.
+#[tokio::test]
+async fn erp_base_url_with_a_trailing_slash_joins_on_one_slash() {
+    let (state, _admin) = test_state().await;
+    let mut row = provider_row("erp", "builtin:erp");
+    row.base_url = Some("https://sso.example/".to_owned());
+    let route = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .expect("a trailing slash is not a broken base");
+    assert_eq!(
+        route.metadata.token_url.as_str(),
+        "https://sso.example/api/oauth/token"
+    );
+    assert_eq!(
+        route.metadata.authorize_url.as_str(),
+        "https://sso.example/oauth/authorize"
+    );
+    assert_eq!(
+        route.metadata.userinfo_url.as_ref().map(url::Url::as_str),
+        Some("https://sso.example/api/oauth/userinfo")
+    );
+    assert_eq!(
+        route.metadata.issuer.as_deref(),
+        Some("https://sso.example"),
+        "the issuer carries no trailing slash"
+    );
+}
+
+/// An `oidc` row assembles from the cached discovery document, and the
+/// cache keeps answering after the issuer's document changes (the positive
+/// TTL is what makes the redirect endpoint cheap).
+#[tokio::test]
+async fn oidc_metadata_assembles_from_the_discovery_cache() {
+    use std::sync::OnceLock;
+    static DOC: OnceLock<Arc<std::sync::atomic::AtomicUsize>> = OnceLock::new();
+    let hits = DOC.get_or_init(|| Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let issuer = format!("http://127.0.0.1:{}", addr.port());
+    let serve_hits = hits.clone();
+    let serve_issuer = issuer.clone();
+    let app = Router::new().route(
+        "/.well-known/openid-configuration",
+        axum::routing::get(move || {
+            let hits = serve_hits.clone();
+            let issuer = serve_issuer.clone();
+            async move {
+                hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                axum::Json(serde_json::json!({
+                    "issuer": issuer,
+                    "authorization_endpoint": format!("{issuer}/authorize"),
+                    "token_endpoint": format!("{issuer}/token"),
+                    "userinfo_endpoint": format!("{issuer}/userinfo"),
+                }))
+            }
+        }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let (state, _admin) = test_state().await;
+    let mut row = provider_row("idp", "oidc");
+    row.issuer_url = Some(issuer.clone());
+    let route = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .unwrap();
+    assert_eq!(
+        route.metadata.authorize_url.as_str(),
+        format!("{issuer}/authorize")
+    );
+    assert_eq!(route.metadata.token_url.as_str(), format!("{issuer}/token"));
+    assert_eq!(
+        route.metadata.userinfo_url.as_ref().map(url::Url::as_str),
+        Some(format!("{issuer}/userinfo").as_str())
+    );
+    assert_eq!(route.metadata.issuer.as_deref(), Some(issuer.as_str()));
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // A second resolve rides the cache: no second outbound request.
+    let _ = i0721_server::oauth::resolve_route(&state, &row)
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the discovery document is cached"
+    );
+
+    // A broken issuer is a readable refusal, not a panic.
+    let mut broken = provider_row("broken", "oidc");
+    broken.issuer_url = Some("http://127.0.0.1:1".to_owned());
+    let refused = i0721_server::oauth::resolve_route(&state, &broken).await;
+    assert!(refused.is_err(), "a broken issuer refuses to assemble");
+}
+
+/// A callback from a browser that never started the attempt is refused,
+/// and the consumed `state` cannot be replayed afterwards.
+#[tokio::test]
+async fn oauth_callback_refuses_a_foreign_browser_and_a_replayed_state() {
+    let (state, _stub, _base, _admin) = oauth_test_state_with_stub().await;
+
+    let redirect = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/stub")
+                .header(header::HOST, "res.test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let location = redirect
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    // The first attempt's binding is never presented: the probes below prove
+    // it is burned regardless, so the assertion is inside `flow_cookie`.
+    flow_cookie(&redirect);
+    let back = browser_round(&location).await;
+
+    // 1. The right `state`, another browser's (or no) binding: refused —
+    //    and the attempt is BURNED by that first presentation (kirino takes
+    //    the `state` before it compares the binding, so a hostile callback
+    //    cannot probe a victim's parked attempt without destroying it).
+    for presented in [None, Some("00".repeat(32))] {
+        let mut request = Request::builder()
+            .uri(back.clone())
+            .header(header::HOST, "res.test");
+        if let Some(value) = &presented {
+            request = request.header(header::COOKIE, format!("i0721-oauth-state={value}"));
+        }
+        let response = app(&state)
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "a callback without the same browser's binding is refused"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("browser") || text.contains("unknown or already used state"),
+            "the refusal names the binding or the spent state: {text}"
+        );
+        assert!(
+            !text.contains("access_token") && !text.contains("stub-access-token"),
+            "a refused callback never reaches the token exchange: {text}"
+        );
+    }
+
+    // 2. A FRESH attempt (the probes above spent the first one): the right
+    //    browser presenting the right binding is a real sign-in.
+    let redirect = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/stub")
+                .header(header::HOST, "res.test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let flow_value = flow_cookie(&redirect);
+    let location = redirect
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let back = browser_round(&location).await;
+    let first = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(back.clone())
+                .header(header::HOST, "res.test")
+                .header(header::COOKIE, format!("i0721-oauth-state={flow_value}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        first.status(),
+        StatusCode::FOUND,
+        "the browser that started the attempt signs in"
+    );
+    assert!(first
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .any(|v| v.to_str().unwrap().starts_with("i0721-token=")));
+
+    // 3. The SAME state replayed: already spent — refused, never a session.
+    let replay = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(back)
+                .header(header::HOST, "res.test")
+                .header(header::COOKIE, format!("i0721-oauth-state={flow_value}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::FORBIDDEN);
+    assert!(
+        !replay
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .any(|v| v.to_str().unwrap().starts_with("i0721-token=")),
+        "a replayed callback never mints a session"
+    );
+    let body = axum::body::to_bytes(replay.into_body(), 8192)
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&body).contains("unknown or already used state"),
+        "the refusal names the spent state"
+    );
+}
+
+/// The attempt store is bounded: the start route is unauthenticated, so a
+/// flood must not grow the process's memory one redirect at a time.
+#[tokio::test]
+async fn oauth_attempt_store_is_bounded() {
+    use kirino::auth::passport::oauth::begin_with_binding;
+    let store = i0721_server::oauth::LoginAttemptStore::new();
+    // One past the (private) cap is enough to prove eviction keeps it flat.
+    for _ in 0..1100 {
+        begin_with_binding(
+            &store,
+            "stub",
+            None,
+            Some("binding".to_owned()),
+            chrono::Duration::seconds(600),
+        )
+        .await
+        .expect("an attempt parks");
+    }
+    assert!(
+        store.len() <= 1024,
+        "the store evicts rather than growing without bound ({} parked)",
+        store.len()
+    );
+    assert!(!store.is_empty());
 }
 
 // ── the netdisk negative-control matrix (W5) ────────────────────────────

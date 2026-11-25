@@ -16,10 +16,15 @@ use crate::state::AppState;
 
 /// The absolute origin (`scheme://host`) this request is served under:
 /// the configured public origin first, else the request `Host`.
+///
+/// Both arms come back WITHOUT a trailing slash so callers that append a
+/// path (`{origin}/api/v1/…`) never emit a double slash. The config loader
+/// already normalises `I0721_PUBLIC_ORIGIN`, but the `Host` arm does not
+/// (the header is copied verbatim), and one normalisation here covers both.
 #[must_use]
 pub(crate) fn public_origin(state: &AppState, headers: &HeaderMap) -> Option<String> {
     if let Some(origin) = state.config.public_origin.as_deref() {
-        return Some(origin.to_owned());
+        return Some(origin.trim_end_matches('/').to_owned());
     }
     let host = headers
         .get(header::HOST)
@@ -28,7 +33,7 @@ pub(crate) fn public_origin(state: &AppState, headers: &HeaderMap) -> Option<Str
         host,
         "I0721_PUBLIC_ORIGIN unset — deriving the public origin from the Host header",
     );
-    Some(format!("http://{host}"))
+    Some(format!("http://{host}").trim_end_matches('/').to_owned())
 }
 
 /// Whether THIS request arrived over https — what the session cookie's

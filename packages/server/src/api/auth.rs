@@ -191,27 +191,21 @@ pub(crate) async fn password_login_enabled(state: &AppState) -> bool {
 }
 
 /// `GET /api/v1/auth/login-methods` — the public login-page descriptor:
-/// the password kill-switch's state plus the enabled provider summary
-/// (NO secret material anywhere in the payload).
+/// the password kill-switch's state, the enabled provider summary, and the
+/// family login-policy document (`kirino::auth::mode::LoginPolicy`,
+/// validated before it is served). NO secret material anywhere in the
+/// payload.
+///
+/// `503` when the catalog yields a policy this service cannot honour (see
+/// [`crate::oauth::login_methods_document`]): a login page that cannot
+/// render the truth is refused, not silently downgraded.
 pub async fn login_methods(
     State(state): State<AppState>,
-) -> axum::response::Json<crate::oauth::LoginMethods> {
+) -> Result<axum::response::Json<crate::oauth::LoginMethods>, ApiError> {
     let password = password_login_enabled(&state).await;
-    let providers = crate::oauth::load_providers(&state)
-        .await
-        .into_iter()
-        .filter(|provider| provider.enabled)
-        .map(|provider| crate::oauth::LoginMethodProvider {
-            id: provider.id,
-            display_name: provider.display_name,
-            provider_type: provider.provider_type,
-            icon: provider.icon,
-        })
-        .collect();
-    axum::response::Json(crate::oauth::LoginMethods {
-        password,
-        providers,
-    })
+    let providers = crate::oauth::load_providers(&state).await;
+    let document = crate::oauth::login_methods_document(password, &providers)?;
+    Ok(axum::response::Json(document))
 }
 
 /// `POST /api/v1/auth/login` — mints the session and plants it as an

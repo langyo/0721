@@ -8,14 +8,17 @@
  */
 export type { ApiKeyCreated } from "./ApiKeyCreated.ts";
 export type { ApiKeyPublic } from "./ApiKeyPublic.ts";
+export type { AuthMode } from "./AuthMode.ts";
 export type { AuthSession } from "./AuthSession.ts";
 export type { CreateUserRequest } from "./CreateUserRequest.ts";
 export type { FileDto } from "./FileDto.ts";
 export type { FileKind } from "./FileKind.ts";
 export type { FooterBanner } from "./FooterBanner.ts";
 export type { HealthReport } from "./HealthReport.ts";
+export type { LoginMethodDescriptor } from "./LoginMethodDescriptor.ts";
 export type { LoginMethodProvider } from "./LoginMethodProvider.ts";
 export type { LoginMethods } from "./LoginMethods.ts";
+export type { LoginPolicy } from "./LoginPolicy.ts";
 export type { LoginRequest } from "./LoginRequest.ts";
 export type { OAuthProviderPublic } from "./OAuthProviderPublic.ts";
 export type { OAuthProviderUpsert } from "./OAuthProviderUpsert.ts";
@@ -24,6 +27,7 @@ export type { PageResult } from "./PageResult.ts";
 export type { PortalConfig } from "./PortalConfig.ts";
 export type { PortalConfigStrict } from "./PortalConfigStrict.ts";
 export type { QuotaInfo } from "./QuotaInfo.ts";
+export type { RelayDirective } from "./RelayDirective.ts";
 export type { Role } from "./Role.ts";
 export type { RouterConfig } from "./RouterConfig.ts";
 export type { RouterConfigStrict } from "./RouterConfigStrict.ts";

@@ -99,8 +99,29 @@ object_store = { version = "^0.12", features = ["aws"] }
 # The OS RNG primitive (share tokens).
 getrandom = "^0.3"
 
-# Server-side OAuth calls (token exchange + OIDC discovery).
+# Server-side OAuth calls (OIDC discovery + the provider stub/dev lane).
+# The token exchange and the UserInfo read no longer ride this client:
+# they go through kirino's `HttpFetcher` seam, and the transport that
+# implements it is `plana-identity-relay` below.
 reqwest = { version = "^0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
+
+# The family's auth stack:
+# * `kirino` — the authentication platform. The server consumes its
+#   relying-party protocol core (`auth-oauth`: PKCE S256, the one-time
+#   `state`, the token exchange, ID-token verification) and the login
+#   policy contract (`auth::mode::LoginPolicy`). crates.io line.
+# * `plana-identity-relay` — plana's reqwest transport for that core (no
+#   redirects, bounded timeout, status-only errors). Unpublished family
+#   member: git master (Cargo.lock pins the rev), the same shape the
+#   workspace's plana/plana-rpc-server pins already use.
+kirino = { version = "^0.9", features = ["auth-oauth"] }
+# kirino's protocol traits are declared over `anyhow::Result`, so a host that
+# implements one (the login-attempt store, the transport seam) speaks it.
+anyhow = "^1"
+# The attempt store's clock: kirino's `LoginAttempt` deadlines are
+# `chrono::DateTime<Utc>`.
+chrono = { version = "^0.4", features = ["serde", "clock"] }
+plana-identity-relay = { git = "https://github.com/celestia-island/plana", version = "^0.8" }
 
 # Dev-only: the WS-frame integration tests (the family's own dev lane).
 tokio-tungstenite = "^0.30"
