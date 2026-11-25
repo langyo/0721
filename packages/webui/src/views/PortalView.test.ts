@@ -280,7 +280,7 @@ describe("PortalView upload bucket dropdown (P2a / R-I)", () => {
 
     // The panel TELEPORTS to <body> and a previous case's leftover panel
     // is not removed by wrapper.unmount — take the LAST match (the live
-    // panel), never a stale one.
+    // panel), not a stale leftover.
     const option = [...document.querySelectorAll(".hk-select-option")]
       .filter((el) => el.textContent?.trim() === "archive")
       .at(-1) as HTMLElement | undefined;

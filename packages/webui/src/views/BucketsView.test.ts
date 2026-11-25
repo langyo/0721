@@ -222,8 +222,9 @@ describe("BucketsView upsert wire (strict full document)", () => {
     // The grant switch flips OFF (unlocking anonymous_read).
     await toggleSwitch("bucket-grant-on-signup");
     // NOW anonymous_read is unlocked and can go off — and the grant
-    // switch (now OFF) is DISABLED: the inconsistent combination can
-    // never be re-created.
+    // switch (now OFF) is DISABLED: the inconsistent combination is
+    // unreachable from here (MUT:p2a-upsert-strict-doc's wire pin and
+    // the server's own upsert check both refuse it).
     await toggleSwitch("bucket-anonymous-read");
     const grantTrack = byTestId("bucket-grant-on-signup").querySelector<HTMLElement>(".hk-switch-track");
     grantTrack!.click();
@@ -313,9 +314,9 @@ describe("BucketsView grant editor (R-A)", () => {
     byTestId("grants-media").click();
     await flushPromises();
     expect(document.querySelector('[data-testid="grant-row-m1"]')).not.toBeNull();
-    // The admin target is never offered as an editable row (R-A: the
-    // server refuses grant writes for admins; the UI does not even
-    // reach the refusal).
+    // MUT:MY-1-ADMIN — the admin target is not offered as an editable
+    // row (R-A: the server refuses grant writes for admins; the UI does
+    // not even reach the refusal).
     expect(document.querySelector('[data-testid="grant-row-a1"]')).toBeNull();
     wrapper.unmount();
   });

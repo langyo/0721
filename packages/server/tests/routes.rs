@@ -7952,10 +7952,10 @@ async fn keys_list_reports_ops_and_expiry_in_canonical_order() {
         serde_json::json!(["read", "share"]),
         "an object scopes payload with an extra key still yields its ops: {planted}"
     );
-    // The raw stored payload is never echoed — the list projection is
-    // the PARSED fields only (ops canonical-ordered, buckets parsed and
-    // canonicalized for the「无桶」marker; the stored text itself, with
-    // its out-of-order ops, never survives).
+    // MUT:K-M4-PROJECTION — the raw stored payload is not echoed: the
+    // list projection is the PARSED fields only (ops canonical-ordered,
+    // buckets parsed and canonicalized for the「无桶」marker; the stored
+    // text, with its out-of-order ops, is gone).
     assert_eq!(
         planted["buckets"],
         serde_json::json!(["b1"]),
@@ -9969,8 +9969,8 @@ async fn plant_bucket(
         is_bootstrap: false,
         created_at: Timestamp::now(),
     };
-    // The tests' fixture store is ALWAYS Arc<MemoryStore>; the typed
-    // handle is what carries the seeding method.
+    // The tests' fixture store is an Arc<MemoryStore> throughout (the
+    // typed handle carries the seeding method).
     let memory = state
         .store
         .as_any()
@@ -10114,7 +10114,8 @@ async fn files_list_bucket_param_filters_rows_and_total_together() {
     assert_eq!(total, 1, "the member's own row lists: {envelope}");
 
     // An INVISIBLE slug: rows AND total vanish together — HTTP OK, an
-    // empty page (never an error; §7's files.list row).
+    // empty page, not an error (MUT:B-P2A-LIST-PUSHDOWN; §7's files.list
+    // row).
     let (_status, envelope) = rpc(
         &state,
         &member_token,
@@ -10261,8 +10262,8 @@ async fn bucket_scope_denials_are_jsonrpc_frames_not_tool_errors() {
 
 /// §7's MCP `upload_file` second arm: a key whose `buckets` array does
 /// not include the target bucket answers the `-32001` FRAME naming the
-/// bucket (order: ops → key buckets → user access), never an isError
-/// tool result.
+/// bucket (order: ops → key buckets → user access) rather than an
+/// isError tool result. MUT:§7-UP pins this shape.
 /// MUT:§7-UP — dropping the key-buckets check from the upload lane's
 /// precheck (mcp.rs) turns this red.
 #[tokio::test]
@@ -11020,8 +11021,8 @@ async fn an_invisible_bucket_in_the_upload_query_answers_404() {
 }
 
 /// Same name, DIFFERENT content, same folder: the name-conflict
-/// message stays (R-C's fourth test — the cross-bucket probe does not
-/// swallow the name conflict's identity).
+/// message stays (MUT:R-C-PROBE family — the cross-bucket probe leaves
+/// the name conflict's identity intact).
 #[tokio::test]
 async fn same_name_different_content_in_the_same_folder_keeps_the_name_conflict_message() {
     let (state, token) = test_state_with_token().await;
@@ -11318,8 +11319,8 @@ async fn keys_create_over_the_64_bucket_cap_answers_no_buckets() {
         .await
         .unwrap()
         .expect("the row exists");
-    // The EFFECTIVE set — what the enforcement layer reads — is the
-    // fail-closed empty set, never 64, never 65.
+    // MUT:Q7-CAP — the EFFECTIVE set (what the enforcement layer reads)
+    // is the fail-closed empty set, not the stored 65 slugs.
     assert!(
         i0721_server::key_scopes::parse_scopes_buckets(&record.scopes).is_empty(),
         "one over the cap answers NO buckets (fail-closed): {}",
@@ -11383,8 +11384,8 @@ async fn storage_defaults_round_trip_and_visibility() {
     );
 
     // A member WITHOUT visibility of the defaultable bucket: the
-    // surface is admin-only (require_admin answers -32005 before any
-    // read), so the slug can never leak through this face — the §7
+    // surface is admin-only (MUT:DEF-GET — require_admin answers -32005
+    // before any read), so the slug stays behind this face; the §7
     // invisible-answer duty lives on the upload lane (the 404 pin).
     let member = state
         .store

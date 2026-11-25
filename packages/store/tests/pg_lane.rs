@@ -2109,8 +2109,10 @@ async fn plant_key(store: &PgStore, user_id: uuid::Uuid, name: &str, scopes: &st
 #[tokio::test]
 async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
     let Some(store) = db().await else { return };
-    // Two buckets: `open` carries grant_on_signup, `closed` does not.
-    // SLUG-UNIQUE slugs (one lane database shared by the whole suite).
+    // MUT:R-A-ADMIN-SET — two buckets: `open` carries grant_on_signup,
+    // `closed` does not (so the admin oracle must include a bucket the
+    // signup default alone would exclude). SLUG-UNIQUE slugs (one lane
+    // database shared by the whole suite).
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let slug_open = format!("open-{suffix}");
     let slug_closed = format!("closed-{suffix}");
@@ -2282,8 +2284,9 @@ async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() 
     };
     run_migration_0008(&store).await;
 
-    // The ORACLE (R-A's evaluation, computed in the test itself so any
-    // residual lane data is accounted for, never assumed away):
+    // The ORACLE (R-A's evaluation, computed in the test itself, so the
+    // residual lane data is accounted for rather than assumed away —
+    // MUT:R-A-ADMIN-SET keeps that accounting honest):
     // admin = every bucket; an explicit deny row excludes its bucket; a
     // write row includes it; otherwise the bucket's signup default.
     let mut explicit = std::collections::HashMap::new();
