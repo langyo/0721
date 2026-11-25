@@ -260,20 +260,6 @@ pub struct BootstrapBucketParams {
     pub backend: String,
 }
 
-/// Distinct legacy backend labels found in the `files` table (statement
-/// 3b's row source). Pure function so the startup lane can test it.
-#[must_use]
-pub fn legacy_backend_labels(present: &[&str], current: &str) -> Vec<String> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
-    for label in present {
-        if matches!(*label, "s3" | "local" | "ipfs") && *label != current && seen.insert(*label) {
-            out.push((*label).to_owned());
-        }
-    }
-    out
-}
-
 /// The baseline schema plus the settings seed.
 ///
 /// The seed row uses `ON CONFLICT DO NOTHING`, so a database whose
@@ -284,6 +270,10 @@ pub fn legacy_backend_labels(present: &[&str], current: &str) -> Vec<String> {
 /// (fail-closed, R-U) that the bucket migration is not pending, and the
 /// runner then simply never sees it.
 #[must_use]
+/// The bucket migration's version — the one the R-U startup gate
+/// asks [`crate::pg::PgStore::bucket_migration_pending`] about.
+pub const BUCKET_MIGRATION_VERSION: &str = "20261122000007";
+
 pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
     let mut out = vec![
         Migration::new(
@@ -443,8 +433,16 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
     let Some(bootstrap) = bootstrap else {
         return out;
     };
+    // `bootstrap_sql` only fails on a location that `validate_bootstrap_location`
+    // refuses — and the caller (main, R-U) validated it before this point, so
+    // this backstop is unreachable in the supported flow.
+    let bootstrap_sql_text = bootstrap_sql(bootstrap).unwrap_or_else(|reason| {
+        panic!(
+            "the bootstrap location failed its quoting guard and was not pre-validated: {reason}"
+        )
+    });
     out.push(Migration::new(
-        "20261122000007",
+        BUCKET_MIGRATION_VERSION,
         "bucket registry: storage_buckets + bucket_grants, files.bucket_id, bootstrap buckets, bucket-aware indexes",
         format!(
             r#"{schema};
@@ -453,7 +451,7 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
             {layer_index};
             {dedupe_index};
             {bucket_key_index};"#,
-            bootstrap_sql(bootstrap),
+            bootstrap_sql_text,
             schema = MIGRATION_0007_SCHEMA_SQL.trim(),
             old_layer = FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL,
             layer_index = FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL,
@@ -472,8 +470,8 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
 /// fixed shape (validated by [`bootstrap_backend_for_startup`]'s caller),
 /// and the location is dollar-quoted as data so an arbitrary env value
 /// cannot break out of the literal.
-pub fn bootstrap_sql(bootstrap: &BootstrapBucketParams) -> String {
-    bootstrap_sql_statements(bootstrap).join(";\n")
+fn bootstrap_sql(bootstrap: &BootstrapBucketParams) -> Result<String, String> {
+    bootstrap_sql_statements(bootstrap).map(|statements| statements.join(";\n"))
 }
 
 /// The `$`-guard on the bootstrap bucket's `location`.
@@ -508,17 +506,15 @@ pub fn validate_bootstrap_location(location: &str) -> Result<(), String> {
 /// `Command::Sql` executes one statement per prepared call and cannot
 /// carry the `DO $$` block inside a multi-command text; the runner's
 /// raw lane splits on the same boundaries).
-pub fn bootstrap_sql_statements(bootstrap: &BootstrapBucketParams) -> Vec<String> {
+fn bootstrap_sql_statements(bootstrap: &BootstrapBucketParams) -> Result<Vec<String>, String> {
     // Fail-closed on a location that cannot ride the `$loc$` quoting:
     // refuse the value rather than emit mis-parsed SQL.
-    if let Err(reason) = validate_bootstrap_location(&bootstrap.location) {
-        panic!("{reason}");
-    }
+    validate_bootstrap_location(&bootstrap.location)?;
     let formatted = MIGRATION_0007_BOOTSTRAP_SQL
         .replace("$1", &format!("'{}'::uuid", bootstrap.id))
         .replace("$2", &format!("$loc${}$loc$", bootstrap.location))
         .replace("$3", &format!("'{}'", bootstrap.backend));
-    split_statements(&formatted)
+    Ok(split_statements(&formatted))
 }
 
 /// Split a formatted SQL text into single statements on top-level `;`
@@ -603,8 +599,8 @@ mod tests {
             backend: "local".to_owned(),
         };
         assert!(
-            std::panic::catch_unwind(|| bootstrap_sql_statements(&params)).is_err(),
-            "the statement builder panics on a mis-quotable location"
+            bootstrap_sql_statements(&params).is_err(),
+            "the statement builder refuses a mis-quotable location"
         );
     }
 

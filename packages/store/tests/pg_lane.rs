@@ -1254,7 +1254,9 @@ async fn count_null_bucket_rows(store: &PgStore) -> i64 {
 /// carries one command per call; the runner's raw lane splits on the
 /// same boundaries).
 async fn run_bootstrap(store: &PgStore) {
-    for statement in i0721_store::migrate::bootstrap_sql_statements(&lane_bootstrap()) {
+    for statement in i0721_store::migrate::bootstrap_sql_statements(&lane_bootstrap())
+        .expect("the lane bootstrap location passes the quoting guard")
+    {
         store
             .executor
             .execute(&lacrymira::Command::Sql {
@@ -1640,20 +1642,21 @@ async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
     let Some(store) = db().await else { return };
     // The fixture's migration already ran the schema; verify the named
     // constants match what exists.
-    for (name, present) in [
-        ("storage_buckets", "storage_buckets"),
-        ("bucket_grants", "bucket_grants"),
-        (
-            FILES_OWNER_BUCKET_FOLDER_NAME_LIVE_KEY_SQL,
-            "files_owner_bucket_folder_name_live_key",
-        ),
+    // Exact names — a `LIKE '%table%'` count proves the pkey exists,
+    // not that the MIGRATION's indexes do.
+    for indexname in [
+        "files_owner_bucket_folder_name_live_key",
+        "files_owner_bucket_sha256_live_key",
+        "files_bucket_storage_key_idx",
+        "storage_buckets_single_ipfs",
     ] {
-        let _ = name;
         let reply = store
             .executor
             .execute(&lacrymira::Command::Sql {
                 dialect: lacrymira::Dialect::Postgres,
-                text: format!("SELECT COUNT(*) FROM pg_indexes WHERE indexname LIKE '%{present}%'"),
+                text: format!(
+                    "SELECT COUNT(*) FROM pg_indexes WHERE indexname = '{indexname}'"
+                ),
                 params: vec![],
             })
             .await
@@ -1666,10 +1669,36 @@ async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
             lacrymira::Value::I32(n) => i64::from(*n),
             other => panic!("count expected, got {other:?}"),
         };
-        assert!(
-            n > 0,
-            "the index {present} exists after the migration ran ({n})"
-        );
+        assert_eq!(n, 1, "the index {indexname} exists exactly once");
+    }
+    // The migration's columns exist (the pkey says nothing about them).
+    for (table, column) in [
+        ("files", "bucket_id"),
+        ("storage_buckets", "grant_on_signup"),
+        ("storage_buckets", "is_bootstrap"),
+        ("storage_buckets", "anonymous_read"),
+    ] {
+        let reply = store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: format!(
+                    "SELECT COUNT(*) FROM information_schema.columns \
+                     WHERE table_name = '{table}' AND column_name = '{column}'"
+                ),
+                params: vec![],
+            })
+            .await
+            .unwrap();
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("rows expected");
+        };
+        let n = match &rows[0][0] {
+            lacrymira::Value::I64(n) => *n,
+            lacrymira::Value::I32(n) => i64::from(*n),
+            other => panic!("count expected, got {other:?}"),
+        };
+        assert_eq!(n, 1, "{table}.{column} exists after the migration");
     }
     // The bucket+storage_key index exists (draft §7.2).
     let reply = store
@@ -1707,4 +1736,122 @@ async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
     assert!(MIGRATION_0007_BOOTSTRAP_SQL.contains("RAISE EXCEPTION"));
     assert!(FILES_OWNER_FOLDER_NAME_LIVE_KEY_SQL == "files_owner_folder_name_live_key");
     let _ = FILES_BUCKET_STORAGE_KEY_INDEX_SQL;
+}
+
+/// MUT:pending-probe — the pending answer must come from the BOOKKEEPING
+/// TABLE (via the `to_regclass` probe), so renaming the table away flips
+/// the answer to true; a probe-less implementation errors there instead,
+/// and a constant-false one fails the final assertion.
+#[tokio::test]
+async fn pg_bucket_migration_pending_tracks_the_bookkeeping_table() {
+    let Some(store) = db().await else { return };
+    // After the fixture's migration the answer is false.
+    assert!(
+        !store.bucket_migration_pending().await.unwrap(),
+        "a migrated database has no pending bucket migration"
+    );
+    // Rename the bookkeeping table away: the fresh-database shape.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "ALTER TABLE seaql_migrations RENAME TO seaql_migrations_away".to_owned(),
+            params: vec![],
+        })
+        .await
+        .unwrap();
+    assert!(
+        store.bucket_migration_pending().await.unwrap(),
+        "a database without the bookkeeping table has every migration pending"
+    );
+    // Restore: the serial lane's later tests need the bookkeeping rows.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "ALTER TABLE seaql_migrations_away RENAME TO seaql_migrations".to_owned(),
+            params: vec![],
+        })
+        .await
+        .unwrap();
+    assert!(
+        !store.bucket_migration_pending().await.unwrap(),
+        "restoring the table restores the migrated answer"
+    );
+}
+
+/// MUT:order-by-dropped — dropping the `ORDER BY id ASC` from
+/// `list_live_rows_by_storage_key` turns this test red on the PG store
+/// (the memory store's insertion order would still pass).
+#[tokio::test]
+async fn pg_list_live_rows_orders_by_id_asc() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("user");
+    let mut ids = Vec::new();
+    for _ in 0..4 {
+        let reply = store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "INSERT INTO files (id, owner_id, parent_id, name, kind, mime, size, \
+                       sha256, storage_backend, storage_key, original_name) \
+                       VALUES (gen_random_uuid(), $1, NULL, $2, 'image', 'image/webp', 1, $3, \
+                       'local', 'order-probe-key', $2) RETURNING id"
+                    .to_owned(),
+                params: vec![
+                    lacrymira::Value::Uuid(user.id.to_string()),
+                    lacrymira::Value::Text(uuid::Uuid::new_v4().simple().to_string()),
+                    lacrymira::Value::Text(uuid::Uuid::new_v4().simple().to_string()),
+                ],
+            })
+            .await
+            .unwrap();
+        let lacrymira::Reply::Rows { rows, .. } = reply else {
+            panic!("RETURNING id expected");
+        };
+        let id = match &rows[0][0] {
+            lacrymira::Value::Uuid(id) => uuid::Uuid::parse_str(id).expect("a uuid"),
+            lacrymira::Value::Text(id) => uuid::Uuid::parse_str(id).expect("a uuid"),
+            other => panic!("uuid expected, got {other:?}"),
+        };
+        ids.push(id);
+    }
+    let rows = store
+        .list_live_rows_by_storage_key("order-probe-key")
+        .await
+        .unwrap();
+    ids.sort();
+    assert_eq!(
+        rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+        ids,
+        "the traversal order is id ASC"
+    );
+}
+
+/// The bootstrap bucket the migration seats carries its IDENTITY fields —
+/// not merely an existence proof: slug, backend tag, endpoint reference,
+/// location (the lane's), and the three flags (enabled / anonymous /
+/// signup) that the P2a slices build on. Immutability enforcement lands
+/// with P2a's upsert rejection; this test pins what 0007 writes.
+#[tokio::test]
+async fn pg_0007_seats_the_bootstrap_bucket_with_its_identity_fields() {
+    let Some(store) = db().await else { return };
+    let buckets = store.list_storage_buckets().await.unwrap();
+    let bootstrap = buckets
+        .iter()
+        .find(|b| b.slug == "bootstrap-local")
+        .expect("the lane's bootstrap bucket is seated");
+    assert_eq!(bootstrap.backend, i0721_proto::BucketBackend::Local);
+    assert!(bootstrap.is_bootstrap, "it is THE bootstrap bucket");
+    assert!(bootstrap.enabled, "the current backend's bucket serves");
+    assert!(
+        bootstrap.anonymous_read,
+        "a signup bucket must be anonymous-readable (R-A's constraint)"
+    );
+    assert!(
+        bootstrap.grant_on_signup,
+        "the bootstrap bucket grants new signups by default"
+    );
+    assert_eq!(bootstrap.endpoint_ref, "legacy_local_env");
+    assert_eq!(bootstrap.location, "i0721-bwave-lane");
 }

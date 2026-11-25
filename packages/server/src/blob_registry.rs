@@ -180,11 +180,6 @@ impl BlobRegistry {
     /// `store`, rows with or without a bucket alike. The fixture lane
     /// mints a synthetic bootstrap id so `resolve_upload_bucket` /
     /// fresh rows carry a bucket id that resolves back to this store.
-    #[must_use]
-    pub fn single(store: Arc<dyn BlobStore>) -> Arc<Self> {
-        Self::single_tagged(store, BucketBackend::Local)
-    }
-
     /// A single-entry registry with an explicit backend tag (the
     /// fixture lane where the tag must follow a chosen backend).
     #[must_use]
@@ -658,10 +653,18 @@ mod tests {
     }
 
     #[test]
-    fn legacy_unknown_is_unavailable_with_an_actionable_reason() {
+    fn legacy_unknown_row_reads_as_disabled_and_explained() {
         let b = bucket("bootstrap-s3", BucketBackend::S3, "legacy_unknown", false);
         let registry = BlobRegistry::build(vec![b], |_| None).unwrap();
         let health = registry.health();
         assert_eq!(health[0].state, "disabled");
+        assert!(
+            health[0]
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("register"),
+            "the reason names the remedy"
+        );
     }
 }

@@ -8531,34 +8531,11 @@ async fn legacy_backend_rows_are_disabled_and_explained_in_health() {
     );
 }
 
-/// `bootstrap_bucket_identity_fields_are_immutable` (stage-A shape):
-/// there is NO path that mutates a bootstrap bucket — the trait surface
-/// carries no update method at all. Pinned structurally: the compile of
-/// this assertion IS the proof that no such entry point exists (P2a's
-/// RPC rejection adds the runtime half).
-#[tokio::test]
-async fn bootstrap_bucket_identity_fields_are_immutable() {
-    // The store trait exposes no mutating method for storage_buckets:
-    // the only writable paths are the migration constants. Assert the
-    // trait does not grow one by compile-time absence — a runtime scan
-    // would need reflection the language does not have. The negative
-    // proof lives in the mutation table: MUT:M-IMMUT deletes the
-    // `DROP INDEX IF EXISTS {old}` line from the migration's 0007
-    // instead, proving the 0007 SQL is the ONLY writer of these rows.
-    let migration = i0721_store::migrate::migrations(Some(&i0721_store::BootstrapBucketParams {
-        id: uuid::Uuid::new_v4(),
-        location: "x".to_owned(),
-        backend: "local".to_owned(),
-    }))
-    .into_iter()
-    .find(|m| m.version == "20261122000007")
-    .expect("0007 present");
-    // The ONLY `INSERT INTO storage_buckets` outside the migration is
-    // nowhere — assert the migration carries both inserts (the upsert
-    // and the legacy planting) and no other code path touches the table.
-    assert!(migration.sql.contains("INSERT INTO storage_buckets"));
-}
-
+/// The bootstrap bucket's IDENTITY fields are pinned by the PG lane
+/// (`pg_0007_seats_the_bootstrap_bucket_with_its_identity_fields`):
+/// a structural no-mutator argument cannot be pinned by a runtime
+/// test, and an existence pin has no defensive value. P2a's upsert
+/// rejection adds the runtime half.
 /// `missing_storage_backend_env_while_0007_is_pending_fails_startup`
 /// (+ negative control: an explicit `local` passes through):
 /// the pure function's contract.

@@ -24,11 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // runs. A missing/invalid `I0721_STORAGE_BACKEND` while 0007 is
     // pending fails the start with the whole `migrate()` unexecuted
     // (0006 among others stays unapplied — no half-built database).
-    let pending = store
-        .pending_versions()
-        .await?
-        .iter()
-        .any(|v| v == "20261122000007");
+    let pending = store.bucket_migration_pending().await?;
     let env_backend = config.storage_backend.clone();
     let bootstrap_backend = i0721_server::blob_selection::bootstrap_backend_for_startup(
         env_backend.as_deref(),

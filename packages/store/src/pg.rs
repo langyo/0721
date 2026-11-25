@@ -105,6 +105,29 @@ impl PgStore {
     ///
     /// [`StoreError::Db`] when the bookkeeping table cannot be read.
     pub async fn applied_versions(&self) -> Result<Vec<String>, StoreError> {
+        // A FRESH database has no bookkeeping table yet — the runner
+        // creates it as the first step of `up`. Probe before querying so
+        // the startup gate reads "nothing applied" there instead of a raw
+        // missing-relation error.
+        let probe = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT (to_regclass('seaql_migrations') IS NULL)::text".to_owned(),
+            params: vec![],
+        };
+        let reply = self.executor.execute(&probe).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db(
+                "expected a row from the bookkeeping-table probe".to_owned(),
+            ));
+        };
+        let absent = rows
+            .first()
+            .and_then(|row| row.first())
+            .map(|value| matches!(value, Value::Text(text) if text == "true"))
+            .unwrap_or(false);
+        if absent {
+            return Ok(Vec::new());
+        }
         let cmd = Command::Sql {
             dialect: lacrymira::Dialect::Postgres,
             text: "SELECT version FROM seaql_migrations".to_owned(),
@@ -126,19 +149,23 @@ impl PgStore {
             .collect())
     }
 
-    /// The versions of [`crate::migrations`] NOT yet recorded on this
-    /// database (the pending set, R-U ②).
+    /// Whether the bucket migration (0007) still needs to run (R-U ②).
+    ///
+    /// `migrations(None)` deliberately omits 0007 — its SQL is only
+    /// complete once the deployment facts are passed in — so the pending
+    /// set must be asked about 0007 directly. On a fresh database the
+    /// bookkeeping table does not exist yet; [`Self::applied_versions`]
+    /// reads that as an empty applied set, which makes 0007 (and every
+    /// other migration) pending.
     ///
     /// # Errors
     ///
     /// [`StoreError::Db`] when the bookkeeping table cannot be read.
-    pub async fn pending_versions(&self) -> Result<Vec<String>, StoreError> {
+    pub async fn bucket_migration_pending(&self) -> Result<bool, StoreError> {
         let applied = self.applied_versions().await?;
-        Ok(migrations(None)
-            .into_iter()
-            .filter(|migration| !applied.contains(&migration.version))
-            .map(|migration| migration.version)
-            .collect())
+        Ok(!applied
+            .iter()
+            .any(|v| v == crate::migrate::BUCKET_MIGRATION_VERSION))
     }
 
     /// Execute a rows-producing command and decode every row into the
