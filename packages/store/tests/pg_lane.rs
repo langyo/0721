@@ -1657,6 +1657,17 @@ async fn second_ipfs_bucket_is_refused() {
                 .await
         })
     }
+    // The lane database is SHARED: drop any ipfs buckets a previous run
+    // left behind (the partial unique index is table-wide).
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM storage_buckets WHERE backend = 'ipfs'".to_owned(),
+            params: vec![],
+        })
+        .await
+        .expect("clear the lane's ipfs rows");
     let _ = insert(&store, "ipfs-first")
         .await
         .expect("first ipfs bucket");
@@ -2071,9 +2082,16 @@ async fn plant_key(store: &PgStore, user_id: uuid::Uuid, name: &str, scopes: &st
 async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
     let Some(store) = db().await else { return };
     // Two buckets: `open` carries grant_on_signup, `closed` does not.
+    // SLUG-UNIQUE slugs (one lane database shared by the whole suite).
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let slug_open = format!("open-{suffix}");
+    let slug_closed = format!("closed-{suffix}");
     let open = uuid::Uuid::new_v4();
     let closed = uuid::Uuid::new_v4();
-    for (id, slug, signup) in [(open, "open", true), (closed, "closed", false)] {
+    for (id, slug, signup) in [
+        (open, slug_open.clone(), true),
+        (closed, slug_closed.clone(), false),
+    ] {
         store
             .executor
             .execute(&lacrymira::Command::Sql {
@@ -2167,50 +2185,93 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
         }
     };
 
+    // The ORACLE: snapshot the bucket slugs visible NOW (before the
+    // migration) and compute the R-A evaluation in the test itself, so
+    // any residual lane data is accounted for instead of assumed away.
+    let all_buckets: Vec<(String, bool)> = {
+        let reply = store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "SELECT slug, grant_on_signup FROM storage_buckets ORDER BY slug".to_owned(),
+                params: vec![],
+            })
+            .await
+            .unwrap();
+        let lacrymira::Reply::Rows { rows, .. } = reply else { panic!("rows") };
+        rows.iter()
+            .map(|row| {
+                let slug = match &row[0] {
+                    lacrymira::Value::Text(t) => t.trim_matches('"').to_owned(),
+                    other => panic!("text expected, got {other:?}"),
+                };
+                let signup = match &row[1] {
+                    lacrymira::Value::Bool(b) => *b,
+                    lacrymira::Value::Text(t) => t.trim() == "true",
+                    other => panic!("bool expected, got {other:?}"),
+                };
+                (slug, signup)
+            })
+            .collect()
+    };
     run_migration_0008(&store).await;
 
-    // The oracle, computed by hand (R-A's evaluation).
-    let expected_a: Vec<String> = vec!["closed".to_owned()]; // deny row kills open
-    let expected_b: Vec<String> = vec!["closed".to_owned(), "open".to_owned()]; // admin = all buckets (slug order)
-    let mut expected_c: Vec<String> = vec!["open".to_owned()]; // signup only
+    // The ORACLE (R-A's evaluation, computed in the test itself so any
+    // residual lane data is accounted for, never assumed away):
+    // admin = every bucket; an explicit deny row excludes its bucket; a
+    // write row includes it; otherwise the bucket's signup default.
+    let mut explicit = std::collections::HashMap::new();
+    // member_a: deny on `open`, write on `closed` (the planted rows).
+    explicit.insert((member_a.id, open), false);
+    explicit.insert((member_a.id, closed), true);
+    let expected_for = |user_id: uuid::Uuid, is_admin: bool| -> Vec<String> {
+        all_buckets
+            .iter()
+            .filter(|(slug, signup)| {
+                if is_admin {
+                    return true;
+                }
+                let (bucket_row, _) = {
+                    // The planted rows carry the ids: recover from the
+                    // two slugs the test minted.
+                    if slug.starts_with("open-") {
+                        (Some(open), true)
+                    } else if slug.starts_with("closed-") {
+                        (Some(closed), true)
+                    } else {
+                        (None, false)
+                    }
+                };
+                match bucket_row.and_then(|id| explicit.get(&(user_id, id))) {
+                    Some(&bit) => bit,
+                    None => *signup,
+                }
+            })
+            .map(|(slug, _)| slug.clone())
+            .collect()
+    };
+    let expected_a = expected_for(member_a.id, false);
+    let expected_b = expected_for(admin_b.id, true);
+    let expected_c = expected_for(member_c.id, false);
 
     let mut got_a = key_buckets_of(&store, key_a).await;
     let mut got_b = key_buckets_of(&store, key_b).await;
     let mut got_c = key_buckets_of(&store, key_c).await;
     let _ = bootstrap;
-    // The bootstrap bucket's slug is `bootstrap-local`, also signup-open:
-    // append it to the member expectations (it IS part of the oracle).
-    let bootstrap_slug_reply = store
-        .executor
-        .execute(&lacrymira::Command::Sql {
-            dialect: lacrymira::Dialect::Postgres,
-            text: "SELECT slug FROM storage_buckets WHERE id = $1".to_owned(),
-            params: vec![lacrymira::Value::Uuid(bootstrap.to_string())],
-        })
-        .await
-        .unwrap();
-    let lacrymira::Reply::Rows { rows, .. } = bootstrap_slug_reply else {
-        panic!("rows")
-    };
-    let bootstrap_slug = match &rows[0][0] {
-        lacrymira::Value::Text(t) => t.clone(),
-        other => panic!("text expected, got {other:?}"),
-    };
-    let bootstrap_slug = bootstrap_slug.trim_matches('"').to_owned();
-    expected_c.push(bootstrap_slug.clone());
     got_a.sort();
     got_b.sort();
     got_c.sort();
-    let mut expected_a_sorted = expected_a.clone();
-    let mut expected_b_sorted = expected_b.clone();
-    expected_a_sorted.sort();
-    expected_b_sorted.sort();
+    let mut sorted = |mut vec: Vec<String>| {
+        vec.sort();
+        vec
+    };
     assert_eq!(
-        got_a, expected_a_sorted,
+        got_a,
+        sorted(expected_a.clone()),
         "member A: the deny row excludes the signup bucket"
     );
-    assert_eq!(got_b, expected_b_sorted, "admin B: all buckets");
-    assert_eq!(got_c, expected_c, "member C: exactly the signup buckets");
+    assert_eq!(got_b, sorted(expected_b.clone()), "admin B: all buckets");
+    assert_eq!(got_c, sorted(expected_c.clone()), "member C: exactly the signup buckets");
 
     // The DEMOTED-admin face: demote B, then re-run — B's key ALREADY
     // carries an array, so the snapshot stays the demotion-time answer.
@@ -2231,6 +2292,17 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
     );
 
     // cleanup
+    for slug in [slug_open, slug_closed] {
+        store
+            .executor
+            .execute(&lacrymira::Command::Sql {
+                dialect: lacrymira::Dialect::Postgres,
+                text: "DELETE FROM storage_buckets WHERE slug = $1".to_owned(),
+                params: vec![lacrymira::Value::Text(slug)],
+            })
+            .await
+            .unwrap();
+    }
     for id in [key_a, key_b, key_c] {
         store
             .executor
@@ -2245,17 +2317,7 @@ async fn k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
     cleanup_user(&store, member_a.id).await;
     cleanup_user(&store, admin_b.id).await;
     cleanup_user(&store, member_c.id).await;
-    for id in [open, closed] {
-        store
-            .executor
-            .execute(&lacrymira::Command::Sql {
-                dialect: lacrymira::Dialect::Postgres,
-                text: "DELETE FROM storage_buckets WHERE id = $1".to_owned(),
-                params: vec![lacrymira::Value::Uuid(id.to_string())],
-            })
-            .await
-            .unwrap();
-    }
+
 }
 
 /// MUT:M-P2A8 — dropping the `revoked_at IS NULL` guard makes 0008
