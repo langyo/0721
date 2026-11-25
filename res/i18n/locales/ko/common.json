@@ -48,7 +48,9 @@
     "uploading": "{name} 업로드 중",
     "uploadFailed": "업로드 실패",
     "deleteConfirm": "이 파일을 삭제할까요? 공개 링크도 함께무효화합니다.",
-    "openOriginal": "원본 열기"
+    "openOriginal": "원본 열기",
+    "uploadBucket": "업로드 버킷",
+    "uploadDefaultBucket": "기본값(관리자 설정)"
   },
   "users": {
     "title": "사용자",
@@ -148,7 +150,10 @@
     "kind": "종류",
     "kindFolder": "폴더",
     "details": "세부 정보",
-    "pickHint": "항목을 선택하여 자세히 보기"
+    "pickHint": "항목을 선택하여 자세히 보기",
+    "noReadPermission": "읽기 권한 없음",
+    "bucketRoot": "버킷 루트",
+    "bucketAll": "모든 버킷"
   },
   "keys": {
     "title": "API 키",
@@ -180,7 +185,12 @@
     "edit": "API 키 편집",
     "updated": "API 키가 업데이트되었습니다",
     "opsRequired": "권한을 하나 이상 선택하세요",
-    "expiryFuture": "만료는 현재보다 나중이어야 합니다"
+    "expiryFuture": "만료는 현재보다 나중이어야 합니다",
+    "buckets": "버킷",
+    "bucketsHint": "아무것도 선택하지 않으면 명시적으로 버킷 없음이 됩니다. 선택 없이 제출하면 서버가 현재 권한을 스냅샷합니다.",
+    "noBuckets": "버킷 없음",
+    "noBucketsAvailable": "등록된 버킷이 없습니다 — 버킷이 생길 때까지 이 키에는 버킷이 없습니다.",
+    "noBucketsPicked": "선택한 버킷 없음"
   },
   "menu": {
     "account": "계정"

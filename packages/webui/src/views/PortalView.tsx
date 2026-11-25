@@ -5,6 +5,7 @@ import {
   HkIconButton,
   HkMasterDetail,
   HkProgressRing,
+  HkSelect,
   useToast,
 } from "@celestia-island/hikari";
 import { ExternalLink, Copy, FileArchive, FileAudio, FileText, FileVideo, Folder, Images, Trash2 } from "lucide-vue-next";
@@ -12,6 +13,7 @@ import { computed, h, defineComponent, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import * as api from "@/api";
+import { listBuckets, type StorageBucket } from "@/api/buckets";
 import { usePageCreateAction } from "@/composables/usePageCreateAction";
 import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { FileDto } from "@/types";
@@ -59,6 +61,39 @@ export default defineComponent({
     const loadError = ref<string | null>(null);
 
     const fileInput = ref<HTMLInputElement | null>(null);
+
+    // ── the upload bucket dropdown (P2a / R-I) ─────────────────────────
+    //
+    // The actor's READABLE buckets from the visibility-scoped registry
+    // list; the picked slug rides the upload as `?bucket=` (the server's
+    // `resolve_upload_bucket` resolves/refuses — R-I's single outlet).
+    // An EMPTY selection sends NO param: the server resolves the default
+    // (draft §9: the default is the admin's setting, never shown as
+    // "the first bucket").
+    const uploadBuckets = ref<StorageBucket[]>([]);
+    const uploadBucket = ref<string>("");
+
+    const uploadBucketOptions = computed(() => [
+      { value: "", label: t("common.portal.uploadDefaultBucket") },
+      ...uploadBuckets.value.map((b) => ({
+        value: b.slug,
+        label:
+          b.my_access && !b.my_access.read
+            ? `${b.slug} — ${t("common.files.noReadPermission")}`
+            : b.slug,
+      })),
+    ]);
+
+    async function loadUploadBuckets() {
+      try {
+        uploadBuckets.value = (await listBuckets()).buckets;
+      } catch {
+        // A failed registry read degrades to the default-only dropdown —
+        // the server still resolves (or refuses) on the wire.
+        uploadBuckets.value = [];
+      }
+    }
+    onMounted(() => void loadUploadBuckets());
 
     interface UploadEntry {
       id: number;
@@ -112,7 +147,7 @@ export default defineComponent({
           .uploadFile(file, (fraction) => {
             entry.progress = fraction;
             uploads.value = [...uploads.value];
-          })
+          }, uploadBucket.value || undefined)
           .then(() => {
             uploads.value = uploads.value.filter((u) => u.id !== entry.id);
             void load(true);
@@ -205,8 +240,23 @@ export default defineComponent({
 
     return () => (
       <section class="portal">
-        {/* The upload picker: hidden input driven by the action-bar plus. */}
+        {/* The upload picker: hidden input driven by the action-bar plus.
+            The bucket dropdown rides ABOVE the grid (P2a / R-I): the
+            picked slug goes as `?bucket=`, empty = the server default. */}
         <input ref={fileInput} type="file" multiple hidden data-testid="upload-input" onChange={onFilesPicked} />
+
+        {uploadBucketOptions.value.length > 1 ? (
+          <div class="upload-bucket" data-testid="upload-bucket-picker">
+            <HkSelect
+              modelValue={uploadBucket.value}
+              options={uploadBucketOptions.value}
+              panelTitle={t("common.portal.uploadBucket")}
+              placeholder={t("common.portal.uploadDefaultBucket")}
+              data-testid="upload-bucket-select"
+              onUpdate:modelValue={(v: string) => (uploadBucket.value = v)}
+            />
+          </div>
+        ) : null}
 
         {loading.value && files.value.length === 0 ? (
           <HkEmptyState loading boxed title={t("common.status.loading")} />

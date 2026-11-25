@@ -48,7 +48,9 @@
     "uploading": "Uploading {name}",
     "uploadFailed": "Upload failed",
     "deleteConfirm": "Delete this file? Its public link stops working.",
-    "openOriginal": "Open original"
+    "openOriginal": "Open original",
+    "uploadBucket": "Upload to bucket",
+    "uploadDefaultBucket": "Default (admin-set)"
   },
   "users": {
     "title": "Users",
@@ -148,7 +150,10 @@
     "kind": "Kind",
     "kindFolder": "Folder",
     "details": "Details",
-    "pickHint": "Select an item to inspect it"
+    "pickHint": "Select an item to inspect it",
+    "noReadPermission": "no read permission",
+    "bucketRoot": "Bucket root",
+    "bucketAll": "All buckets"
   },
   "keys": {
     "title": "API Keys",
@@ -180,7 +185,12 @@
     "edit": "Edit API key",
     "updated": "API key updated",
     "opsRequired": "Select at least one permission",
-    "expiryFuture": "Expiry must be in the future"
+    "expiryFuture": "Expiry must be in the future",
+    "buckets": "Buckets",
+    "bucketsHint": "Empty selection = no buckets (explicit). Leave this dialog without picking to let the server snapshot the current grants.",
+    "noBuckets": "no buckets",
+    "noBucketsAvailable": "No buckets registered — the key will have none until one exists.",
+    "noBucketsPicked": "no buckets picked"
   },
   "menu": {
     "account": "Account"

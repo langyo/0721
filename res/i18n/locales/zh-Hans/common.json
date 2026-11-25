@@ -48,7 +48,9 @@
     "uploading": "正在上传 {name}",
     "uploadFailed": "上传失败",
     "deleteConfirm": "删除这个文件？公开链接将随之失效。",
-    "openOriginal": "查看原图"
+    "openOriginal": "查看原图",
+    "uploadBucket": "上传到桶",
+    "uploadDefaultBucket": "默认（管理员设定）"
   },
   "users": {
     "title": "用户",
@@ -148,7 +150,10 @@
     "kind": "类型",
     "kindFolder": "文件夹",
     "details": "详情",
-    "pickHint": "选择一项以查看详情"
+    "pickHint": "选择一项以查看详情",
+    "noReadPermission": "无读取权限",
+    "bucketRoot": "桶根目录",
+    "bucketAll": "全部桶"
   },
   "keys": {
     "title": "API 密钥",
@@ -180,7 +185,12 @@
     "edit": "编辑 API 密钥",
     "updated": "API 密钥已更新",
     "opsRequired": "请至少选择一项权限",
-    "expiryFuture": "过期时间必须晚于现在"
+    "expiryFuture": "过期时间必须晚于现在",
+    "buckets": "桶",
+    "bucketsHint": "不勾选任何桶 = 显式无桶。打开对话框后不做选择提交，则由服务器快照当前授权。",
+    "noBuckets": "无桶",
+    "noBucketsAvailable": "尚未注册任何桶——桶存在前此 key 将没有桶。",
+    "noBucketsPicked": "未选择任何桶"
   },
   "menu": {
     "account": "账户"

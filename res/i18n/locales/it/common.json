@@ -48,7 +48,9 @@
     "uploading": "Caricamento di {name}",
     "uploadFailed": "Caricamento non riuscito",
     "deleteConfirm": "Eliminare questo file? Il link pubblico smetterà di funzionare.",
-    "openOriginal": "Apri originale"
+    "openOriginal": "Apri originale",
+    "uploadBucket": "Caricare nel bucket",
+    "uploadDefaultBucket": "Predefinito (impostato dall'admin)"
   },
   "users": {
     "title": "Utenti",
@@ -148,7 +150,10 @@
     "kind": "Tipo",
     "kindFolder": "Cartella",
     "details": "Dettagli",
-    "pickHint": "Seleziona un elemento per ispezionarlo"
+    "pickHint": "Seleziona un elemento per ispezionarlo",
+    "noReadPermission": "senza permesso di lettura",
+    "bucketRoot": "Radice del bucket",
+    "bucketAll": "Tutti i bucket"
   },
   "keys": {
     "title": "Chiavi API",
@@ -180,7 +185,12 @@
     "edit": "Modifica chiave API",
     "updated": "Chiave API aggiornata",
     "opsRequired": "Seleziona almeno un'autorizzazione",
-    "expiryFuture": "La scadenza deve essere nel futuro"
+    "expiryFuture": "La scadenza deve essere nel futuro",
+    "buckets": "Bucket",
+    "bucketsHint": "Nessuna selezione = esplicitamente nessun bucket. Salvare senza selezionare congela i permessi attuali sul server.",
+    "noBuckets": "nessun bucket",
+    "noBucketsAvailable": "Nessun bucket registrato — la chiave non ne avrà finché non ne esiste uno.",
+    "noBucketsPicked": "nessun bucket scelto"
   },
   "menu": {
     "account": "Account"

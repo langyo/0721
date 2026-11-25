@@ -48,7 +48,9 @@
     "uploading": "{name} wird hochgeladen",
     "uploadFailed": "Hochladen fehlgeschlagen",
     "deleteConfirm": "Diese Datei löschen? Der öffentliche Link stoppt dann.",
-    "openOriginal": "Original öffnen"
+    "openOriginal": "Original öffnen",
+    "uploadBucket": "In Bucket hochladen",
+    "uploadDefaultBucket": "Standard (vom Admin gesetzt)"
   },
   "users": {
     "title": "Benutzer",
@@ -148,7 +150,10 @@
     "kind": "Art",
     "kindFolder": "Ordner",
     "details": "Details",
-    "pickHint": "Wähle ein Element, um es anzusehen"
+    "pickHint": "Wähle ein Element, um es anzusehen",
+    "noReadPermission": "keine Leseberechtigung",
+    "bucketRoot": "Bucket-Wurzel",
+    "bucketAll": "Alle Buckets"
   },
   "keys": {
     "title": "API-Schlüssel",
@@ -180,7 +185,12 @@
     "edit": "API-Schlüssel bearbeiten",
     "updated": "API-Schlüssel aktualisiert",
     "opsRequired": "Wählen Sie mindestens eine Berechtigung",
-    "expiryFuture": "Der Ablauf muss in der Zukunft liegen"
+    "expiryFuture": "Der Ablauf muss in der Zukunft liegen",
+    "buckets": "Buckets",
+    "bucketsHint": "Keine Auswahl = explizit keine Buckets. Ohne Auswahl zu speichern lässt den Server die aktuellen Rechte einfrieren.",
+    "noBuckets": "keine Buckets",
+    "noBucketsAvailable": "Keine Buckets registriert — der Key hat keine, bis einer existiert.",
+    "noBucketsPicked": "keine Buckets gewählt"
   },
   "menu": {
     "account": "Konto"

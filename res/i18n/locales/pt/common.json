@@ -48,7 +48,9 @@
     "uploading": "Enviando {name}",
     "uploadFailed": "Falha no envio",
     "deleteConfirm": "Excluir este arquivo? O link público deixará de funcionar.",
-    "openOriginal": "Abrir original"
+    "openOriginal": "Abrir original",
+    "uploadBucket": "Enviar para o balde",
+    "uploadDefaultBucket": "Por omissão (definido pelo admin)"
   },
   "users": {
     "title": "Usuários",
@@ -148,7 +150,10 @@
     "kind": "Tipo",
     "kindFolder": "Pasta",
     "details": "Detalhes",
-    "pickHint": "Selecione um item para inspecioná-lo"
+    "pickHint": "Selecione um item para inspecioná-lo",
+    "noReadPermission": "sem permissão de leitura",
+    "bucketRoot": "Raiz do balde",
+    "bucketAll": "Todos os baldes"
   },
   "keys": {
     "title": "Chaves de API",
@@ -180,7 +185,12 @@
     "edit": "Editar chave de API",
     "updated": "Chave de API atualizada",
     "opsRequired": "Selecione pelo menos uma permissão",
-    "expiryFuture": "A validade deve estar no futuro"
+    "expiryFuture": "A validade deve estar no futuro",
+    "buckets": "Baldes",
+    "bucketsHint": "Sem seleção = explicitamente sem baldes. Guardar sem selecionar congela as permissões atuais no servidor.",
+    "noBuckets": "sem baldes",
+    "noBucketsAvailable": "Nenhum balde registado — a chave não terá nenhum até que exista um.",
+    "noBucketsPicked": "nenhum balde escolhido"
   },
   "menu": {
     "account": "Conta"

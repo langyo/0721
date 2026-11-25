@@ -48,7 +48,9 @@
     "uploading": "{name} をアップロード中",
     "uploadFailed": "アップロードに失敗しました",
     "deleteConfirm": "このファイルを削除しますか？公開リンクは失効します。",
-    "openOriginal": "オリジナルを開く"
+    "openOriginal": "オリジナルを開く",
+    "uploadBucket": "アップロード先のバケット",
+    "uploadDefaultBucket": "既定（管理者設定）"
   },
   "users": {
     "title": "ユーザー",
@@ -148,7 +150,10 @@
     "kind": "種類",
     "kindFolder": "フォルダー",
     "details": "詳細",
-    "pickHint": "項目を選択して詳細を表示"
+    "pickHint": "項目を選択して詳細を表示",
+    "noReadPermission": "読み取り権限なし",
+    "bucketRoot": "バケットのルート",
+    "bucketAll": "すべてのバケット"
   },
   "keys": {
     "title": "API キー",
@@ -180,7 +185,12 @@
     "edit": "API キーを編集",
     "updated": "API キーを更新しました",
     "opsRequired": "少なくとも 1 つの権限を選択してください",
-    "expiryFuture": "有効期限は現在より後にしてください"
+    "expiryFuture": "有効期限は現在より後にしてください",
+    "buckets": "バケット",
+    "bucketsHint": "何も選択しないと明示的にバケットなしになります。選択せずに送信すると、サーバーが現在の許可をスナップショットします。",
+    "noBuckets": "バケットなし",
+    "noBucketsAvailable": "バケットが未登録です — 存在するまでこのキーにはバケットがありません。",
+    "noBucketsPicked": "バケット未選択"
   },
   "menu": {
     "account": "アカウント"

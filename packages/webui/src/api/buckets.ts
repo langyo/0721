@@ -11,6 +11,9 @@ import { wsCall } from "@/composables/useJsonRpc";
  * One registered bucket — the JSON `storage.buckets.list` answers
  * (`StorageBucketRecord` serialized; there is no ts-rs binding for it,
  * so this is the documented wire shape, not a generated import).
+ * `my_access` is the ACTOR'S OWN bits (the visibility-scoped lane the
+ * stage-A method grew for the selector surfaces; Q14 marks visibility
+ * by any bit, `enabled` does not filter).
  */
 export interface StorageBucket {
   id: string;
@@ -24,10 +27,17 @@ export interface StorageBucket {
   enabled: boolean;
   is_bootstrap: boolean;
   created_at: string;
+  my_access?: GrantWrite;
 }
 
 export interface BucketListResponse {
   buckets: StorageBucket[];
+}
+
+/** The actor's readable buckets: visible (Q14 any-bit) but without the
+ *  read bit — these stay in the selectors marked「无读取权限」. */
+export function readableBuckets(rows: StorageBucket[]): StorageBucket[] {
+  return rows.filter((b) => b.my_access?.read === true);
 }
 
 export function listBuckets(): Promise<BucketListResponse> {

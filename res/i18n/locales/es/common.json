@@ -48,7 +48,9 @@
     "uploading": "Subiendo {name}",
     "uploadFailed": "Error al subir",
     "deleteConfirm": "¿Eliminar este archivo? Su enlace público dejará de funcionar.",
-    "openOriginal": "Abrir original"
+    "openOriginal": "Abrir original",
+    "uploadBucket": "Subir al cubo",
+    "uploadDefaultBucket": "Por defecto (fijado por admin)"
   },
   "users": {
     "title": "Usuarios",
@@ -148,7 +150,10 @@
     "kind": "Tipo",
     "kindFolder": "Carpeta",
     "details": "Detalles",
-    "pickHint": "Selecciona un elemento para verlo"
+    "pickHint": "Selecciona un elemento para verlo",
+    "noReadPermission": "sin permiso de lectura",
+    "bucketRoot": "Raíz del cubo",
+    "bucketAll": "Todos los cubos"
   },
   "keys": {
     "title": "Claves API",
@@ -180,7 +185,12 @@
     "edit": "Editar clave API",
     "updated": "Clave API actualizada",
     "opsRequired": "Selecciona al menos un permiso",
-    "expiryFuture": "La caducidad debe ser futura"
+    "expiryFuture": "La caducidad debe ser futura",
+    "buckets": "Cubos",
+    "bucketsHint": "Sin selección = explícitamente sin cubos. Guardar sin seleccionar congela los permisos actuales en el servidor.",
+    "noBuckets": "sin cubos",
+    "noBucketsAvailable": "No hay cubos registrados — la clave no tendrá ninguno hasta que exista uno.",
+    "noBucketsPicked": "ningún cubo elegido"
   },
   "menu": {
     "account": "Cuenta"

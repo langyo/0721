@@ -48,7 +48,9 @@
     "uploading": "جارٍ رفع {name}",
     "uploadFailed": "فشل الرفع",
     "deleteConfirm": "حذف هذا الملف؟ سيتوقف الرابط العام عن العمل.",
-    "openOriginal": "فتح الأصل"
+    "openOriginal": "فتح الأصل",
+    "uploadBucket": "الرفع إلى الحاوية",
+    "uploadDefaultBucket": "الافتراضي (بإعداد المشرف)"
   },
   "users": {
     "title": "المستخدمون",
@@ -148,7 +150,10 @@
     "kind": "النوع",
     "kindFolder": "مجلد",
     "details": "التفاصيل",
-    "pickHint": "اختر عنصرًا لعرض تفاصيله"
+    "pickHint": "اختر عنصرًا لعرض تفاصيله",
+    "noReadPermission": "بلا إذن قراءة",
+    "bucketRoot": "جذر الحاوية",
+    "bucketAll": "كل الحاويات"
   },
   "keys": {
     "title": "مفاتيح API",
@@ -180,7 +185,12 @@
     "edit": "تحرير مفتاح API",
     "updated": "تم تحديث مفتاح API",
     "opsRequired": "اختر إذنًا واحدًا على الأقل",
-    "expiryFuture": "يجب أن يكون الانتهاء في المستقبل"
+    "expiryFuture": "يجب أن يكون الانتهاء في المستقبل",
+    "buckets": "الحاويات",
+    "bucketsHint": "بدون تحديد = بلا حاويات صراحةً. الحفظ دون تحديد يجمّد الأذونات الحالية على الخادم.",
+    "noBuckets": "بلا حاويات",
+    "noBucketsAvailable": "لا توجد حاويات مسجّلة — لن يكون لهذا المفتاح حاويات حتى تُنشأ واحدة.",
+    "noBucketsPicked": "لم تُحدد حاويات"
   },
   "menu": {
     "account": "الحساب"
