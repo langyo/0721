@@ -5,6 +5,7 @@
  * (`transport/`), which authenticates with the same cookie.
  */
 import type {
+  AccountMethods,
   AuthSession,
   CreateUserRequest,
   FileDto,
@@ -100,6 +101,17 @@ export function putSiteConfig(strict: SiteConfigStrict): Promise<void> {
 /** The public login-page descriptor (no secret material). */
 export function loginMethods(): Promise<LoginMethods> {
   return apiFetch<LoginMethods>("/api/v1/auth/login-methods");
+}
+
+/** The account-first ladder's first step: what sign-in factors the named
+ *  account has. Public (no credential yet) and rate-limited exactly like
+ *  `login`; the server answers unknown names with a password factor so the
+ *  call is not an enumeration oracle. */
+export function accountMethods(username: string): Promise<AccountMethods> {
+  return apiFetch<AccountMethods>("/api/v1/auth/account-methods", {
+    method: "POST",
+    body: { username },
+  });
 }
 
 export function listProviders(): Promise<OAuthProviderPublic[]> {

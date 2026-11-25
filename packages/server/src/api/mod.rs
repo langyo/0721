@@ -21,6 +21,7 @@ pub fn router() -> Router<AppState> {
     let files_api = Router::new().route("/", post(files::upload));
     Router::new()
         .route("/auth/login", post(auth::login))
+        .route("/auth/account-methods", post(auth::account_methods))
         .route("/auth/refresh", post(auth::refresh))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/ws-ticket", post(auth::ws_ticket))

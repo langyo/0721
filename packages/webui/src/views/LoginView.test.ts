@@ -4,13 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRouter, createMemoryHistory } from "vue-router";
 
 // The API layer is mocked at module scope: these tests exercise the
-// VIEW's contract (loading state, error surface, redirect), not the
-// network. The mock's login reply carries the real AuthSession shape.
+// VIEW's contract (the account-first ladder, loading state, error
+// surface, redirect), not the network. The mock's replies carry the real
+// generated shapes (AuthSession / AccountMethods).
 const loginMock = vi.fn();
 const loginMethodsMock = vi.fn();
+const accountMethodsMock = vi.fn();
 vi.mock("@/api", () => ({
   login: (...args: unknown[]) => loginMock(...args),
   loginMethods: (...args: unknown[]) => loginMethodsMock(...args),
+  accountMethods: (...args: unknown[]) => accountMethodsMock(...args),
 }));
 vi.mock("@/api/client", () => ({
   ApiError: class ApiError extends Error {
@@ -24,7 +27,7 @@ vi.mock("@/api/client", () => ({
 }));
 
 
-import { HkLoginFlow, HkStatusBar, HkToast, useToast } from "@celestia-island/hikari";
+import { HkAuthChannelList, HkLoginFlow, HkStatusBar, HkToast, useToast } from "@celestia-island/hikari";
 
 import LoginView from "./LoginView";
 import { ApiError } from "@/api/client";
@@ -41,8 +44,15 @@ const session = {
   },
 };
 
+/** The ladder's step-1 answer for an ordinary password account. */
+const PASSWORD_FACTORS = { factors: [{ kind: "password" as const }], password: true };
+
 function typeInto(input: HTMLInputElement, value: string) {
   input.value = value;
+  dispatchInput(input);
+}
+
+function dispatchInput(input: HTMLInputElement) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -83,11 +93,77 @@ async function mountView(query: Record<string, string> = {}) {
   return { wrapper, router };
 }
 
+/**
+ * Drive step 1 (type the account name, submit) and land on step 2.
+ *
+ * Every ladder assertion starts here rather than reaching into the
+ * component's state, so the assertion exercises the same path the user
+ * does. `accountMethodsMock` must already be primed with the answer.
+ */
+async function walkToVerify(wrapper: Awaited<ReturnType<typeof mountView>>["wrapper"], name = "admin") {
+  const inputs = wrapper.findAll("input");
+  expect(inputs.length, "step 1 collects exactly one field").toBe(1);
+  typeInto(inputs[0]!.element as HTMLInputElement, name);
+  await flushPromises();
+  (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
+  await flushPromises();
+  await flushPromises();
+  return wrapper.getComponent(HkLoginFlow);
+}
+
+/** Type the password on the verify step and submit it. */
+async function provePassword(wrapper: Awaited<ReturnType<typeof mountView>>["wrapper"], password: string) {
+  const flow = wrapper.getComponent(HkLoginFlow);
+  expect(flow.props("step"), "the card must be on the verify step").toBe("verify");
+  const field = wrapper.find('input[name="mfa-verify-password"]');
+  expect(field.exists(), "the verify step proves the password in place").toBe(true);
+  typeInto(field.element as HTMLInputElement, password);
+  await flushPromises();
+  (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
+  await flushPromises();
+}
+
+/** The verify step's alternative rows, reduced to the fields the viewer
+ *  reads (the icon is a vnode and never compared). */
+function verifyRows(flow: { props: (name: string) => unknown }) {
+  const rows = flow.props("verifyMethods") as
+    | ReadonlyArray<{ key: string; label: string; disabled?: boolean }>
+    | undefined;
+  return (rows ?? []).map((row) => ({
+    key: row.key,
+    label: row.label,
+    disabled: row.disabled ?? false,
+  }));
+}
+
+/** Capture window.location.href assignments (the OAuth navigations). */
+function watchHref(): { setter: ReturnType<typeof vi.fn>; restore: () => void } {
+  const original = window.location.href;
+  const setter = vi.fn();
+  Object.defineProperty(window.location, "href", {
+    set: (v: string) => setter(v),
+    get: () => original,
+    configurable: true,
+  });
+  return {
+    setter,
+    restore: () =>
+      Object.defineProperty(window.location, "href", {
+        value: original,
+        writable: true,
+        configurable: true,
+      }),
+  };
+}
+
 beforeEach(() => {
   loginMock.mockReset();
   loginMethodsMock.mockReset();
+  accountMethodsMock.mockReset();
   // The login-methods descriptor: the classic password-on shape.
   loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
+  // The ladder's step-1 answer: an ordinary password account.
+  accountMethodsMock.mockResolvedValue(PASSWORD_FACTORS);
 });
 
 afterEach(() => {
@@ -99,16 +175,46 @@ afterEach(() => {
   localStorage.clear();
 });
 
-describe("LoginView", () => {
-  it("submits the credentials and redirects on success", async () => {
+describe("LoginView account-first ladder", () => {
+  it("collects only the account name on step 1 and probes the account", async () => {
+    const { wrapper } = await mountView();
+    // MUT:password-field — the opening card must not ask for a password:
+    // account-first means the credential is proven AFTER the factors are
+    // known. Re-flipping `passwordField` on the channel reddens here.
+    const inputs = wrapper.findAll("input");
+    expect(inputs.length).toBe(1);
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      key: string;
+      mode: string;
+      passwordField?: boolean;
+    }>;
+    expect(channels[0]).toMatchObject({
+      key: "account",
+      mode: "credentials",
+      passwordField: false,
+    });
+
+    const flow = await walkToVerify(wrapper);
+    // The probe carried the typed name and NOTHING else.
+    expect(accountMethodsMock).toHaveBeenCalledWith("admin");
+    // …and the card moved to the verify step.
+    expect(flow.props("step")).toBe("verify");
+    expect(flow.props("verifyAccountName")).toBe("admin");
+    // MUT:verify-factors — the password factor is what the card proves;
+    // an empty list renders a picker-less, proof-less card.
+    expect(flow.props("verifyFactors")).toEqual(["password"]);
+    // No provider is linked to this account, so no alternative row.
+    expect(flow.props("verifyMethods")).toEqual([]);
+  });
+
+  it("proves the password on step 2 and redirects on success", async () => {
     loginMock.mockResolvedValue(session);
     const { wrapper, router } = await mountView();
-    const inputs = wrapper.findAll("input");
-    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
-    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
-    await flushPromises();
-    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
-    await flushPromises();
+    await walkToVerify(wrapper);
+    await provePassword(wrapper, "secret");
+
+    // The name the ladder was opened for is the one submitted — never a
+    // re-typed or empty value.
     expect(loginMock).toHaveBeenCalledWith({ username: "admin", password: "secret" });
     // The router left /login…
     expect(router.currentRoute.value.path).toBe("/");
@@ -119,15 +225,109 @@ describe("LoginView", () => {
     // (the locale preference is legitimate storage; session keys are not)
   });
 
-  it("surfaces the localized invalid-credentials error on 401", async () => {
-    loginMock.mockRejectedValue(new ApiError(401, "invalid credentials"));
+  it("offers the account's linked providers as step-2 alternatives", async () => {
+    // The state the endpoint exists for: an OAuth-only account. Its only
+    // way in is the provider row, and the password factor must NOT appear
+    // (there is no hash to prove).
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
+    });
+    accountMethodsMock.mockResolvedValue({
+      factors: [{ kind: "oauth", provider: "erp", label: "Celestia ID" }],
+      password: true,
+    });
+    const { wrapper } = await mountView();
+    const flow = await walkToVerify(wrapper, "sso-only");
+    expect(flow.props("step")).toBe("verify");
+    // MUT:oauth-only-ladder — an OAuth-only account must not be handed a
+    // password field it cannot use.
+    expect(flow.props("verifyFactors")).toEqual([]);
+
+    // MUT:verify-rows — the account's provider rides hikari's own
+    // verify-step row lane (`verifyMethods`), which renders the standard
+    // full-width row inside the card; an empty list must render nothing.
+    expect(verifyRows(flow)).toEqual([{ key: "erp", label: "Celestia ID", disabled: false }]);
+    expect(flow.props("verifyMethodsDivider")).toBe("or continue with");
+    const rows = wrapper.findAll(".hk-auth-channel-row");
+    expect(rows.map((row) => row.text().trim())).toEqual(["Celestia ID"]);
+  });
+
+  it("keeps BOTH step-2 paths for an account that has a password and a provider", async () => {
+    // "Pick one of the ways through": the account announces a password
+    // AND a linked provider, so the card proves the password and the row
+    // leaves for the provider. Either one finishes the login.
+    accountMethodsMock.mockResolvedValue({
+      factors: [
+        { kind: "password" },
+        { kind: "oauth", provider: "erp", label: "Celestia ID" },
+      ],
+      password: true,
+    });
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
+    });
+    const { wrapper } = await mountView();
+    const flow = await walkToVerify(wrapper);
+    expect(flow.props("verifyFactors")).toEqual(["password"]);
+    // Both paths in one card: the password field the card proves, and the
+    // provider row beside it. The divider states that either one finishes
+    // the sign-in ("or continue with…").
+    expect(wrapper.find('input[name="mfa-verify-password"]').exists()).toBe(true);
+    const rows = wrapper.findAll(".hk-auth-channel-row");
+    expect(rows.map((row) => row.text().trim())).toEqual(["Celestia ID"]);
+    expect(wrapper.getComponent(HkLoginFlow).props("verifyMethodsDivider")).toBe("or continue with");
+  });
+
+  it("disables a step-2 row whose provider the deployment no longer offers", async () => {
+    accountMethodsMock.mockResolvedValue({
+      factors: [{ kind: "oauth", provider: "gone", label: "gone" }],
+      password: true,
+    });
+    const { wrapper } = await mountView();
+    const flow = await walkToVerify(wrapper, "sso-only");
+    // The binding is real; the flow entry would refuse, so the row must
+    // not look live.
+    expect(verifyRows(flow)).toEqual([{ key: "gone", label: "gone", disabled: true }]);
+    const row = wrapper.find(".hk-auth-channel-row");
+    expect((row.element as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("surfaces an unreachable probe and stays on step 1", async () => {
+    accountMethodsMock.mockRejectedValue(new Error("network unreachable"));
     const { wrapper } = await mountView();
     const inputs = wrapper.findAll("input");
     typeInto(inputs[0]!.element as HTMLInputElement, "admin");
-    typeInto(inputs[1]!.element as HTMLInputElement, "wrong");
     await flushPromises();
     (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
     await flushPromises();
+    await vi.waitFor(() => {
+      expect(document.querySelector(".hk-toast-message")?.textContent).toBe("network unreachable");
+    });
+    // Still on step 1 — the ladder never opens without an answer.
+    expect(wrapper.getComponent(HkLoginFlow).props("step")).toBe("account");
+    expect(wrapper.find('input[name="mfa-verify-password"]').exists()).toBe(false);
+    // The typed name survives in the field (a retry costs nothing).
+    expect((wrapper.findAll("input")[0]!.element as HTMLInputElement).value).toBe("admin");
+  });
+
+  it("returns to the name field with it still filled when the verify step goes back", async () => {
+    const { wrapper } = await mountView();
+    const flow = await walkToVerify(wrapper);
+    flow.vm.$emit("verify-back");
+    await flushPromises();
+    expect(flow.props("step")).toBe("account");
+    const inputs = wrapper.findAll("input");
+    expect(inputs.length).toBe(1);
+    expect((inputs[0]!.element as HTMLInputElement).value).toBe("admin");
+  });
+
+  it("surfaces the localized invalid-credentials error on a 401", async () => {
+    loginMock.mockRejectedValue(new ApiError(401, "invalid credentials"));
+    const { wrapper } = await mountView();
+    await walkToVerify(wrapper);
+    await provePassword(wrapper, "wrong");
     const toastText = await vi.waitFor(() => {
       const el = document.querySelector(".hk-toast-message");
       expect(el).toBeTruthy();
@@ -139,15 +339,11 @@ describe("LoginView", () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
-  it("keeps the raw message for non-401 failures", async () => {
+  it("keeps the raw message for non-401 login failures", async () => {
     loginMock.mockRejectedValue(new Error("network unreachable"));
     const { wrapper } = await mountView();
-    const inputs = wrapper.findAll("input");
-    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
-    typeInto(inputs[1]!.element as HTMLInputElement, "pw");
-    await flushPromises();
-    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
-    await flushPromises();
+    await walkToVerify(wrapper);
+    await provePassword(wrapper, "pw");
     await vi.waitFor(() => {
       expect(document.querySelector(".hk-toast-message")?.textContent).toBe("network unreachable");
     });
@@ -189,12 +385,8 @@ describe("LoginView dead state (W4 R2)", () => {
     // read as an untouched page.
     loginMock.mockRejectedValue(new Error(""));
     const { wrapper } = await mountView();
-    const inputs = wrapper.findAll("input");
-    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
-    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
-    await flushPromises();
-    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
-    await flushPromises();
+    await walkToVerify(wrapper);
+    await provePassword(wrapper, "secret");
     const toastText = await vi.waitFor(() => {
       const el = document.querySelector(".hk-toast-message");
       expect(el).toBeTruthy();
@@ -207,12 +399,8 @@ describe("LoginView dead state (W4 R2)", () => {
   it("carries a bare-string rejection", async () => {
     loginMock.mockRejectedValue("rpc timeout");
     const { wrapper } = await mountView();
-    const inputs = wrapper.findAll("input");
-    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
-    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
-    await flushPromises();
-    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
-    await flushPromises();
+    await walkToVerify(wrapper);
+    await provePassword(wrapper, "secret");
     await vi.waitFor(() => {
       expect(document.querySelector(".hk-toast-message")?.textContent).toBe("rpc timeout");
     });
@@ -233,28 +421,50 @@ describe("LoginView dual-mode (family login panel)", () => {
     await flushPromises();
 
     // MUT:peer-lane — Celestia ID is the peer lane (the family's central
-    // sign-in); every other provider is an alternative ROW under the
-    // account card, which is where hikari puts provider names.
+    // sign-in); the account funnel is the first lane. Other providers do
+    // NOT ride the account card as rows any more: with the password on,
+    // the ladder names an account's providers on step 2 (they belong to
+    // THAT account), so a row on step 1 would advertise a method the
+    // typed account may not have.
     const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
       key: string;
       mode: string;
       methods?: Array<{ key: string; label: string }>;
     }>;
     expect(channels).toHaveLength(2);
-    expect(channels[0]).toMatchObject({ key: "password", mode: "credentials" });
+    expect(channels[0]).toMatchObject({ key: "account", mode: "credentials" });
     expect(channels[1]).toMatchObject({ key: "erp", mode: "sso" });
-    // GitHub rides the credentials card as a row, not as a segment.
-    expect(channels[0]!.methods).toEqual([{ key: "gh", label: "GitHub", icon: expect.anything() }]);
+    expect(channels[0]!.methods ?? []).toEqual([]);
 
     // The peer lane's row navigates the whole page to its redirect entry.
-    const hrefSetter = vi.fn();
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: { ...window.location, set href(v: string) { hrefSetter(v); }, get href() { return "http://localhost:3000/"; } },
+    const href = watchHref();
+    try {
+      wrapper.getComponent(HkLoginFlow).vm.$emit("sso-click", "erp");
+      await flushPromises();
+      expect(href.setter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
+    } finally {
+      href.restore();
+    }
+  });
+
+  it("lists the providers on the account card when the kill-switch is off", async () => {
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [{ id: "gh", display_name: "GitHub", type: "builtin:github", icon: null }],
     });
-    wrapper.getComponent(HkLoginFlow).vm.$emit("sso-click", "erp");
+    const { wrapper } = await mountView();
     await flushPromises();
-    expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
+    // The account funnel still opens (it is the ladder), but there is no
+    // password to prove — so the provider rides the card as a row.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      key: string;
+      methods?: Array<{ key: string; label: string }>;
+    }>;
+    expect(channels[0]).toMatchObject({ key: "account" });
+    expect(channels[0]!.methods).toEqual([{ key: "gh", label: "GitHub", icon: expect.anything() }]);
+    // One field, no password: the funnel is the same on both switch states.
+    expect(wrapper.findAll("input").length).toBe(1);
+    expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
   });
 
   it("hides the password form and shows the provider row alone when the kill-switch is off", async () => {
@@ -264,24 +474,55 @@ describe("LoginView dual-mode (family login panel)", () => {
     });
     const { wrapper } = await mountView();
     await flushPromises();
-    // No credential inputs at all — the card is not mounted under a
-    // password-off descriptor (the switch is what mounts it).
-    expect(wrapper.findAll("input").length).toBe(0);
-    // …one full-width provider row instead.
+    // No password input exists anywhere: the account card asks for the
+    // name only, and the password lane is off.
+    expect(wrapper.findAll('input[type="password"]').length).toBe(0);
+    // The peer lane is its own channel; the account card shows no rows
+    // (it has nothing of its own to offer), so switch to the peer tab —
+    // which is exactly where its full-width row lives.
+    const tabs = wrapper.findAll(".hk-tabs-trigger");
+    expect(tabs.map((tab) => tab.text().trim())).toEqual(["Account", "Celestia ID"]);
+    await tabs[1]!.trigger("click");
+    await flushPromises();
     expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
+    // A switch-off password proof would be refused server-side, so the
+    // probe's password answer still renders no password field ON THE PEER
+    // LANE. Back on the account funnel the ladder proves the password it
+    // announced (the server refuses it — that is the 403 copy pinned
+    // below).
+    accountMethodsMock.mockResolvedValue({ factors: [{ kind: "password" }], password: false });
+    await tabs[0]!.trigger("click");
+    await flushPromises();
+    const flow = await walkToVerify(wrapper);
+    expect(flow.props("verifyFactors")).toEqual(["password"]);
+    expect(wrapper.findAll('input[name="mfa-verify-password"]').length).toBe(1);
   });
 
-  it("renders no channel segment group for a single channel (the Celestia-ID-only shape)", async () => {
+  it("renders no channel segment group when the deployment offers exactly one lane", async () => {
     // The standing user complaint: a deployment configured for one
     // sign-in method must not show a segmented switch at all — a lone
-    // segment reads as a broken control.
-    loginMethodsMock.mockResolvedValue({
-      password: false,
-      providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
-    });
+    // segment reads as a broken control. With the password off and a
+    // single erp peer, the account funnel plus the peer are still two
+    // lanes; the lone-lane shape is a password-only deployment.
+    loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
     const { wrapper } = await mountView();
     await flushPromises();
     expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(0);
+    expect(wrapper.getComponent(HkLoginFlow).props("channels")).toHaveLength(1);
+
+    // And the seam stays exactly where hikari draws it: a SECOND lane
+    // brings the segment group back.
+    wrapper.unmount();
+    loginMethodsMock.mockResolvedValue({
+      password: false,
+      providers: [{ id: "gh", display_name: "GitHub", type: "builtin:github", icon: null }],
+    });
+    const again = await mountView();
+    await flushPromises();
+    expect(again.wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim())).toEqual([
+      "Account",
+      "Single sign-on",
+    ]);
   });
 
   it("labels the segments with the PANEL's copy, never the server's provider name", async () => {
@@ -303,7 +544,10 @@ describe("LoginView dual-mode (family login panel)", () => {
     const tabs = wrapper.findAll(".hk-tabs-trigger");
     expect(tabs.length).toBe(2);
     const labels = tabs.map((tab) => tab.text().trim());
-    expect(labels).toEqual(["Password", "Celestia ID"]);
+    // MUT:channel-rename — the account lane is named by the localized
+    // `common.auth.accountChannel` key ("Account" in en), not by the
+    // retired password wording.
+    expect(labels).toEqual(["Account", "Celestia ID"]);
     expect(labels.join(" ")).not.toContain("Acme Corp Internal");
 
     // The row inside the sso card is where the provider name belongs.
@@ -316,8 +560,7 @@ describe("LoginView dual-mode (family login panel)", () => {
 
   it("never renders a raw locale key when a provider type is unknown", async () => {
     // Contract-reachable: the Rust enum is closed at four types today, but
-    // adding a fifth must not put a literal key on a tab. With no password
-    // lane every provider is its own channel — including an unknown one.
+    // adding a fifth must not put a literal key on a tab.
     loginMethodsMock.mockResolvedValue({
       password: false,
       providers: [{ id: "x", display_name: "Mystery IdP", type: "builtin:mystery", icon: null }],
@@ -326,16 +569,18 @@ describe("LoginView dual-mode (family login panel)", () => {
     await flushPromises();
 
     const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
-    // One channel alone → no segment group, but the card's row still names
-    // the destination; nothing may show "common.auth.*".
+    // Two lanes (the funnel + the unknown provider's own lane); no tab
+    // may show a raw "common.auth.*" key, and the row under the funnel is
+    // where the destination's name belongs.
     expect(labels.join(" ")).not.toContain("common.auth.");
     const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
       label?: string;
       buttonLabel?: string;
+      methods?: Array<{ key: string; label: string }>;
     }>;
-    expect(channels).toHaveLength(1);
-    expect(channels[0]!.label).toBe("Single sign-on");   // panel copy, not a key
-    expect(channels[0]!.buttonLabel).toBe("Mystery IdP"); // the row names it
+    expect(channels).toHaveLength(2);
+    expect(channels[0]!.label).toBe("Account"); // panel copy, not a key
+    expect(channels[1]).toMatchObject({ label: "Single sign-on", buttonLabel: "Mystery IdP" });
   });
 
   it("numbers repeated tabs and pins the exact panel copy", async () => {
@@ -356,11 +601,16 @@ describe("LoginView dual-mode (family login panel)", () => {
     await flushPromises();
 
     const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
-    // MUT:ordinal-copy — any change to these two strings reddens here.
-    expect(labels).toEqual(["Single sign-on · 1", "Single sign-on · 2"]);
+    // MUT:ordinal-copy — any change to these three strings reddens here.
+    expect(labels).toEqual(["Account", "Single sign-on · 1", "Single sign-on · 2"]);
     // Still panel copy: neither server name leaks into a tab.
     expect(labels.join(" ")).not.toContain("Keycloak");
     expect(labels.join(" ")).not.toContain("Auth0");
+    // …and both stay reachable as rows under the account card.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      methods?: Array<{ key: string; label: string }>;
+    }>;
+    expect(channels[0]!.methods!.map((m) => m.key)).toEqual(["o1", "o2"]);
   });
 
   it("treats a duplicated peer type as ordinary lanes, not one winner", async () => {
@@ -379,35 +629,30 @@ describe("LoginView dual-mode (family login panel)", () => {
     await flushPromises();
 
     const labels = wrapper.findAll(".hk-tabs-trigger").map((tab) => tab.text().trim());
-    expect(labels).toEqual(["Single sign-on · 1", "Single sign-on · 2"]);
+    expect(labels).toEqual(["Account", "Single sign-on · 1", "Single sign-on · 2"]);
     expect(labels).not.toContain("Celestia ID");
 
     // Both destinations stay reachable, each named on its own row.
     const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
-      buttonLabel?: string;
+      methods?: Array<{ label: string }>;
     }>;
-    expect(channels.map((c) => c.buttonLabel)).toEqual(["Celestia ID", "Acme ERP"]);
+    expect(channels[0]!.methods!.map((m) => m.label)).toEqual(["Celestia ID", "Acme ERP"]);
   });
 
   it("navigates when a provider ROW under the account card is clicked", async () => {
-    // The rows exist again on the password lane; without a working
-    // method-select path they render but do nothing — a regression this
-    // branch shipped once. The assertion is at the DOM row, not at the
-    // emit seam, so neutering the handler body reddens it (an emit-level
-    // assertion stays green through that).
+    // The rows exist again when the password lane is off; without a
+    // working method-select path they render but do nothing — a
+    // regression this branch shipped once. The assertion is at the DOM
+    // row, not at the emit seam, so neutering the handler body reddens it
+    // (an emit-level assertion stays green through that).
     loginMethodsMock.mockResolvedValue({
-      password: true,
+      password: false,
       providers: [{ id: "gh", display_name: "GitHub", type: "builtin:github", icon: null }],
     });
     const { wrapper } = await mountView();
     await flushPromises();
 
-    const hrefSetter = vi.fn();
-    const original = Object.getOwnPropertyDescriptor(window, "location");
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: { ...window.location, set href(v: string) { hrefSetter(v); }, get href() { return "http://localhost:3000/"; } },
-    });
+    const href = watchHref();
     try {
       const row = wrapper.find(".hk-auth-channel-row");
       expect(row.exists(), "the provider must render as a clickable row").toBe(true);
@@ -415,16 +660,16 @@ describe("LoginView dual-mode (family login panel)", () => {
       await flushPromises();
       // MUT:row-handler — emptying onMethodSelect's body leaves the row
       // rendered and clickable but goes nowhere; this assertion catches it.
-      expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/gh");
+      expect(href.setter).toHaveBeenCalledWith("/api/v1/auth/oauth/gh");
     } finally {
-      if (original) Object.defineProperty(window, "location", original);
+      href.restore();
     }
   });
 
   it("grows the segment group only once a second channel exists", async () => {
     // One lane alone stays a segment-less card (hikari's rule: a lone
     // dead segment reads as a broken switch); the account lane plus a
-    // provider is two peers and therefore a switchable group.
+    // peer is two peers and therefore a switchable group.
     loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
     let ctx = await mountView();
     await flushPromises();
@@ -440,13 +685,13 @@ describe("LoginView dual-mode (family login panel)", () => {
     expect(ctx.wrapper.getComponent(HkLoginFlow).props("channels")).toHaveLength(2);
   });
 
-  it("declares the credentials channel as a two-field account+password form", async () => {
+  it("declares the account channel as a name-only, account-first form", async () => {
     loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
     const { wrapper } = await mountView();
     await flushPromises();
     // The channel OBJECT is the contract the panel renders from: flipping
-    // passwordField would silently turn the card into an account-first
-    // funnel, and dropping submitLabel would leave a nameless button.
+    // passwordField back on would silently restore the classic two-field
+    // card, and dropping submitLabel would leave a nameless button.
     const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
       key: string;
       mode: string;
@@ -456,7 +701,7 @@ describe("LoginView dual-mode (family login panel)", () => {
     }>;
     expect(channels.length).toBe(1);
     expect(channels[0]!.mode).toBe("credentials");
-    expect(channels[0]!.passwordField).toBe(true);
+    expect(channels[0]!.passwordField).toBe(false);
     expect(channels[0]!.submitLabel).toBeTruthy();
     expect(channels[0]!.usernameType).toBe("text");
   });
@@ -471,51 +716,60 @@ describe("LoginView dual-mode (family login panel)", () => {
     });
     const { wrapper } = await mountView();
     await flushPromises();
-    // Two redirect-only identities need a chooser. The TABS carry panel
-    // copy (the peer reads "Celestia ID", the other "Single sign-on"), and
-    // each provider's own name stays on its row — never on a tab.
-    expect(wrapper.findAll(".hk-tabs-trigger").length).toBe(2);
+    // Two redirect targets need a chooser: the funnel, the erp peer lane,
+    // and the generic "Single sign-on" lane. Each provider's own name
+    // stays on its ROW — never on a tab.
+    const tabs = wrapper.findAll(".hk-tabs-trigger");
+    // Panel copy on every tab; the ORDER of the two provider lanes is the
+    // descriptor's (the non-peer lane first, the peer appended last).
+    expect(tabs.map((tab) => tab.text().trim()).sort()).toEqual(
+      ["Account", "Celestia ID", "Single sign-on"].sort(),
+    );
+    // The non-peer provider's name rides a row on the ACCOUNT card; the
+    // peer names itself inside its own lane.
     expect(wrapper.findAll(".hk-auth-channel-row").length).toBe(1);
+    expect(wrapper.find(".hk-auth-channel-row").text().trim()).toBe("GitHub");
+    const peerTab = tabs.find((tab) => tab.text().trim() === "Celestia ID")!;
+    await peerTab.trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".hk-auth-channel-row").text().trim()).toBe("Celestia ID");
   });
 });
 
 describe("LoginView sso lane (family panel)", () => {
   it("navigates the whole page from the sso row when the password lane is off", async () => {
-    // The password-off lane has exactly ONE handler — the sso row — so a
-    // wrong URL there would ship silently without this pin.
+    // The password-off lane's provider row is the only handler besides
+    // the funnel, so a wrong URL there would ship silently without this
+    // pin.
     loginMethodsMock.mockResolvedValue({
       password: false,
       providers: [{ id: "erp", display_name: "Celestia ID", type: "builtin:erp", icon: null }],
     });
     const { wrapper } = await mountView();
     await flushPromises();
-    const original = window.location.href;
-    const hrefSetter = vi.fn();
+    // The peer's tab owns the page's only sso row (the account funnel
+    // shows none when it has nothing of its own).
+    await wrapper.findAll(".hk-tabs-trigger")[1]!.trigger("click");
+    await flushPromises();
+    const href = watchHref();
     try {
-      Object.defineProperty(window.location, "href", {
-        set: (v: string) => hrefSetter(v),
-        get: () => original,
-        configurable: true,
-      });
       await wrapper.find(".hk-auth-channel-row").trigger("click");
-      expect(hrefSetter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
+      expect(href.setter).toHaveBeenCalledWith("/api/v1/auth/oauth/erp");
     } finally {
-      Object.defineProperty(window.location, "href", {
-        value: original,
-        writable: true,
-        configurable: true,
-      });
+      href.restore();
     }
   });
 
-  it("falls back to the password lane when the descriptor is unreachable", async () => {
-    // A rejected descriptor must not render a dead page: the classic
-    // card is the fallback (the server still enforces the switch).
+  it("falls back to the account funnel when the descriptor is unreachable", async () => {
+    // A rejected descriptor must not render a dead page: the local default
+    // (password ON, no providers) gives a usable ladder, and the server
+    // still enforces its own switch.
     loginMethodsMock.mockRejectedValue(new Error("boom"));
     const { wrapper } = await mountView();
     await flushPromises();
-    expect(wrapper.findAll("input").length).toBeGreaterThan(0);
+    expect(wrapper.findAll("input").length).toBe(1);
     expect(wrapper.find(".hk-auth-channel-row").exists()).toBe(false);
+    expect(wrapper.getComponent(HkLoginFlow).props("channels")).toHaveLength(1);
   });
 });
 
@@ -523,27 +777,30 @@ describe("LoginView redirect handling", () => {
   it("honours the redirect query after a successful sign-in", async () => {
     loginMock.mockResolvedValue(session);
     const { wrapper, router } = await mountView({ redirect: "/files" });
-    const inputs = wrapper.findAll("input");
-    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
-    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
-    await flushPromises();
-    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
-    await flushPromises();
+    await walkToVerify(wrapper);
+    await provePassword(wrapper, "secret");
     expect(router.currentRoute.value.path).toBe("/files");
   });
 });
 
 describe("LoginView dead state (descriptor offers nothing)", () => {
-  it("renders the guidance when no login method exists", async () => {
+  it("still opens the account funnel rather than a dead page", async () => {
+    // The funnel is unconditional — it is what discovers whether the name
+    // has a password at all — so "no password and no provider" is no
+    // longer a dead end. The guidance copy stays reachable through
+    // HkEmptyState's own path (no channels at all), which the guard below
+    // still proves cannot be rendered accidentally.
     loginMethodsMock.mockResolvedValue({ password: false, providers: [] });
     const { wrapper } = await mountView();
     await flushPromises();
-    // Pin absence with selectors the CURRENT markup emits: the password
-    // lane would mount a form field and the sso lane a provider row, so
-    // either appearing here means the dead-state guard failed.
-    expect(wrapper.findAll("input").length).toBe(0);
+    const flow = wrapper.findComponent(HkLoginFlow);
+    expect(flow.exists()).toBe(true);
+    expect(flow.props("channels")).toHaveLength(1);
+    // Exactly one field (the name) and no provider row: the funnel cannot
+    // turn into the classic two-field card or an SSO-only page here.
+    expect(wrapper.findAll("input").length).toBe(1);
+    expect(wrapper.findAll('input[type="password"]').length).toBe(0);
     expect(wrapper.find(".hk-auth-channel-row").exists()).toBe(false);
-    expect(wrapper.text()).toContain("No login method is available");
   });
 });
 
@@ -552,12 +809,8 @@ describe("LoginView password kill-switch (W4 closing)", () => {
     loginMethodsMock.mockResolvedValue({ password: true, providers: [] });
     loginMock.mockRejectedValue(new ApiError(403, "password login is disabled"));
     const { wrapper } = await mountView();
-    const inputs = wrapper.findAll("input");
-    typeInto(inputs[0]!.element as HTMLInputElement, "admin");
-    typeInto(inputs[1]!.element as HTMLInputElement, "secret");
-    await flushPromises();
-    (wrapper.find(".hk-btn-primary").element as HTMLElement).click();
-    await flushPromises();
+    await walkToVerify(wrapper);
+    await provePassword(wrapper, "secret");
     const toastText = await vi.waitFor(() => {
       const el = document.querySelector(".hk-toast-message");
       expect(el).toBeTruthy();
@@ -570,5 +823,15 @@ describe("LoginView password kill-switch (W4 closing)", () => {
     expect(toastText).toBe("Password login is disabled — pick another sign-in channel.");
     expect(toastTexts().join("\n")).not.toContain("Invalid username");
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+
+  it("refuses to prove a password when the ladder never named an account", async () => {
+    // Defensive seat: `onVerify` submits `accountName`, so an empty value
+    // must refuse rather than POST an empty user name. Reached here by
+    // emitting the verify event before any probe has answered.
+    const { wrapper } = await mountView();
+    wrapper.getComponent(HkLoginFlow).vm.$emit("verify", "password", "secret");
+    await flushPromises();
+    expect(loginMock).not.toHaveBeenCalled();
   });
 });

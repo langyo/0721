@@ -35,11 +35,12 @@
     "failed": "Nome de usuário ou senha inválidos",
     "passwordDisabled": "O login por senha está desativado — escolha outro canal de acesso.",
     "noMethods": "Nenhum método de login disponível — um administrador precisa ativar um provedor ou o login por senha.",
-    "passwordChannel": "Senha",
+    "accountChannel": "Conta",
     "submit": "Entrar",
     "celestiaChannel": "Celestia ID",
     "ssoChannel": "Login único",
-    "orContinue": "ou continuar com"
+    "orContinue": "ou continuar com",
+    "orProvider": "ou continuar com um método vinculado"
   },
   "portal": {
     "title": "Imagens",

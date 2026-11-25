@@ -35,11 +35,12 @@
     "failed": "用戶名或密碼錯誤",
     "passwordDisabled": "密碼登入已停用——請改用其他登入通道。",
     "noMethods": "沒有任何可用的登入方式——需要管理員啟用一個登入提供者或開啟密碼登入。",
-    "passwordChannel": "密碼",
+    "accountChannel": "帳號",
     "submit": "登入",
     "celestiaChannel": "Celestia ID",
     "ssoChannel": "單一登入",
-    "orContinue": "或使用以下方式繼續"
+    "orContinue": "或使用以下方式繼續",
+    "orProvider": "或使用已綁定的方式繼續"
   },
   "portal": {
     "title": "圖片",
