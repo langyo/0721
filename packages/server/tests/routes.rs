@@ -12203,7 +12203,6 @@ async fn private_bucket_thumbnail_follows_the_same_check() {
 #[tokio::test]
 async fn private_media_grant_does_not_leak_through_a_shared_storage_key() {
     let (base_state, _) = test_state().await;
-    let token = login(&base_state, "admin", "admin-password").await;
 
     // A second, PRIVATE bucket whose store holds DIFFERENT bytes at the
     // same key, with a row of ANOTHER owner in it — its row id must
