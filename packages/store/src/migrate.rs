@@ -269,11 +269,11 @@ pub struct BootstrapBucketParams {
 /// `None` omits 0007 entirely — the caller must have already decided
 /// (fail-closed, R-U) that the bucket migration is not pending, and the
 /// runner then simply never sees it.
-#[must_use]
 /// The bucket migration's version — the one the R-U startup gate
 /// asks [`crate::pg::PgStore::bucket_migration_pending`] about.
 pub const BUCKET_MIGRATION_VERSION: &str = "20261122000007";
 
+#[must_use]
 pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
     let mut out = vec![
         Migration::new(
@@ -470,7 +470,7 @@ pub fn migrations(bootstrap: Option<&BootstrapBucketParams>) -> Vec<Migration> {
 /// fixed shape (validated by [`bootstrap_backend_for_startup`]'s caller),
 /// and the location is dollar-quoted as data so an arbitrary env value
 /// cannot break out of the literal.
-fn bootstrap_sql(bootstrap: &BootstrapBucketParams) -> Result<String, String> {
+pub fn bootstrap_sql(bootstrap: &BootstrapBucketParams) -> Result<String, String> {
     bootstrap_sql_statements(bootstrap).map(|statements| statements.join(";\n"))
 }
 
@@ -506,7 +506,7 @@ pub fn validate_bootstrap_location(location: &str) -> Result<(), String> {
 /// `Command::Sql` executes one statement per prepared call and cannot
 /// carry the `DO $$` block inside a multi-command text; the runner's
 /// raw lane splits on the same boundaries).
-fn bootstrap_sql_statements(bootstrap: &BootstrapBucketParams) -> Result<Vec<String>, String> {
+pub fn bootstrap_sql_statements(bootstrap: &BootstrapBucketParams) -> Result<Vec<String>, String> {
     // Fail-closed on a location that cannot ride the `$loc$` quoting:
     // refuse the value rather than emit mis-parsed SQL.
     validate_bootstrap_location(&bootstrap.location)?;
