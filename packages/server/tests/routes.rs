@@ -11105,3 +11105,88 @@ async fn keys_create_over_the_64_bucket_cap_answers_no_buckets() {
 /// MUT:DEF-SET — skipping the bucket-exists check in
 /// `storage.defaults.set` turns the unknown-slug refusal red.
 #[tokio::test]
+async fn storage_defaults_round_trip_and_visibility() {
+    let (state, admin_token) = test_state_with_token().await;
+    plant_bucket(&state, "defaultable", true, false, true).await;
+
+    // An unknown slug refuses before any write.
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "storage.defaults.set",
+        serde_json::json!({"bucket": "no-such-bucket"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32006,
+        "the default must name a REAL bucket: {envelope}"
+    );
+
+    // The round trip: set, then read the SAME slug back.
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "storage.defaults.set",
+        serde_json::json!({"bucket": "defaultable"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let (status, envelope) = rpc(
+        &state,
+        &admin_token,
+        "storage.defaults.get",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(
+        envelope["result"]["bucket"].as_str(),
+        Some("defaultable"),
+        "get reads back the slug set wrote: {envelope}"
+    );
+
+    // A member WITHOUT visibility of the defaultable bucket: the
+    // surface is admin-only (require_admin answers -32005 before any
+    // read), so the slug can never leak through this face — the §7
+    // invisible-answer duty lives on the upload lane (the 404 pin).
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "m".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    let (status, envelope) = rpc(
+        &state,
+        &member_token,
+        "storage.defaults.get",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "defaults.get is admin-only — a member is refused before any read: {envelope}"
+    );
+    assert!(
+        !envelope.to_string().contains("defaultable"),
+        "the slug never leaks through the refusal: {envelope}"
+    );
+}
+
+/// MY-1's SERVICE face: `storage.grants.set` REPLACES the row's bits —
+/// the all-false row STILL EXISTS after the revoke (no deletion of
+/// grant rows exists in the model). The store-level pin lives in
+/// bucket_acl's `revoking_access_writes_an_explicit_deny_row`; this
+/// rides the RPC handler, so a revoke path that DELETES the row turns
+/// the read-back red.
+/// MUT:MY-1 — making the all-false write (or the grants.set handler)
+/// delete the row instead of upserting it turns this red.
+#[tokio::test]
