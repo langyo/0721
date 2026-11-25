@@ -123,12 +123,14 @@ export default defineComponent({
      *  combination so the wire can never carry it.
      *  MUT:p2a-signup-coupling — breaking the coupling lets the submit
      *  enable (and the wire carry) grant_on_signup=true + anonymous_read=false. */
+    // The R-A coupling, as LOCKS: a default-open bucket cannot go
+    // anonymous-read-off (the switch is pinned ON while grant_on_signup
+    // is true), and with anonymous_read off the signup switch cannot go
+    // on. The inconsistent combination is unreachable through the form.
     const anonymousReadDisabled = computed(
-      () => formGrantOnSignup.value && !formAnonymousRead.value,
+      () => formGrantOnSignup.value && formAnonymousRead.value,
     );
-    const grantOnSignupDisabled = computed(
-      () => !formAnonymousRead.value && !formGrantOnSignup.value,
-    );
+    const grantOnSignupDisabled = computed(() => !formAnonymousRead.value);
     const formValid = computed(() => formSlug.value.trim() !== "");
 
     function openEdit(row: StorageBucket): void {
@@ -141,8 +143,11 @@ export default defineComponent({
       formEnabled.value = row.enabled;
     }
 
+    const createOpen = ref(false);
+
     function openCreate(): void {
       clearToast(UPSERT_TOAST);
+      createOpen.value = true;
       editTarget.value = null;
       formSlug.value = "";
       formDisplayName.value = "";
@@ -153,6 +158,7 @@ export default defineComponent({
 
     function closeEdit(): void {
       editTarget.value = null;
+      createOpen.value = false;
     }
 
     async function doUpsert() {
@@ -430,7 +436,7 @@ export default defineComponent({
         {/* The upsert window (create = the header plus; edit = per row).
             The four switches are the strict document's booleans. */}
         <HkAdaptiveDialog
-          modelValue={editTarget.value !== null || false}
+          modelValue={editTarget.value !== null || createOpen.value}
           title={editTarget.value ? t("common.buckets.edit") : t("common.buckets.create")}
           width="26rem"
           footerActions={editActions.value}
@@ -453,6 +459,7 @@ export default defineComponent({
               <span>{t("common.buckets.anonymousRead")}</span>
               <HkSwitch
                 modelValue={formAnonymousRead.value}
+                disabled={anonymousReadDisabled.value}
                 ariaLabel={t("common.buckets.anonymousRead")}
                 data-testid="bucket-anonymous-read"
                 onUpdate:modelValue={(on: boolean) => (formAnonymousRead.value = on)}

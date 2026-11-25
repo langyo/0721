@@ -28,6 +28,11 @@ vi.mock("@/api", () => ({
   moveFile: (...a: unknown[]) => moveFileMock(...a),
   listTimeline: (...a: unknown[]) => listTimelineMock(...a),
 }));
+const listBucketsMock = vi.fn().mockResolvedValue({ buckets: [] });
+vi.mock("@/api/buckets", () => ({
+  listBuckets: (...a: unknown[]) => listBucketsMock(...a),
+  readableBuckets: (rows: unknown[]) => rows,
+}));
 vi.mock("@/api/files", () => ({
   listFolder: (...a: unknown[]) => listFolderMock(...a),
   deleteFile: (...a: unknown[]) => deleteFileMock(...a),
@@ -538,5 +543,34 @@ describe("FilesView failure feedback (toast, never inline)", () => {
     });
     expect(w.find('[role="alert"]').exists()).toBe(false);
     expect(w.find(".error").exists()).toBe(false);
+  });
+});
+
+describe("FilesView per-bucket root (P2a)", () => {
+  // The root selector renders from the visibility-scoped registry list;
+  // the chosen slug's wire contract is pinned by src/api/files.test.ts.
+  // MUT:B-P2A-ROOT-PARAM — dropping the loader (or the select) reddens
+  // the presence pins here.
+  beforeEach(() => {
+    listBucketsMock.mockReset().mockResolvedValue({
+      buckets: [
+        { slug: "alpha", my_access: { read: true, write: true, share: true } },
+        { slug: "private", my_access: { read: false, write: true, share: false } },
+      ],
+    });
+  });
+
+  it("renders the root selector fed by the registry and marks the unreadable bucket", async () => {
+    const { wrapper: w } = mountWithRouter(FilesView);
+    wrapper = w;
+    await flushPromises();
+    expect(w.find('[data-testid="bucket-root-select"]').exists()).toBe(true);
+    expect(listBucketsMock).toHaveBeenCalledTimes(1);
+    // The unreadable bucket's mark lives in the OPENED panel (§7's
+    // files.list row: visible-without-read stays listed, marked).
+    await w.find('[data-testid="bucket-root-select"] .hk-select-trigger').trigger("click");
+    await flushPromises();
+    expect(document.body.textContent).toContain("no read permission");
+    w.unmount();
   });
 });

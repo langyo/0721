@@ -208,6 +208,12 @@ export default defineComponent({
         clearToast(CREATE_TOAST);
         resetForm();
         created.value = null;
+        // A fresh key has NO prior bucket reference: the untouched picker
+        // is the EXPLICIT empty pick (`[]` = no buckets, Q7) — the
+        // "materialize granted_buckets" lane is the K-era EDIT shape
+        // only (a scopes WITHOUT the array). MUT:p2a-key-buckets-omit —
+        // sending a missing field here reddens the payload test.
+        formBuckets.value = [];
         createOpen.value = true;
         void loadBucketSlugs();
       },
