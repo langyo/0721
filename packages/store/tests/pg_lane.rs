@@ -1254,6 +1254,19 @@ async fn count_null_bucket_rows(store: &PgStore) -> i64 {
 /// carries one command per call; the runner's raw lane splits on the
 /// same boundaries).
 async fn run_bootstrap(store: &PgStore) {
+    // The lane database is SHARED and re-runnable: a previous run's
+    // planted ipfs row would trip the single-ipfs partial unique index
+    // on every later re-run. The runner is idempotent for everything
+    // else (the slug ON CONFLICT); only that index has no re-entry.
+    store
+        .executor
+        .execute(&lacrymira::Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "DELETE FROM storage_buckets WHERE backend = 'ipfs'".to_owned(),
+            params: vec![],
+        })
+        .await
+        .expect("clear the lane's ipfs rows");
     for statement in i0721_store::migrate::bootstrap_sql_statements(&lane_bootstrap())
         .expect("the lane bootstrap location passes the quoting guard")
     {
