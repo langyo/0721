@@ -79,6 +79,8 @@ pub mod rpc_error_codes {
     /// The deferred-ops collection surface is disabled on this instance
     /// (the `ops.*` guard; see `build_server`).
     pub const OPS_DISABLED: i64 = -32009;
+    /// Storage backend unavailable (B wave's Q9 addition; 503 on REST).
+    pub const STORAGE_UNAVAILABLE: i64 = -32010;
 }
 
 /// The per-connection identity the auth hook establishes: the verified,
@@ -95,9 +97,13 @@ fn api_err(err: ApiError) -> JsonRpcError {
         StatusCode::NOT_FOUND => rpc_error_codes::NOT_FOUND,
         StatusCode::CONFLICT => rpc_error_codes::CONFLICT,
         StatusCode::PAYLOAD_TOO_LARGE => rpc_error_codes::TOO_LARGE,
+        StatusCode::SERVICE_UNAVAILABLE => rpc_error_codes::STORAGE_UNAVAILABLE,
         StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => {
             plana::jsonrpc::error_codes::INVALID_PARAMS
         }
+        // The internal family: the storage-unavailable lane answers
+        // -32010 (§7) when the failure IS the backend; every other
+        // internal failure keeps the generic code.
         _ => plana::jsonrpc::error_codes::INTERNAL_ERROR,
     };
     JsonRpcError::new(code, err.error)
@@ -273,6 +279,73 @@ fn store_err(err: i0721_store::StoreError) -> JsonRpcError {
     api_err(ApiError::from(err))
 }
 
+/// The §7 `files.*` bucket column, evaluated ONCE (the chain lane's
+/// gate; other `files.*` methods keep their existing answers until the
+/// spec's P2a list pushes the same filter into them):
+/// * no bucket (NULL rows resolve through the bootstrap) or an unknown
+///   bucket → `-32006`;
+/// * visible (any grant bit or signup default) but without `Read`
+///   → `-32005`;
+/// * visible + readable but the bucket cannot serve → `-32010`.
+async fn files_chain_bucket_gate(
+    state: &AppState,
+    user: &i0721_proto::UserRecord,
+    bucket_id: Option<Uuid>,
+) -> Result<(), JsonRpcError> {
+    use crate::bucket_acl::resolve_access;
+    // A NULL-bucket row reads through the bootstrap bucket (I4's
+    // resolution, R-H): unresolvable → storage unavailable.
+    let Some(bucket_id) = bucket_id else {
+        return state
+            .registry
+            .bootstrap_store()
+            .map(|_| ())
+            .map_err(|err| {
+                JsonRpcError::new(
+                    rpc_error_codes::STORAGE_UNAVAILABLE,
+                    format!("storage backend unavailable: {err}"),
+                )
+            });
+    };
+    let bucket = state
+        .store
+        .list_storage_buckets()
+        .await
+        .map_err(store_err)?
+        .into_iter()
+        .find(|b| b.id == bucket_id)
+        .ok_or_else(|| api_err(ApiError::not_found("folder not found")))?;
+    let access = resolve_access(state.store.as_ref(), user, &bucket).await.map_err(store_err)?;
+    if !access.any() {
+        return Err(api_err(ApiError::not_found("folder not found")));
+    }
+    if !access.read {
+        return Err(api_err(ApiError::forbidden(
+            "you do not have read access to this bucket",
+        )));
+    }
+    state.registry.resolve(&bucket.slug).map(|_| ()).map_err(|err| {
+        JsonRpcError::new(
+            rpc_error_codes::STORAGE_UNAVAILABLE,
+            format!("storage backend unavailable: {err}"),
+        )
+    })
+}
+
+/// R-B's key-reference guard: `BUCKET_KEY_REFERENCE_SQL` — spec-verbatim —
+/// whether ANY live (non-revoked) key's `scopes.buckets` array names
+/// `slug`. `false` = the bucket's slug is free. The SQL runs on the PG
+/// lane (the lane's own tests re-run the same constant against
+/// hand-planted rows); the memory lane evaluates the identical predicate
+/// over the parsed scopes, so both stores answer the same question.
+async fn key_references_slug(state: &AppState, slug: &str) -> Result<bool, JsonRpcError> {
+    state
+        .store
+        .a_live_key_references_bucket_slug(slug)
+        .await
+        .map_err(store_err)
+}
+
 /// Map a blob-store error (plain I/O) the same way.
 fn blob_err(err: std::io::Error) -> JsonRpcError {
     api_err(ApiError::from(err))
@@ -328,15 +401,24 @@ async fn require_file_owner_or_admin(
     Ok(record)
 }
 
-/// The wire form of `keys.create` / `keys.update` — the three fields a
-/// key's owner writes. `keys.update` is a WHOLE-RECORD replacement, so it
-/// carries the same three; an omitted `expires_at` clears the expiry.
+/// The wire form of `keys.create` / `keys.update` — the fields a key's
+/// owner writes. `keys.update` is a WHOLE-RECORD replacement, so it
+/// carries the same fields; an omitted `expires_at` clears the expiry.
+///
+/// `buckets` (Q7): the explicit slug array (`[]` = no buckets). An
+/// OMITTED field (or a non-array) materializes `granted_buckets(actor)`
+/// — the owner's CURRENT authorized set, snapshotted at write time
+/// (I7: new buckets and new grants never extend an existing key).
 #[derive(Debug, Clone, serde::Deserialize)]
 struct KeyWriteParams {
     name: String,
     ops: Vec<i0721_proto::KeyOp>,
     #[serde(default)]
     expires_at: Option<String>,
+    /// `None` = "not given" → materialize the owner's granted buckets.
+    /// `Some(_)` = the caller picked (an empty list INCLUDED).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    buckets: Option<Vec<String>>,
 }
 
 /// Validate a key write, answering `(trimmed name, ops, canonical
@@ -465,6 +547,12 @@ pub fn build_server(state: AppState) -> RpcServer {
     let state_keys_update = state.clone();
     let state_keys_list = state.clone();
     let state_keys_revoke = state.clone();
+    let state_storage_grants_set = state.clone();
+    let state_storage_buckets_list = state.clone();
+    let state_storage_buckets_upsert = state.clone();
+    let state_storage_buckets_delete = state.clone();
+    let state_storage_defaults_get = state.clone();
+    let state_storage_defaults_set = state.clone();
     RpcServer::builder()
         .auth(move |headers: &HeaderMap, uri: &Uri| {
             let state = state.clone();
@@ -1152,7 +1240,7 @@ pub fn build_server(state: AppState) -> RpcServer {
                     None => Some(
                         state
                             .registry
-                            .resolve_upload_bucket(None)
+                            .resolve_upload_bucket(None, None)
                             .map_err(|err| {
                                 api_err(ApiError::internal(format!(
                                     "storage backend unavailable: {err}"
@@ -1236,14 +1324,18 @@ pub fn build_server(state: AppState) -> RpcServer {
                 }
                 let args: ChainParams = params(&ctx)?;
                 let user = user_of(&ctx);
-                // Owner-or-admin on the TARGET folder.
+                // Owner-or-admin on the TARGET folder — and, from P2a on,
+                // the §7 bucket column: the folder's bucket must be
+                // VISIBLE (any bit), readable, and its backend servable;
+                // invisible → `-32006`, visible without Read → `-32005`,
+                // unservable → `-32010`.
                 let target = state.store.get_file(args.folder_id).await.map_err(store_err)?
                     .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
-                    .ok_or_else(|| ApiError::not_found("folder not found"))
-                    .map_err(api_err)?;
+                    .ok_or_else(|| api_err(ApiError::not_found("folder not found")))?;
                 if user.role != Role::Admin && target.owner_id != user.id {
-                    return Err(api_err(ApiError::forbidden("not your folder")));
+                    return Err(api_err(ApiError::not_found("folder not found")));
                 }
+                files_chain_bucket_gate(&state, &user, target.bucket_id).await?;
                 // Walk ancestors, then reverse (root-first).
                 let ancestors = state.store.ancestor_ids(args.folder_id).await.map_err(store_err)?;
                 let mut chain = vec![
@@ -1393,6 +1485,19 @@ pub fn build_server(state: AppState) -> RpcServer {
                 let args: KeyWriteParams = params(&ctx)?;
                 let caller = user_of(&ctx);
                 let (name, ops, expires_at) = validate_key_write(&args)?;
+                // Q7's materialization: an omitted `buckets` snapshots
+                // the owner's CURRENT authorized set (`granted_buckets`);
+                // an explicit array (even `[]`) is the caller's pick.
+                // MUT:M-P2A7 — materializing from the DEFAULT (ignoring
+                // the explicit `[]`) turns the explicit-empty arm red.
+                let buckets = match args.buckets {
+                    Some(explicit) => explicit,
+                    None => crate::bucket_acl::granted_buckets(&state.store, &caller)
+                        .await
+                        .map_err(store_err)?
+                        .into_iter()
+                        .collect(),
+                };
 
                 let key = crate::mcp::mint_api_key();
                 let hash = crate::mcp::hash_api_key(&key);
@@ -1403,7 +1508,7 @@ pub fn build_server(state: AppState) -> RpcServer {
                     name,
                     key_prefix: prefix,
                     key_hash: hash,
-                    scopes: crate::key_scopes::encode_scopes(ops),
+                    scopes: crate::key_scopes::encode_scopes_with_buckets(ops, &buckets),
                     expires_at,
                     last_used_at: None,
                     revoked_at: None,
@@ -1435,15 +1540,28 @@ pub fn build_server(state: AppState) -> RpcServer {
                 // dead is dead, and it answers the same not-found
                 // `keys.revoke` answers (the helper's revoked arm).
                 let key = require_key_access(&state, &caller, args.id).await?;
-                // Whole-record replacement: all three fields, and an
-                // omitted `expires_at` CLEARS the expiry.
+                // Whole-record replacement: all fields, and an
+                // omitted `expires_at` CLEARS the expiry. The same Q7
+                // materialization as `keys.create` — but resolved for the
+                // KEY'S OWNER (an admin editing a member's key snapshots
+                // the MEMBER's buckets, not their own).
                 let (name, ops, expires_at) = validate_key_write(&args.write)?;
+                let owner = state.store.get_user(key.user_id).await.map_err(store_err)?
+                    .ok_or_else(|| api_err(ApiError::not_found("key owner not found")))?;
+                let buckets = match args.write.buckets {
+                    Some(explicit) => explicit,
+                    None => crate::bucket_acl::granted_buckets(&state.store, &owner)
+                        .await
+                        .map_err(store_err)?
+                        .into_iter()
+                        .collect(),
+                };
                 let updated = state
                     .store
                     .update_api_key(
                         key.id,
                         &name,
-                        &crate::key_scopes::encode_scopes(ops),
+                        &crate::key_scopes::encode_scopes_with_buckets(ops, &buckets),
                         expires_at.as_deref(),
                     )
                     .await
@@ -1501,6 +1619,202 @@ pub fn build_server(state: AppState) -> RpcServer {
                 } else {
                     Err(api_err(ApiError::not_found("key not found or already revoked")))
                 }
+            }
+        })
+        // ── the bucket authorization + registry surface (P2a) ──────────
+        .method_ctx("storage.grants.set", move |ctx: RpcRequestCtx| {
+            let state = state_storage_grants_set.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct GrantParams {
+                    user: Uuid,
+                    bucket_slug: String,
+                    #[serde(default)]
+                    read: bool,
+                    #[serde(default)]
+                    write: bool,
+                    #[serde(default)]
+                    share: bool,
+                }
+                let args: GrantParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                // The admin arm of the R-A evaluation never reads a row:
+                // an admin's rights come from the ROLE, so writing a grant
+                // row for one is refused (it would also leak nothing after
+                // a later demotion — the row is just dead weight).
+                let target = state.store.get_user(args.user).await.map_err(store_err)?
+                    .ok_or_else(|| api_err(ApiError::not_found("user not found")))?;
+                if target.role == Role::Admin {
+                    return Err(api_err(ApiError::forbidden(
+                        "grants cannot be set for an admin (their rights come from the role)",
+                    )));
+                }
+                let bucket = state
+                    .store
+                    .get_storage_bucket_by_slug(&args.bucket_slug)
+                    .await
+                    .map_err(store_err)?
+                    .ok_or_else(|| api_err(ApiError::not_found("no such bucket")))?;
+                state
+                    .store
+                    .set_bucket_grant(args.user, bucket.id, args.read, args.write, args.share)
+                    .await
+                    .map_err(store_err)?;
+                Ok(Value::Null)
+            }
+        })
+        .method_ctx("storage.buckets.list", move |ctx: RpcRequestCtx| {
+            let state = state_storage_buckets_list.clone();
+            async move {
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                let rows = state.store.list_storage_buckets().await.map_err(store_err)?;
+                to_value(rows)
+            }
+        })
+        .method_ctx("storage.buckets.upsert", move |ctx: RpcRequestCtx| {
+            let state = state_storage_buckets_upsert.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct BucketUpsertParams {
+                    slug: String,
+                    /// The mutable fields are a STRICT FULL DOCUMENT: an
+                    /// omitted field is a refusal, not a reset-to-default.
+                    display_name: String,
+                    anonymous_read: bool,
+                    grant_on_signup: bool,
+                    enabled: bool,
+                }
+                let args: BucketUpsertParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                // The R-A constraint: a default-open bucket must be
+                // anonymous-readable (default-open only makes sense for a
+                // public bucket).
+                if args.grant_on_signup && !args.anonymous_read {
+                    return Err(api_err(ApiError::bad_request(
+                        "grant_on_signup = TRUE requires anonymous_read = TRUE",
+                    )));
+                }
+                let updated = state
+                    .store
+                    .upsert_storage_bucket(
+                        &args.slug,
+                        args.display_name.trim(),
+                        args.anonymous_read,
+                        args.grant_on_signup,
+                        args.enabled,
+                    )
+                    .await
+                    .map_err(store_err)?;
+                to_value(updated)
+            }
+        })
+        .method_ctx("storage.buckets.delete", move |ctx: RpcRequestCtx| {
+            let state = state_storage_buckets_delete.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct DeleteParams {
+                    slug: String,
+                }
+                let args: DeleteParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                let bucket = state
+                    .store
+                    .get_storage_bucket_by_slug(&args.slug)
+                    .await
+                    .map_err(store_err)?
+                    .ok_or_else(|| api_err(ApiError::not_found("no such bucket")))?;
+                // R-B's three directions, all before any delete:
+                if bucket.is_bootstrap {
+                    return Err(api_err(ApiError::forbidden(
+                        "the bootstrap bucket cannot be deleted",
+                    )));
+                }
+                let live = state
+                    .store
+                    .count_live_files_by_bucket(Some(bucket.id))
+                    .await
+                    .map_err(store_err)?;
+                if live > 0 {
+                    return Err(api_err(ApiError::conflict(format!(
+                        "the bucket still holds {live} live rows — empty it first"
+                    ))));
+                }
+                if key_references_slug(&state, &bucket.slug).await? {
+                    return Err(api_err(ApiError::conflict(
+                        "a live API key still references this bucket's slug",
+                    )));
+                }
+                let removed = state
+                    .store
+                    .delete_storage_bucket(bucket.id)
+                    .await
+                    .map_err(store_err)?;
+                if removed {
+                    Ok(Value::Null)
+                } else {
+                    Err(api_err(ApiError::not_found("no such bucket")))
+                }
+            }
+        })
+        .method_ctx("storage.defaults.get", move |ctx: RpcRequestCtx| {
+            let state = state_storage_defaults_get.clone();
+            async move {
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                use i0721_store::SettingsState;
+                let value = match state
+                    .store
+                    .settings_state(crate::api::upload_core::DEFAULT_BUCKET_SETTINGS_KEY)
+                    .await
+                    .map_err(store_err)?
+                {
+                    SettingsState::Absent => None,
+                    SettingsState::Value(value) => Some(value),
+                    SettingsState::Corrupt { raw } | SettingsState::Unreadable { err: raw } => {
+                        // R-F: the four-state read surfaces honestly
+                        // instead of falling back to "unconfigured".
+                        return Err(api_err(ApiError::internal(format!(
+                            "the storage default bucket setting is not readable: {raw:?}"
+                        ))));
+                    }
+                };
+                to_value(serde_json::json!({ "bucket": value.and_then(|v| v.as_str().map(str::to_owned)) }))
+            }
+        })
+        .method_ctx("storage.defaults.set", move |ctx: RpcRequestCtx| {
+            let state = state_storage_defaults_set.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct DefaultsParams {
+                    /// The default upload bucket's slug (R-F / R-I); the
+                    /// upload lane answers 500 / -32010 when this is
+                    /// unset-but-required or unreadable.
+                    bucket: String,
+                }
+                let args: DefaultsParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                // The default must name a REAL bucket.
+                state
+                    .store
+                    .get_storage_bucket_by_slug(&args.bucket)
+                    .await
+                    .map_err(store_err)?
+                    .ok_or_else(|| api_err(ApiError::not_found("no such bucket")))?;
+                state
+                    .store
+                    .set_setting(
+                        crate::api::upload_core::DEFAULT_BUCKET_SETTINGS_KEY,
+                        serde_json::Value::String(args.bucket),
+                    )
+                    .await
+                    .map_err(store_err)?;
+                Ok(Value::Null)
             }
         })
         .build()

@@ -400,6 +400,14 @@ pub trait Store: Send + Sync {
         bucket_id: Uuid,
     ) -> Result<Vec<i0721_proto::BucketGrantRecord>, StoreError>;
 
+    /// Whether any LIVE key's `scopes.buckets` array names `slug` (R-B's
+    /// `BUCKET_KEY_REFERENCE_SQL`: `SELECT EXISTS (SELECT 1 FROM api_keys
+    /// WHERE revoked_at IS NULL AND jsonb_typeof(scopes->'buckets') =
+    /// 'array' AND scopes->'buckets' ? $1)`). The PG lane runs the SQL
+    /// verbatim; the memory lane evaluates the same predicate over the
+    /// parsed scopes.
+    async fn a_live_key_references_bucket_slug(&self, slug: &str) -> Result<bool, StoreError>;
+
     /// The R-F four-state read of one settings row: `Absent` (no row),
     /// `Corrupt` (a row whose payload does not parse as JSON), `Unreadable`
     /// (the store itself failed) or `Value` (a parsed payload). Callers

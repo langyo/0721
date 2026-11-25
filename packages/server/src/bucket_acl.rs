@@ -30,7 +30,6 @@ pub struct BucketAccess {
 
 impl BucketAccess {
     /// All bits false — the explicit-deny row's shape.
-    #[must_use]
     pub const NONE: BucketAccess = BucketAccess {
         read: false,
         write: false,
@@ -38,7 +37,6 @@ impl BucketAccess {
     };
 
     /// The `grant_on_signup` default-open shape.
-    #[must_use]
     pub const SIGNUP: BucketAccess = BucketAccess {
         read: true,
         write: true,

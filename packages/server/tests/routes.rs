@@ -9239,7 +9239,7 @@ async fn upload_without_override_never_falls_back_to_the_bootstrap_bucket() {
     // foreign bucket.
     let (base_state, _) = test_state().await;
     let (state, _second_id, _second_store) = plant_second_bucket(&base_state, "satellite", false);
-    let resolved = state.registry.resolve_upload_bucket(None);
+    let resolved = state.registry.resolve_upload_bucket(None, None);
     assert!(
         resolved.is_err(),
         "an unresolvable upload bucket is an error, not a fallback"

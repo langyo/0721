@@ -704,23 +704,47 @@ impl Store for PgStore {
         // The four-state read (R-F): a store failure is `Unreadable`
         // (NOT aDb error propagated as "absent"), a row whose payload
         // fails the strict parser is `Corrupt` with the raw text.
-        let read = || async {
-            let cmd = Command::Select {
-                table: SettingModel::TABLE.to_owned(),
-                filter: Some(SettingColumn::Key.eq(key).into_inner()),
-                order_by: vec![],
-                limit: None,
-                offset: None,
-                lock: None,
-                distinct: false,
-            };
-            self.query_one::<SettingModel>(cmd).await
+        let cmd = Command::Select {
+            table: SettingModel::TABLE.to_owned(),
+            filter: Some(SettingColumn::Key.eq(key).into_inner()),
+            order_by: vec![],
+            limit: None,
+            offset: None,
+            lock: None,
+            distinct: false,
         };
-        match read().await {
+        match self.query_one::<SettingModel>(cmd).await {
             Err(err) => Ok(crate::SettingsState::Unreadable { err: err.to_string() }),
             Ok(None) => Ok(crate::SettingsState::Absent),
             Ok(Some(model)) => Ok(crate::SettingsState::Value(model.value)),
         }
+    }
+
+    async fn a_live_key_references_bucket_slug(&self, slug: &str) -> Result<bool, StoreError> {
+        // The spec-verbatim R-B SQL (also re-run by the PG lane's tests).
+        const BUCKET_KEY_REFERENCE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM api_keys \
+             WHERE revoked_at IS NULL AND jsonb_typeof(scopes->'buckets') = 'array' \
+             AND scopes->'buckets' ? $1)";
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: BUCKET_KEY_REFERENCE_SQL.to_owned(),
+            params: vec![Value::Text(slug.to_owned())],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db(
+                "expected rows from the key-reference probe".to_owned(),
+            ));
+        };
+        Ok(rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|value| match value {
+                Value::Bool(b) => Some(*b),
+                Value::Text(text) => text.parse().ok(),
+                _ => None,
+            })
+            .unwrap_or(false))
     }
 
     async fn create_file(&self, file: NewFile) -> Result<FileRecord, StoreError> {

@@ -75,6 +75,30 @@ fn conflict(reason: impl Into<String>) -> StoreError {
     StoreError::Conflict(reason.into())
 }
 
+/// Parse a scopes text's `buckets` array the SAME way the server's
+/// fail-closed interpreter does: a well-formed string array of ≤ 64
+/// entries answers the set; anything else answers `None` (the memory
+/// twin of `parse_scopes_buckets` — the store cannot depend on the
+/// server crate, so the shape is mirrored here and pinned equal by the
+/// round-trip test).
+fn scopes_buckets(raw: &str) -> Option<std::collections::BTreeSet<String>> {
+    const MAX_BUCKETS: usize = 64;
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    let buckets = value.get("buckets")?.as_array()?;
+    if buckets.len() > MAX_BUCKETS {
+        return None;
+    }
+    let mut out = std::collections::BTreeSet::new();
+    for entry in buckets {
+        let slug = entry.as_str()?;
+        if slug.is_empty() {
+            return None;
+        }
+        out.insert(slug.to_owned());
+    }
+    Some(out)
+}
+
 #[async_trait::async_trait]
 impl Store for MemoryStore {
     async fn list_users(&self, offset: u64, limit: u64) -> Result<Vec<UserRecord>, StoreError> {
@@ -398,6 +422,18 @@ impl Store for MemoryStore {
             None => Ok(crate::SettingsState::Absent),
             Some(value) => Ok(crate::SettingsState::Value(value.clone())),
         }
+    }
+
+    async fn a_live_key_references_bucket_slug(&self, slug: &str) -> Result<bool, StoreError> {
+        // The memory twin of `BUCKET_KEY_REFERENCE_SQL`: live keys only,
+        // and only the well-formed `buckets` arrays count (fail-closed
+        // on malformed scopes — a corrupt row never blocks a delete).
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner.api_keys.iter().any(|key| {
+            key.revoked_at.is_none()
+                && scopes_buckets(&key.scopes)
+                    .is_some_and(|set| set.contains(&slug.to_owned()))
+        }))
     }
 
     async fn create_file(&self, file: NewFile) -> Result<FileRecord, StoreError> {

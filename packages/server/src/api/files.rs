@@ -16,13 +16,18 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use i0721_proto::FileDto;
 
-/// Optional query of the upload endpoint (the legacy `?name=`).
+/// Optional query of the upload endpoint (the legacy `?name=`, P2a's
+/// `?bucket=`).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UploadQuery {
     /// Force the display name of the uploaded file.
     pub name: Option<String>,
     /// The destination folder (validated: exists, live, folder, owner).
     pub folder_id: Option<uuid::Uuid>,
+    /// The target bucket's slug (R-I). An INVISIBLE bucket answers 404,
+    /// a visible-but-unauthorized-adjacent shape stays 403, an
+    /// unservable bucket 500 (the §7 REST column).
+    pub bucket: Option<String>,
 }
 
 /// `POST /api/v1/files` (multipart, field `file`)
@@ -58,6 +63,7 @@ pub async fn upload(
             name: args.name,
             source_name,
             folder_id: args.folder_id,
+            bucket: args.bucket,
             data,
         },
     )
