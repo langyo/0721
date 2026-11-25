@@ -12245,7 +12245,13 @@ async fn private_media_grant_does_not_leak_through_a_shared_storage_key() {
     for attempt in 0..256u32 {
         let mut bytes = tiny_png();
         bytes[..4].copy_from_slice(&(attempt ^ 0x5EED).to_be_bytes());
-        let (_, dto) = upload(&base_state, &reader_token, bytes, &format!("pub-{attempt}.png")).await;
+        let (_, dto) = upload(
+            &base_state,
+            &reader_token,
+            bytes,
+            &format!("pub-{attempt}.png"),
+        )
+        .await;
         let attempt_key = dto["sha256"].as_str().unwrap().to_owned();
         let attempt_id = dto["id"].as_str().unwrap().to_owned();
         let stored = base_state
