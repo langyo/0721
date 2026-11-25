@@ -19,6 +19,7 @@ use tower::ServiceExt;
 
 use i0721_server::auth::hash_password;
 use i0721_server::blob::MemoryBlobStore;
+use i0721_server::blob::BlobStore as _;
 use i0721_server::config::Config;
 use i0721_server::routes;
 use i0721_server::state::AppState;
@@ -8715,7 +8716,51 @@ fn blob_registry_never_falls_back_to_another_bucket() {
     }
 }
 
-// ── the stage-B guard tests: reads, writes and folders route by row ─────
+/// A second bucket layered onto `state`'s registry: its store is a
+/// DIFFERENT MemoryBlobStore. `bootstrap_enabled = false` leaves the
+/// bootstrap entry Disabled (the fail-closed fixture); `true` keeps both
+/// buckets Ready. Returns the patched state, the second bucket's id and
+/// its store.
+fn plant_second_bucket(
+    state: &AppState,
+    slug: &str,
+    bootstrap_enabled: bool,
+) -> (
+    AppState,
+    uuid::Uuid,
+    Arc<i0721_server::blob::MemoryBlobStore>,
+) {
+    let id = uuid::Uuid::new_v4();
+    let store = Arc::new(i0721_server::blob::MemoryBlobStore::new());
+    let bootstrap_id = state.registry.bootstrap_bucket_id().unwrap();
+    let bootstrap_entry = i0721_server::blob_registry::BucketEntry {
+        slug: "bootstrap".to_owned(),
+        state: if bootstrap_enabled {
+            i0721_server::blob_registry::BucketState::Ready
+        } else {
+            i0721_server::blob_registry::BucketState::Disabled
+        },
+        reason: bootstrap_enabled.then_some(None).flatten().or(Some(
+            "the bucket is disabled in the registry".to_owned(),
+        )),
+        // The state's OWN blob store (the fixture's bootstrap bytes).
+        store: bootstrap_enabled.then(|| state.blobs.clone()),
+    };
+    let second_entry = i0721_server::blob_registry::BucketEntry {
+        slug: slug.to_owned(),
+        state: i0721_server::blob_registry::BucketState::Ready,
+        reason: None,
+        store: Some(store.clone()),
+    };
+    let merged = i0721_server::blob_registry::BlobRegistry::from_entries(
+        vec![(bootstrap_id, bootstrap_entry), (id, second_entry)],
+        bootstrap_id,
+        i0721_proto::BucketBackend::Local,
+    );
+    let mut patched = state.clone();
+    patched.registry = merged;
+    (patched, id, store)
+}
 
 /// `media_reads_from_the_rows_bucket`: two rows share one storage key
 /// across two buckets; `/media` serves the bytes of the row that the
@@ -8725,20 +8770,100 @@ fn blob_registry_never_falls_back_to_another_bucket() {
 /// `a_share_reads_only_bytes_from_its_own_rows_bucket` red.
 #[tokio::test]
 async fn media_reads_from_the_rows_bucket() {
-    let (state, admin) = test_state().await;
-    let token = login(&state, "admin", "admin-password").await;
-    let (status, dto) = upload(&state, &token, tiny_png(), "a.png").await;
+    let (base_state, admin) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    let (status, dto) = upload(&base_state, &token, tiny_png(), "a.png").await;
     assert_eq!(status, StatusCode::CREATED, "{dto}");
     let key = dto["sha256"].as_str().unwrap().to_owned();
     // The pipeline converts to WebP: the row's OWN bytes are what the
     // row's bucket store holds.
-    let bytes = state
+    let bytes = base_state
         .blobs
         .get(i0721_server::blob::BlobSlot::Media, &key)
         .await
         .unwrap()
         .expect("the row's bucket holds its bytes");
 
+    // Plant a SECOND Ready bucket whose store holds DIFFERENT bytes at
+    // the same key, and DISABLE the bootstrap bucket: the row's bytes
+    // still come from the row's OWN (now disabled) bucket per `for_row`,
+    // never from "the first Ready bucket" (the M2 mutation's wrong
+    // shape). Serving itself answers 404 in P1 when no usable serving
+    // row exists, so the assertion pins the RESOLUTION side through the
+    // registry directly plus the decoy shape below.
+    let (state, second_id, second_store) =
+        plant_second_bucket(&base_state, "satellite", false);
+    second_store
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            &key,
+            b"decoy-bytes-from-the-other-bucket",
+        )
+        .await
+        .unwrap();
+    let other = state
+        .store
+        .create_user(CreateUser {
+            username: "satellite-owner".to_owned(),
+            display_name: "Satellite".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    // A same-key row with a NULL bucket (the legacy-row shape): for_row
+    // must resolve it to the BOOTSTRAP bucket — which is disabled — and
+    // therefore to NO usable serving row. The M2 mutation (NULL → "the
+    // first Ready bucket" = satellite) would instead serve the satellite
+    // store's decoy bytes as 200.
+    state
+        .store
+        .create_file(i0721_proto::NewFile {
+            bucket_id: None,
+            parent_id: None,
+            owner_id: other.id,
+            name: "legacy.png".to_owned(),
+            kind: i0721_proto::FileKind::Image,
+            mime: "image/webp".to_owned(),
+            size: bytes.len() as i64,
+            sha256: key.clone(),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: "legacy.png".to_owned(),
+        })
+        .await
+        .unwrap();
+
+    // The NULL row's own bucket is disabled and the second bucket is not
+    // its bucket: 404 — and crucially NOT the satellite bytes.
+    let response = app(&state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "a NULL row resolves to its bootstrap bucket (disabled here): 404, never the decoy"
+    );
+
+    // With the bootstrap bucket KEPT ENABLED, the same request serves
+    // the row's OWN bytes while the decoy sits in the second store.
+    let (state, _second_id, second_store) =
+        plant_second_bucket(&base_state, "satellite", true);
+    second_store
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            &key,
+            b"decoy-bytes-from-the-other-bucket",
+        )
+        .await
+        .unwrap();
     let response = app(&state)
         .oneshot(
             Request::builder()
@@ -8752,7 +8877,11 @@ async fn media_reads_from_the_rows_bucket() {
     let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
         .await
         .unwrap();
-    assert_eq!(body.as_ref(), bytes.as_ref(), "the row's own bytes serve");
+    assert_eq!(
+        body.as_ref(),
+        bytes.as_ref(),
+        "the row's own bucket bytes serve, never the decoy's"
+    );
 
     // And the row itself carries its bucket id (the write side of I4).
     let row = state
@@ -8777,17 +8906,31 @@ async fn media_reads_from_the_rows_bucket() {
 /// turns this red.
 #[tokio::test]
 async fn a_share_reads_only_bytes_from_its_own_rows_bucket() {
-    let (state, _) = test_state().await;
-    let token = login(&state, "admin", "admin-password").await;
-    let (_, dto) = upload(&state, &token, tiny_png(), "share.png").await;
+    let (base_state, _) = test_state().await;
+    let token = login(&base_state, "admin", "admin-password").await;
+    let (_, dto) = upload(&base_state, &token, tiny_png(), "share.png").await;
     let file_id = dto["id"].as_str().unwrap().to_owned();
     let key = dto["sha256"].as_str().unwrap().to_owned();
-    let bytes = state
+    let bytes = base_state
         .blobs
         .get(i0721_server::blob::BlobSlot::Media, &key)
         .await
         .unwrap()
         .expect("the row's bucket holds its bytes");
+
+    // Plant the second Ready bucket with DIFFERENT bytes at the same
+    // key: a share routed "by storage key, any row" could pick the decoy
+    // — the served bytes must still be the file row's OWN bucket's.
+    let (state, _second_id, second_store) =
+        plant_second_bucket(&base_state, "satellite", true);
+    second_store
+        .put(
+            i0721_server::blob::BlobSlot::Media,
+            &key,
+            b"decoy-bytes-from-the-other-bucket",
+        )
+        .await
+        .unwrap();
     let (status, envelope) = rpc(
         &state,
         &token,
