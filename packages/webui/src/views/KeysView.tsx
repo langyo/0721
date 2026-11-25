@@ -19,12 +19,15 @@ import { usePageRefresh } from "@/composables/usePageRefresh";
 import type { ApiKeyCreated, ApiKeyPublic, KeyWrite } from "@/api";
 import type { KeyOp } from "@/types";
 import { makeErrorText } from "@/composables/errorText";
+import { listBuckets } from "@/api/buckets";
 import {
   KEY_OPS,
+  canonicalBuckets,
   canonicalOps,
   fieldToInstant,
   instantToField,
   isFutureField,
+  keyBucketsOf,
 } from "@/composables/keyForm";
 
 import "./KeysView.scss";
@@ -94,6 +97,13 @@ export default defineComponent({
     /// The `datetime-local` value (`""` = no expiry) — the same field
     /// shape FilesView's share dialog uses; this wave adds no picker.
     const formExpiry = ref("");
+    /// The key's bucket reference (Q7). `null` = send WITHOUT the field
+    /// (the server materializes the owner's granted buckets); an array
+    /// (even empty) = the explicit pick, sent as-is.
+    const formBuckets = ref<string[] | null>(null);
+    /// The registry's slugs the picker offers (the create/edit dialog
+    /// loads them once per open; empty registry = only "no buckets").
+    const knownSlugs = ref<string[]>([]);
 
     const nameValid = computed(() => formName.value.trim().length > 0);
     /// At least one permission — the server's rule, mirrored so an empty
@@ -112,6 +122,8 @@ export default defineComponent({
       formName.value = "";
       formOps.value = [];
       formExpiry.value = "";
+      formBuckets.value = null;
+      knownSlugs.value = [];
     }
 
     /** Toggle one permission (the switches' `update:modelValue` lane). */
@@ -121,16 +133,40 @@ export default defineComponent({
         : formOps.value.filter((value) => value !== op);
     }
 
-    /** The write payload: the canonical op order, the trimmed name, and
-     *  the expiry as an RFC 3339 instant — OMITTED entirely when the field
+    /** Toggle one slug in the picker (multi-select semantics: click to
+     *  add, click again to remove). */
+    function toggleBucket(slug: string): void {
+      const current = formBuckets.value ?? [];
+      formBuckets.value = current.includes(slug)
+        ? current.filter((s) => s !== slug)
+        : [...current, slug];
+    }
+
+    /** The registry's slugs for the picker, canonical (deduped, sorted).
+     *  MUT:p2a-key-buckets-canonical — offering an unsorted/duplicated
+     *  list reddens the picker test. */
+    const bucketOptions = computed(() =>
+      canonicalBuckets(knownSlugs.value).map((slug) => ({
+        slug,
+        picked: (formBuckets.value ?? []).includes(slug),
+      })),
+    );
+
+    /** The write payload: the canonical op order, the trimmed name, the
+     *  expiry as an RFC 3339 instant — OMITTED entirely when the field
      *  is empty, which is the server's "no expiry" (and the way an edit
-     *  clears one). */
+     *  clears one) — and the bucket reference (Q7): `formBuckets === null`
+     *  sends WITHOUT the field (server materializes granted_buckets);
+     *  an array (even `[]` = no buckets) is the explicit pick.
+     *  MUT:p2a-key-buckets-omit — sending `[]` for a K-era key's null
+     *  (or dropping the field for an explicit empty) reddens this. */
     function formPayload(): KeyWrite {
       const instant = fieldToInstant(formExpiry.value);
       return {
         name: formName.value.trim(),
         ops: canonicalOps(formOps.value),
         ...(instant === undefined ? {} : { expires_at: instant }),
+        ...(formBuckets.value === null ? {} : { buckets: canonicalBuckets(formBuckets.value) }),
       };
     }
 
@@ -141,6 +177,7 @@ export default defineComponent({
       { key: "name", title: t("common.keys.nameLabel") },
       { key: "prefix", title: t("common.keys.prefix"), copyable: false },
       { key: "ops", title: t("common.keys.permissions"), copyable: false },
+      { key: "buckets", title: t("common.keys.buckets"), copyable: false },
       { key: "expiry", title: t("common.keys.expiry"), copyable: false },
       { key: "state", title: t("common.keys.state") },
       { key: "actions", title: "", align: "right", width: "5.5rem", copyable: false },
@@ -172,10 +209,22 @@ export default defineComponent({
         resetForm();
         created.value = null;
         createOpen.value = true;
+        void loadBucketSlugs();
       },
     });
 
     // ── create ─────────────────────────────────────────────────────────
+
+    /** Load the registry's slugs for the picker (best-effort: a failed
+     *  read leaves the picker empty rather than blocking the dialog —
+     *  the write path still refuses unknown slugs server-side). */
+    async function loadBucketSlugs(): Promise<void> {
+      try {
+        knownSlugs.value = (await listBuckets()).buckets.map((b) => b.slug);
+      } catch {
+        knownSlugs.value = [];
+      }
+    }
 
     async function doCreate() {
       // The client-side mirror of the server's three refusals (blank name,
@@ -236,6 +285,12 @@ export default defineComponent({
       // into the replaced payload.
       formOps.value = canonicalOps(row.ops ?? []);
       formExpiry.value = instantToField(row.expires_at);
+      // Q7: a scopes WITHOUT a `buckets` array (K-era) edits as "not
+      // picked yet" (the dialog loads the registry and the submit pins
+      // the explicit array); an array — `[]` included — is the row's
+      // explicit pick and pre-fills the picker from it.
+      formBuckets.value = keyBucketsOf(row.buckets);
+      void loadBucketSlugs();
     }
 
     function closeEdit(): void {
@@ -373,6 +428,40 @@ export default defineComponent({
     }
 
     /**
+     * The buckets cell (Q7). A scopes WITHOUT a `buckets` array — the
+     * K-era shape, fail-closed to "no buckets" server-side — renders
+     * the loud「无桶」marker, not a blank: silence would read as "all
+     * buckets allowed", the exact opposite of what the row means.
+     * MUT:p2a-key-no-buckets-marker — dropping the marker branch leaves
+     * the K-era row blank and reddens the roster test. An EXPLICIT empty
+     * array is a real pick and shows the plain empty state.
+     */
+    function renderBuckets(row: ApiKeyPublic) {
+      const buckets = keyBucketsOf(row.buckets);
+      if (buckets === null) {
+        return (
+          <HkBadge variant="warning" size="sm" dot data-testid={`key-no-buckets-${row.id}`}>
+            {t("common.keys.noBuckets")}
+          </HkBadge>
+        );
+      }
+      if (buckets.length === 0) {
+        return (
+          <span class="key-buckets-none" data-testid={`key-empty-buckets-${row.id}`}>
+            {t("common.keys.noBucketsPicked")}
+          </span>
+        );
+      }
+      return (
+        <span class="key-ops" data-testid={`key-buckets-${row.id}`}>
+          {buckets.map((slug) => (
+            <HkBadge key={slug} variant="info" size="sm" mono>{slug}</HkBadge>
+          ))}
+        </span>
+      );
+    }
+
+    /**
      * The expiry cell.
      *
      * "Expired" is the SERVER's verdict (`row.expired`), never a local
@@ -459,6 +548,33 @@ export default defineComponent({
               </div>
             ))}
           </fieldset>
+          {/* The bucket picker (Q7): one toggle row per registry slug,
+              click to add / click again to remove. An EMPTY selection
+              with the field PRESENT is the explicit `[]` = no buckets
+              pick — the payload still carries `buckets: []`; leaving the
+              whole field out (the null state) is the K-era "not picked
+              yet" lane that materializes the owner's buckets. */}
+          <fieldset class="key-ops-field">
+            <legend>{t("common.keys.buckets")}</legend>
+            {bucketOptions.value.length === 0 ? (
+              <p class="key-form-hint" data-testid={id("buckets-empty")}>
+                {t("common.keys.noBucketsAvailable")}
+              </p>
+            ) : (
+              bucketOptions.value.map((option) => (
+                <div class="key-switch-row" key={option.slug}>
+                  <span>{option.slug}</span>
+                  <HkSwitch
+                    modelValue={option.picked}
+                    aria-label={option.slug}
+                    data-testid={id(`bucket-${option.slug}`)}
+                    onUpdate:modelValue={() => toggleBucket(option.slug)}
+                  />
+                </div>
+              ))
+            )}
+            <p class="key-form-hint">{t("common.keys.bucketsHint")}</p>
+          </fieldset>
           <label class="key-expiry-field">
             <span>{t("common.keys.expiryOptional")}</span>
             <input
@@ -507,6 +623,8 @@ export default defineComponent({
             ),
 
             "cell-ops": ({ row }: { row: ApiKeyPublic }) => renderOps(row),
+
+            "cell-buckets": ({ row }: { row: ApiKeyPublic }) => renderBuckets(row),
 
             "cell-expiry": ({ row }: { row: ApiKeyPublic }) => renderExpiry(row),
 

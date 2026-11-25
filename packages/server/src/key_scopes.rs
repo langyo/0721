@@ -129,6 +129,19 @@ pub fn ordered_ops(set: &BTreeSet<KeyOp>) -> Vec<KeyOp> {
         .collect()
 }
 
+/// Whether a key's stored scopes carry a `buckets` ARRAY AT ALL (the
+/// K-era detection the webui's「无桶」marker renders from — see Q7 /
+/// §7). A missing field or a non-array value answers `false`; an array
+/// (empty included) answers `true`. Fail-closed to `false`, like every
+/// reader here: an unparseable scopes text is pre-materialization.
+#[must_use]
+pub fn scopes_carry_buckets_array(raw: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| value.get("buckets").and_then(serde_json::Value::as_array))
+        .is_some()
+}
+
 /// The `buckets` dimension of a key's scopes (spec Q7): a slug array of
 /// at most 64 entries, deduped and lexicographically sorted.
 ///

@@ -1619,11 +1619,25 @@ pub fn build_server(state: AppState) -> RpcServer {
                         let set = crate::key_scopes::parse_scopes(&r.scopes);
                         let expired =
                             crate::key_scopes::is_live(&r, now) == crate::key_scopes::Live::Expired;
+                        // Q7's list projection: an explicit array — `[]`
+                        // included — carries the canonicalized slugs; a
+                        // scopes WITHOUT the array (K-era) reports `None`
+                        // so the webui can render the「无桶」marker.
+                        let buckets = if crate::key_scopes::scopes_carry_buckets_array(&r.scopes) {
+                            Some(
+                                crate::key_scopes::parse_scopes_buckets(&r.scopes)
+                                    .into_iter()
+                                    .collect::<Vec<_>>(),
+                            )
+                        } else {
+                            None
+                        };
                         i0721_proto::ApiKeyPublic {
                             id: r.id,
                             name: r.name,
                             key_prefix: r.key_prefix,
                             ops: crate::key_scopes::ordered_ops(&set),
+                            buckets,
                             expires_at: r.expires_at,
                             expired,
                             last_used_at: r.last_used_at,

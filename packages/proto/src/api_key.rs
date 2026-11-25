@@ -92,6 +92,13 @@ pub struct ApiKeyPublic {
     /// The key's permissions in the canonical order (`read`, `upload`,
     /// `share`) — never the raw stored JSON.
     pub ops: Vec<KeyOp>,
+    /// The key's bucket reference (Q7): `Some([])` = an EXPLICIT empty
+    /// array ("no buckets" pick); `Some(slugs)` = the materialized set;
+    /// `None` = the scopes carry NO `buckets` array at all (a K-era row
+    /// the 0008 migration has not touched) — the webui renders the
+    ///「无桶」marker from this, per §7.
+    #[ts(optional)]
+    pub buckets: Option<Vec<String>>,
     /// RFC 3339 expiry instant, or `None` for a key that never expires.
     #[ts(optional)]
     pub expires_at: Option<String>,

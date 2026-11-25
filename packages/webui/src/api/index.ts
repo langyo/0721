@@ -168,6 +168,14 @@ export interface KeyWrite {
   name: string;
   ops: KeyOp[];
   expires_at?: string;
+  /**
+   * The explicit `scopes.buckets` reference (Q7). PRESENT (including
+   * `[]` = no buckets) → the caller's pick, sent as-is; OMITTED → the
+   * server materializes the owner's current granted buckets. The edit
+   * dialog for a K-era key (no `buckets` array in its scopes) submits
+   * with the field present so the edit materializes/pins explicitly.
+   */
+  buckets?: string[];
 }
 
 export function createKey(payload: KeyWrite): Promise<ApiKeyCreated> {
