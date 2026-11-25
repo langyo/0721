@@ -349,6 +349,17 @@ mid-flight is dropped with a 401. Keys minted before permissions were
 enforced are normalized by the schema migration to the EMPTY permission
 set — grant them with `keys.update`.
 
+### Upgrading
+
+API keys created before per-key permissions existed start with NO
+permissions after the upgrade: their stored permission set was never
+enforced, so the migration normalizes it to the empty set instead of
+guessing a grant. Such a key is listed on the "API keys" page with a "no
+permissions" tag and cannot call any MCP tool until you edit it there and
+grant what it needs. Review every key once after deploying this release —
+an agent holding an ungranted key sees `tools/list` answer an empty array
+and `-32001` on every call.
+
 A copy-pasteable `mcpServers` entry for an SSE-speaking client (Claude
 Code, Cursor and friends) — replace the origin and the key:
 

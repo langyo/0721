@@ -1,13 +1,16 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The API layer stays mocked; the clipboard contract is the subject.
+// The API layer stays mocked; the wire payload and the rendered states are
+// the subject.
 const listKeysMock = vi.fn();
 const createKeyMock = vi.fn();
+const updateKeyMock = vi.fn();
 const revokeKeyMock = vi.fn();
 vi.mock("@/api", () => ({
   listKeys: (...args: unknown[]) => listKeysMock(...args),
   createKey: (...args: unknown[]) => createKeyMock(...args),
+  updateKey: (...args: unknown[]) => updateKeyMock(...args),
   revokeKey: (...args: unknown[]) => revokeKeyMock(...args),
 }));
 
@@ -15,40 +18,98 @@ import KeysView from "./KeysView";
 import { HkToast, useToast } from "@celestia-island/hikari";
 import { provideActionBar } from "@/composables/useActionBar";
 import { createAppI18n } from "@/i18n";
+import type { ApiKeyPublic } from "@/types";
 
 const i18n = createAppI18n();
 import { defineComponent, h } from "vue";
 
 /**
- * The key page's clipboard tri-state (R3 S1): idle → copied(target) →
- * back to idle, and a REJECTED clipboard write must surface visibly
- * instead of dying silently (the pattern the share dialog set).
+ * The key page: the clipboard tri-state, and — this wave — the per-key
+ * PERMISSION set and the optional EXPIRY.
  *
- * The failure half is a TOAST (the family feedback contract): the
- * copy-once card: the page-level variant carried a `role="alert"`
- * paragraph beside it (removed in the sweep; the invariant suite at
- * `src/__invariants__/inlineNotices.test.ts` holds that removal), and
- * buttons. The card itself is the create window's SECOND step — the
- * minted key appears inside the dialog where the action happened, with
- * as a block grown at the top of the page after the dialog closed.
+ * A key now carries `ops` (read / upload / share, at least one) and an
+ * optional `expires_at`, and the create/edit dialogs are one form. What
+ * these cases pin:
+ *  - the create payload carries EXACTLY the toggled ops (in canonical
+ *    order) and the expiry, and cannot be submitted with no permission or
+ *    a blank name;
+ *  - the roster renders one label per op, "never expires" when there is
+ *    no expiry, and the expired tag from the SERVER's `expired` flag
+ *    (not re-derived from `expires_at` and the browser clock);
+ *  - a key with no permission at all — every pre-upgrade key — renders
+ *    an explicit, prominent tag rather than a blank cell;
+ *  - edit calls `keys.update` with the full record, and emptying the
+ *    expiry field CLEARS the expiry;
+ *  - a server refusal reaches the user as a non-empty message.
+ *
+ * Failure text is a TOAST (the family feedback contract ; the invariant
+ * suite at `src/__invariants__/inlineNotices.test.ts` holds the ban on
+ * in-page notices), and the copy-once card is the create window's SECOND
+ * step — the minted key appears inside the dialog where the action
+ * happened, never as a block grown at the top of the page.
  */
 
 /** Every mounted toast outlet — cleanup owns their lifetime. */
 const outlets: Array<{ unmount: () => void }> = [];
+
+/**
+ * Every mounted harness — unmounted AND detached from the document.
+ *
+ * Load-bearing beyond tidiness: the dialogs TELEPORT into the shared
+ * overlay root, so a previous case's dialog keeps rendering into
+ * `<body>` after its wrapper is gone. A document-scoped query then reads
+ * the WRONG dialog (this bit the first draft of the permission/expiry
+ * cases: the form's hint was asserted against a stale minted-key card).
+ * `detach()` removes the case's own host, and the overlay root goes with
+ * it once nothing renders into it.
+ */
+const harnesses: Array<{ unmount: () => void; element: Element & { remove?: () => void } }> = [];
+
+/** Tear everything this file mounted out of the document. */
+function teardown() {
+  outlets.splice(0).forEach((o) => o.unmount());
+  harnesses.splice(0).forEach((h) => {
+    h.unmount();
+    h.element?.remove?.();
+  });
+  // The overlay root is hikari's, not ours: clear what is left in <body>
+  // (toast outlets, teleported shells) so the next case starts empty.
+  document.body.innerHTML = "";
+  // The toast store is module-level (hikari state) — clear it so the next
+  // case's outlet renders only ITS OWN messages.
+  clearToasts();
+}
 
 /** The text of the toast surface (empty when nothing is raised). */
 function toastTexts(): string[] {
   return [...document.querySelectorAll(".hk-toast-message")].map((el) => el.textContent ?? "");
 }
 
-const KEY_ROW = {
-  id: "k1",
-  name: "agent",
-  key_prefix: "i0721-abcd",
-  last_used_at: null,
-  revoked_at: null,
-  created_at: "2026-11-22T00:00:00Z",
-};
+/** The toast surface drained: hikari keeps one slot per (key, type), so a
+ *  test that asserts "the message is exactly X" must start from empty. */
+function clearToasts(): void {
+  const toast = useToast();
+  for (const slot of toast.toasts.slice()) toast.remove(slot.id);
+}
+
+/** A roster row. `ops` is canonical order, `expired` is the SERVER's
+ *  verdict — the generated `ApiKeyPublic` shape. */
+function keyRow(overrides: Partial<ApiKeyPublic> = {}): ApiKeyPublic {
+  return {
+    id: "k1",
+    name: "agent",
+    key_prefix: "i0721-abcd",
+    ops: ["read"],
+    // Note: no `expires_at` at all — the "never expires" shape.
+    expired: false,
+    last_used_at: undefined,
+    revoked_at: undefined,
+    created_at: "2026-11-22T00:00:00Z",
+    ...overrides,
+  };
+}
+
+const KEY_ROW = keyRow();
 
 // The create dialog opens from the header action bar's Create slot, so
 // the harness provides a real action bar (same shape as the portal test).
@@ -73,6 +134,7 @@ function mountView() {
     attachTo: host,
     global: { plugins: [createAppI18n()] },
   });
+  harnesses.push(wrapper as unknown as (typeof harnesses)[number]);
   // The family toast outlet renders what this view raises (the app
   // mounts one at the root; a test mounts its own).
   outlets.push(mount(HkToast, { attachTo: document.body, props: { teleport: false } }));
@@ -91,6 +153,33 @@ async function clickTestId(id: string) {
   await flushPromises();
 }
 
+/// Type into a field the way a user does (the `input` event the model
+/// listens for), then let the reactive graph settle.
+async function fillTestId(id: string, value: string, event = "input") {
+  const el = byTestId(id) as HTMLInputElement;
+  el.value = value;
+  el.dispatchEvent(new Event(event));
+  await flushPromises();
+}
+
+/// Flip a family switch by clicking its track (HkSwitch's own toggle lane
+/// emits `update:modelValue`), then settle.
+async function toggleSwitch(id: string) {
+  const track = byTestId(id).querySelector<HTMLElement>(".hk-switch-track");
+  if (!track) throw new Error(`no .hk-switch-track inside ${id}`);
+  track.click();
+  await flushPromises();
+}
+
+/// The dialog footer's buttons, by their visible label (the family
+/// footerActions row — the confirm action lives there, not in the body).
+function footerButton(label: string): HTMLButtonElement {
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>(".hk-modal-footer button")];
+  const found = buttons.find((b) => (b.textContent ?? "").trim() === label);
+  if (!found) throw new Error(`no footer button labelled ${label}`);
+  return found;
+}
+
 /// Open the create dialog through the CANONICAL create slot button.
 async function openCreateDialog(wrapper: ReturnType<typeof mountView>) {
   // The Create slot renders as the plus icon button labelled from the
@@ -99,6 +188,24 @@ async function openCreateDialog(wrapper: ReturnType<typeof mountView>) {
   expect(create.exists()).toBe(true);
   await create.trigger("click");
   await flushPromises();
+}
+
+/** A `datetime-local` value `hours` from now, in the user's LOCAL zone
+ *  (the field is timezone-naive — that is the point of the conversion
+ *  lane the view routes it through). */
+function localFieldValue(hours: number): string {
+  return instantAsLocalField(new Date(Date.now() + hours * 3600_000).toISOString());
+}
+
+/// An RFC 3339 instant as the `datetime-local` field spelling of the same
+/// moment in the user's LOCAL zone (the field drops seconds).
+function instantAsLocalField(instant: string): string {
+  const at = new Date(instant);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
+  );
 }
 
 describe("KeysView clipboard", () => {
@@ -112,15 +219,13 @@ describe("KeysView clipboard", () => {
     }
     listKeysMock.mockReset().mockResolvedValue([KEY_ROW]);
     createKeyMock.mockReset();
+    updateKeyMock.mockReset();
     revokeKeyMock.mockReset();
+    clearToasts();
   });
 
   afterEach(() => {
-    outlets.splice(0).forEach((o) => o.unmount());
-    // The toast store is module-level (hikari state) — clear it so the
-    // next case's outlet renders only ITS OWN messages.
-    const toast = useToast();
-    for (const slot of toast.toasts.slice()) toast.remove(slot.id);
+    teardown();
     vi.useRealTimers();
   });
 
@@ -131,11 +236,12 @@ describe("KeysView clipboard", () => {
       key: "i0721-fedcba9876543210fedcba9876543210",
     });
     await openCreateDialog(wrapper);
-    const nameInput = byTestId("key-name") as HTMLInputElement;
-    nameInput.value = "agent";
-    nameInput.dispatchEvent(new Event("input"));
+    await fillTestId("key-name", "agent");
+    // A key needs a permission (the form refuses an empty set), so the
+    // clipboard cases grant one.
+    await toggleSwitch("create-op-read");
+    footerButton("Create").click();
     await flushPromises();
-    await clickTestId("new-key");
     // The minted key rides INSIDE the secondary window now (it used to
     // grow at the top of the page after the dialog closed — the
     // page-module insertion the user banned), so the card is teleported
@@ -258,6 +364,399 @@ describe("KeysView clipboard", () => {
       );
     });
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+});
+
+describe("KeysView create payload (permissions + expiry)", () => {
+  beforeEach(() => {
+    listKeysMock.mockReset().mockResolvedValue([KEY_ROW]);
+    createKeyMock.mockReset().mockResolvedValue({ id: "k2", name: "agent", key: "i0721-new" });
+    updateKeyMock.mockReset();
+    revokeKeyMock.mockReset();
+    clearToasts();
+  });
+
+  afterEach(() => {
+    teardown();
+  });
+
+  it("sends exactly the toggled permissions and the expiry", async () => {
+    // MUT:keys-create-ops (the K-wave M6 mutant) — ignoring the switches
+    // and always sending all three ops reddens this: the payload's `ops`
+    // is what the README and the server's per-tool gate act on.
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    await fillTestId("key-name", "  agent  ");
+
+    // Toggle upload and share, leave read OFF: the payload must be the
+    // subset the user picked, in the canonical order (upload, share) —
+    // not all three, not the click order.
+    await toggleSwitch("create-op-share");
+    await toggleSwitch("create-op-upload");
+    const expiry = localFieldValue(48);
+    await fillTestId("key-expiry", expiry, "input");
+
+    footerButton("Create").click();
+    await flushPromises();
+
+    expect(createKeyMock).toHaveBeenCalledTimes(1);
+    const [payload] = createKeyMock.mock.calls[0] as [{ name: string; ops: string[]; expires_at?: string }];
+    expect(payload.name).toBe("agent");
+    expect(payload.ops).toEqual(["upload", "share"]);
+    // The field is local wall-clock; the wire carries the RFC 3339
+    // instant, so the two must agree as INSTANTS (a string passthrough
+    // would ship "2026-11-27T10:00" and the server would read it as UTC).
+    expect(payload.expires_at).toBeDefined();
+    expect(new Date(payload.expires_at!).getTime()).toBe(new Date(expiry).getTime());
+    wrapper.unmount();
+  });
+
+  it("omits the expiry when the field is left empty", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    await fillTestId("key-name", "agent");
+    await toggleSwitch("create-op-read");
+
+    footerButton("Create").click();
+    await flushPromises();
+
+    const [payload] = createKeyMock.mock.calls[0] as [Record<string, unknown>];
+    expect(payload).toEqual({ name: "agent", ops: ["read"] });
+    expect("expires_at" in payload).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("cannot submit without a permission, and says why", async () => {
+    // At least one permission is the server's rule; the form mirrors it by
+    // DISABLING the submit (and the disabled button cannot fire the call).
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    await fillTestId("key-name", "agent");
+
+    const submit = footerButton("Create");
+    expect(submit.disabled).toBe(true);
+    submit.click();
+    await flushPromises();
+    expect(createKeyMock).not.toHaveBeenCalled();
+    // The form names the missing piece instead of leaving a dead button.
+    expect(byTestId("create-ops-hint").textContent).toBe("Select at least one permission");
+
+    // Granting one opens the submit AND retires the hint.
+    await toggleSwitch("create-op-read");
+    expect(footerButton("Create").disabled).toBe(false);
+    expect(document.querySelector('[data-testid="create-ops-hint"]')).toBeNull();
+    wrapper.unmount();
+  });
+
+  it("cannot submit a blank name", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    // Whitespace only — `trim()` is the server's rule too.
+    await fillTestId("key-name", "   ");
+    await toggleSwitch("create-op-read");
+
+    expect(footerButton("Create").disabled).toBe(true);
+    footerButton("Create").click();
+    await flushPromises();
+    expect(createKeyMock).not.toHaveBeenCalled();
+
+    await fillTestId("key-name", "agent");
+    expect(footerButton("Create").disabled).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("refuses an expiry that has already passed", async () => {
+    // The client-side mirror of `expires_at must be in the future`; the
+    // server still owns the verdict (the case below keeps that lane
+    // alive end to end).
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    await fillTestId("key-name", "agent");
+    await toggleSwitch("create-op-read");
+    await fillTestId("key-expiry", localFieldValue(-2), "input");
+
+    expect(footerButton("Create").disabled).toBe(true);
+    expect(byTestId("create-expiry-hint").textContent).toBe("Expiry must be in the future");
+    footerButton("Create").click();
+    await flushPromises();
+    expect(createKeyMock).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+});
+
+describe("KeysView roster columns (permissions + expiry)", () => {
+  beforeEach(() => {
+    listKeysMock.mockReset();
+    createKeyMock.mockReset();
+    updateKeyMock.mockReset();
+    revokeKeyMock.mockReset();
+    clearToasts();
+  });
+
+  afterEach(() => {
+    teardown();
+  });
+
+  it("renders one label per permission, in canonical order", async () => {
+    // The server reports canonical order already; this pins that the cell
+    // prints every op as its own label (not one concatenated string) and
+    // that an out-of-order producer is normalized on render.
+    listKeysMock.mockResolvedValue([
+      keyRow({ id: "k1", name: "reader", ops: ["read"] }),
+      keyRow({ id: "k2", name: "writer", ops: ["share", "upload", "read"] }),
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+
+    const reader = byTestId("key-ops-k1");
+    expect(reader.textContent).toContain("Read (list, info, search)");
+    expect(reader.textContent).not.toContain("Upload");
+
+    const writer = byTestId("key-ops-k2");
+    const labels = [...writer.querySelectorAll(".hk-badge")].map((b) => b.textContent?.trim());
+    expect(labels).toEqual([
+      "Read (list, info, search)",
+      "Upload",
+      "Create share links",
+    ]);
+    wrapper.unmount();
+  });
+
+  it('renders "never expires" for a key without an expiry', async () => {
+    listKeysMock.mockResolvedValue([keyRow({ id: "k1", ops: ["read"] })]);
+    const wrapper = mountView();
+    await flushPromises();
+    const cell = byTestId("key-expiry-k1");
+    expect(cell.textContent).toContain("Never expires");
+    expect(cell.textContent).not.toContain("Expired");
+    wrapper.unmount();
+  });
+
+  it("renders the expired tag from the SERVER's flag, not from a local clock", async () => {
+    // Both rows carry an `expires_at` in the PAST and the future
+    // respectively — but what decides the tag is `expired`, the field the
+    // server computes (it owns the clock and the fail-closed parse).
+    const past = "2020-01-01T00:00:00Z";
+    const future = new Date(Date.now() + 365 * 24 * 3600_000).toISOString();
+    listKeysMock.mockResolvedValue([
+      // A past instant the server does NOT flag: must NOT show the tag.
+      keyRow({ id: "k1", name: "live", ops: ["read"], expires_at: past, expired: false }),
+      // A future instant the server DOES flag: must show the tag.
+      keyRow({ id: "k2", name: "dead", ops: ["read"], expires_at: future, expired: true }),
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+
+    const live = byTestId("key-expiry-k1");
+    expect(live.textContent).not.toContain("Expired");
+    expect(live.textContent).not.toContain("Never expires");
+
+    const dead = byTestId("key-expiry-k2");
+    expect(dead.textContent).toContain("Expired");
+    wrapper.unmount();
+  });
+
+  it("a_key_without_permissions_shows_the_no_permissions_tag", async () => {
+    // Every key minted before this wave was normalized fail-closed to an
+    // EMPTY permission set, so this is the common state right after the
+    // upgrade — and such a key can do nothing on the MCP surface. It must
+    // read as a loud, actionable state, never as a blank cell.
+    listKeysMock.mockResolvedValue([
+      keyRow({ id: "legacy", name: "legacy", ops: [] }),
+      keyRow({ id: "granted", name: "granted", ops: ["read"] }),
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+
+    const legacy = byTestId("key-no-permissions-legacy");
+    expect(legacy.textContent).toContain("No permissions — edit to grant");
+
+    // And the inverse: a key WITH permissions shows the labels and no
+    // such tag anywhere in its permissions cell.
+    expect(document.querySelector('[data-testid="key-no-permissions-granted"]')).toBeNull();
+    expect(byTestId("key-ops-granted").textContent).toContain("Read (list, info, search)");
+    // Exactly one tag on the page, on the legacy row.
+    expect(document.querySelectorAll('[data-testid^="key-no-permissions-"]').length).toBe(1);
+    wrapper.unmount();
+  });
+
+  it("resolves every permission caption from the locale catalogs", async () => {
+    // The captions are looked up as `common.keys.op_<op>` — a DYNAMIC key,
+    // which is exactly the shape `check_i18n.py` can only whitelist by
+    // wildcard, so it cannot tell a renamed locale key from a live one.
+    // A missing key renders the RAW key ("common.keys.op_upload") to the
+    // user, which every "contains the label" assertion above would miss.
+    // This case resolves each one against the real catalogs instead.
+    const { SUPPORTED_LOCALES, defaultMessages } = await import("@/i18n");
+    for (const locale of SUPPORTED_LOCALES) {
+      const messages = defaultMessages[locale] as { common?: { keys?: Record<string, string> } };
+      for (const op of ["read", "upload", "share"] as const) {
+        const caption = messages?.common?.keys?.[`op_${op}`];
+        expect(typeof caption, `${locale} is missing common.keys.op_${op}`).toBe("string");
+        expect((caption ?? "").trim().length).toBeGreaterThan(0);
+      }
+    }
+    // And the rendered captions are the English catalog's, not raw keys.
+    listKeysMock.mockResolvedValue([keyRow({ id: "k1", ops: ["read", "upload", "share"] })]);
+    const wrapper = mountView();
+    await flushPromises();
+    const cell = byTestId("key-ops-k1");
+    expect(cell.textContent).not.toContain("common.keys.op_");
+    expect(cell.textContent).toContain("Upload");
+    wrapper.unmount();
+  });
+});
+
+describe("KeysView edit flow", () => {
+  beforeEach(() => {
+    listKeysMock.mockReset();
+    createKeyMock.mockReset();
+    updateKeyMock.mockReset().mockResolvedValue(undefined);
+    revokeKeyMock.mockReset();
+    clearToasts();
+  });
+
+  afterEach(() => {
+    teardown();
+  });
+
+  it("calls keys.update with the full record and no plaintext key", async () => {
+    // `keys.update` is a FULL REPLACEMENT of name / ops / expires_at, so
+    // the dialog must submit all three (a partial patch would silently
+    // clear whatever it omitted).
+    const expiresAt = "2027-03-04T05:06:00Z";
+    listKeysMock.mockResolvedValue([
+      keyRow({ id: "k1", name: "agent", ops: ["read", "upload"], expires_at: expiresAt }),
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+
+    await clickTestId("edit-key-k1");
+    // The form opens PRE-FILLED from the row.
+    expect((byTestId("edit-key-name") as HTMLInputElement).value).toBe("agent");
+    const expiryField = byTestId("edit-key-expiry") as HTMLInputElement;
+    expect(expiryField.getAttribute("type")).toBe("datetime-local");
+    // The stored UTC instant, re-read as the user's LOCAL wall clock (the
+    // field is timezone-naive) — not the raw ISO string, which would shift
+    // the instant by the browser's offset.
+    expect(expiryField.value).toBe(instantAsLocalField(expiresAt));
+
+    await fillTestId("edit-key-name", "renamed");
+    await toggleSwitch("edit-op-upload"); // turn upload OFF
+    await toggleSwitch("edit-op-share"); // turn share ON
+    await fillTestId("edit-key-expiry", localFieldValue(72), "input");
+
+    footerButton("Save").click();
+    await flushPromises();
+
+    expect(updateKeyMock).toHaveBeenCalledTimes(1);
+    const [id, payload] = updateKeyMock.mock.calls[0] as [string, {
+      name: string;
+      ops: string[];
+      expires_at?: string;
+    }];
+    expect(id).toBe("k1");
+    expect(payload.name).toBe("renamed");
+    expect(payload.ops).toEqual(["read", "share"]);
+    expect(new Date(payload.expires_at!).getTime()).toBe(
+      new Date(localFieldValue(72)).getTime(),
+    );
+    // No credential anywhere: the key is stored hashed and the dialog
+    // does not invent one.
+    expect(document.querySelector("[data-testid='plaintext-key']")).toBeNull();
+    expect(document.querySelector("[data-testid='copy-once-card']")).toBeNull();
+    // Success is a toast on this view's own slot.
+    expect(toastTexts()).toContain("API key updated");
+    wrapper.unmount();
+  });
+
+  it("clears the expiry when the field is emptied", async () => {
+    // The way to say "this key never expires again": submit the record
+    // with no `expires_at` at all. The server reads an absent field as
+    // "no expiry", so the payload must DROP the key rather than send "".
+    listKeysMock.mockResolvedValue([
+      keyRow({ id: "k1", name: "agent", ops: ["read"], expires_at: "2027-01-02T03:04:00Z" }),
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+
+    await clickTestId("edit-key-k1");
+    expect((byTestId("edit-key-expiry") as HTMLInputElement).value).not.toBe("");
+    await fillTestId("edit-key-expiry", "", "input");
+    footerButton("Save").click();
+    await flushPromises();
+
+    const [, payload] = updateKeyMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect("expires_at" in payload).toBe(false);
+    expect(payload.ops).toEqual(["read"]);
+    expect(payload.name).toBe("agent");
+    wrapper.unmount();
+  });
+
+  it("keeps the edit window open when the server refuses the write", async () => {
+    // A server refusal (another user's key, a revoked target, a bad
+    // expiry) must reach the user as a non-empty message, and the typed
+    // values must survive for the retry.
+    listKeysMock.mockResolvedValue([keyRow({ id: "k1", name: "agent", ops: ["read"] })]);
+    updateKeyMock.mockRejectedValue(new Error("expires_at must be in the future"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await clickTestId("edit-key-k1");
+    await fillTestId("edit-key-name", "still-here");
+    footerButton("Save").click();
+    await flushPromises();
+
+    expect(updateKeyMock).toHaveBeenCalledTimes(1);
+    const messages = toastTexts().filter((text) => text.trim().length > 0);
+    expect(messages).toContain("expires_at must be in the future");
+    // The window is still open, with the typed name.
+    expect((byTestId("edit-key-name") as HTMLInputElement).value).toBe("still-here");
+    wrapper.unmount();
+  });
+
+  it("surfaces a server validation error on create as a non-empty message", async () => {
+    // The mirror above refuses the obvious cases; the SERVER is still the
+    // authority, and its refusal must land on the toast surface (an empty
+    // message would render no toast at all and read as "nothing
+    // happened").
+    listKeysMock.mockResolvedValue([KEY_ROW]);
+    createKeyMock.mockRejectedValue(new Error("at least one permission is required"));
+    const wrapper = mountView();
+    await flushPromises();
+    await openCreateDialog(wrapper);
+    await fillTestId("key-name", "agent");
+    await toggleSwitch("create-op-read");
+
+    footerButton("Create").click();
+    await flushPromises();
+
+    const messages = toastTexts().filter((text) => text.trim().length > 0);
+    expect(messages).toContain("at least one permission is required");
+    // The window stays open (no minted-key card) so the attempt can be
+    // retried.
+    expect(document.querySelector("[data-testid='copy-once-card']")).toBeNull();
+    wrapper.unmount();
+  });
+
+  it("falls back to a non-empty message for a message-less rejection", async () => {
+    // `errorText`'s never-empty contract: a rejection carrying nothing
+    // must still raise a toast (the shared factory's fallback).
+    listKeysMock.mockResolvedValue([keyRow({ id: "k1", name: "agent", ops: ["read"] })]);
+    updateKeyMock.mockRejectedValue(undefined);
+    const wrapper = mountView();
+    await flushPromises();
+    await clickTestId("edit-key-k1");
+    footerButton("Save").click();
+    await flushPromises();
+
+    expect(toastTexts()).toContain(i18n.global.t("common.status.error"));
+    wrapper.unmount();
   });
 });
 

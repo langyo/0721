@@ -131,14 +131,37 @@ export function putPasswordLogin(enabled: boolean): Promise<void> {
 // (AGENTS 「类型单向」): the generated barrel is the single source.
 // (Re-export AND import: `export ... from` does not bind the local
 // names these functions below reference.)
-import type { ApiKeyCreated, ApiKeyPublic } from "@/types";
-export type { ApiKeyCreated, ApiKeyPublic } from "@/types";
+import type { ApiKeyCreated, ApiKeyPublic, KeyOp } from "@/types";
+export type { ApiKeyCreated, ApiKeyPublic, KeyOp } from "@/types";
 
-export function createKey(name: string): Promise<ApiKeyCreated> {
-  return wsCall<ApiKeyCreated>('keys.create', { name });
+/**
+ * The write payload `keys.create` / `keys.update` take.
+ *
+ * Both methods are FULL REPLACEMENTS of the same three fields (the
+ * server validates them through one shared validator), so one shape
+ * serves both. `expires_at` is the only optional member:
+ *  - omitted → no expiry;
+ *  - `""` → no expiry too (the server reads an explicitly empty
+ *    string as the webui's cleared `datetime-local` field), which is how
+ *    the edit dialog CLEARS an expiry without a second argument.
+ * The plaintext key is not part of any write — it exists only in the
+ * `keys.create` RESPONSE, once.
+ */
+export interface KeyWrite {
+  name: string;
+  ops: KeyOp[];
+  expires_at?: string;
+}
+
+export function createKey(payload: KeyWrite): Promise<ApiKeyCreated> {
+  return wsCall<ApiKeyCreated>('keys.create', { ...payload });
 }
 export function listKeys(): Promise<ApiKeyPublic[]> {
   return wsCall<ApiKeyPublic[]>('keys.list');
+}
+/** Replace a key's name, permission set and expiry in one call. */
+export function updateKey(id: string, payload: KeyWrite): Promise<void> {
+  return wsCall<void>('keys.update', { id, ...payload });
 }
 export function revokeKey(id: string): Promise<void> {
   return wsCall<void>('keys.revoke', { id });
