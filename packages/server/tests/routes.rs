@@ -13899,6 +13899,88 @@ async fn adopt_refuses_keys_outside_the_sha256_namespace() {
     assert_eq!(total, 0, "no row for any refused key");
 }
 
+/// `adopt_into_a_disabled_bucket_answers_storage_unavailable`: a
+/// disabled target bucket refuses the adopt with the `-32010`
+/// storage-unavailable fault — never a silent re-route of the row into
+/// another bucket's store. Both halves are disabled: the store row
+/// (`set_bucket_enabled`) AND the registry entry (rebuilt Disabled, the
+/// `files_chain_unservable_bucket_answers_32010` fixture shape).
+/// MUT:P3-ADOPT-DISABLED — mapping the resolve failure to the bootstrap
+/// store (a silent re-route) reddens this: the adopt would proceed
+/// against the wrong bucket's store.
+#[tokio::test]
+async fn adopt_into_a_disabled_bucket_answers_storage_unavailable() {
+    let key = sha_key(13);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+    // The store row flips first…
+    set_bucket_enabled(&fx.state, &fx.bucket_slug, false).await;
+    // …and the registry entry goes Disabled too (store: None — the
+    // fail-closed shape `plant_second_bucket(…, false)` builds for the
+    // bootstrap entry).
+    let bootstrap_id = fx.state.registry.bootstrap_bucket_id().unwrap();
+    let registry = i0721_server::blob_registry::BlobRegistry::from_entries(
+        vec![
+            (
+                bootstrap_id,
+                i0721_server::blob_registry::BucketEntry {
+                    slug: "bootstrap".to_owned(),
+                    state: i0721_server::blob_registry::BucketState::Ready,
+                    reason: None,
+                    store: Some(fx.state.blobs.clone()),
+                },
+            ),
+            (
+                fx.bucket_id,
+                i0721_server::blob_registry::BucketEntry {
+                    slug: fx.bucket_slug.clone(),
+                    state: i0721_server::blob_registry::BucketState::Disabled,
+                    reason: Some("the bucket is disabled in the registry".to_owned()),
+                    store: None,
+                },
+            ),
+        ],
+        bootstrap_id,
+        i0721_proto::BucketBackend::Local,
+    );
+    let mut state = fx.state.clone();
+    state.registry = registry;
+
+    let (status, envelope) = rpc(
+        &state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+            "owner_id": fx.member_id,
+        }),
+    )
+    .await;
+    let _ = status;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32010,
+        "a disabled target bucket answers the storage-unavailable fault: {envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("storage backend unavailable"),
+        "the fault names the backend failure: {envelope}"
+    );
+    let rows = state
+        .store
+        .list_live_rows_by_storage_key(&key)
+        .await
+        .unwrap();
+    assert!(
+        rows.is_empty(),
+        "NO row was inserted for the key in the disabled bucket: {rows:?}"
+    );
+}
+
 /// The unsupported-backend refusal: ipfs answers a DISTINCT documented
 /// error (never a silent empty list). Rides the ipfs stub state.
 #[tokio::test]
