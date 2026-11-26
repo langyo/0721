@@ -70,7 +70,8 @@ describe("bootstrap installs the error reporting hook", () => {
     // island on the document, install must TAKE it (read once, then
     // removed — hikari's contract, so a reinstall cannot re-raise a
     // landing the visitor already saw). If hikari ever drops the island
-    // read, this reddens and the source pin above would be read as
+    // read, the case below fails and the source pin above reads as a
+    // guard it is not.
     //
     // What is asserted is the CONSUMPTION, not the overlay: whether a
     // losing second error still paints depends on hikari's module-scope
