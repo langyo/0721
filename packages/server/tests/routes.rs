@@ -12380,6 +12380,60 @@ async fn shared_storage_key_resolves_identically_on_every_request() {
     );
 }
 
+/// `a_member_sees_503_not_404_on_a_disabled_public_bucket` — the R-J
+/// letter for the MEMBER lane: `enabled` is consulted only for
+/// AVAILABILITY (the serving-row scan), never for A/visibility. A
+/// member session with NO grant on a DISABLED public bucket still has
+/// the A witness rows in `authorized_rows` (non-empty), so the face is
+/// 503 — the mutated shape (A consulting `enabled`, emptying the
+/// authorized set on an ungranted invisible bucket) answers 404.
+/// MUT:P2B-A-ENABLED — letting A consult `enabled` turns this red.
+#[tokio::test]
+async fn a_member_sees_503_not_404_on_a_disabled_public_bucket() {
+    let (state, admin) = test_state().await;
+    let token = login(&state, "admin", "admin-password").await;
+    let (_, dto) = upload(&state, &token, tiny_png(), "dim.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    // The public bucket goes DISABLED in the store (the media lane's
+    // authority for the flag): A still holds, but no row is servable.
+    // The bucket also closes SIGNUP-GRANT: no grant row + gos = FALSE
+    // leaves the member invisible-by-grant. ONLY the A witness row
+    // (enabled ignored) can keep the authorized set non-empty, and
+    // with it the 503 face.
+    patch_bucket(&state, "bootstrap", true, false, false).await;
+    let member = state
+        .store
+        .create_user(CreateUser {
+            username: "no-grant-member".to_owned(),
+            display_name: "NoGrant".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = state.signer.sign(member.id, Timestamp::now());
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the witness row keeps authorized_rows non-empty: 503, not 404"
+    );
+    assert_eq!(
+        cache_of(&response).as_deref(),
+        Some("no-store"),
+        "the 503 face is no-store"
+    );
+}
+
 /// `disabling_a_public_bucket_answers_503_to_sessions_and_404_to_anonymous`
 /// — visibility (A) and availability (Ready ∧ enabled) split: the
 /// disabled public bucket keeps A TRUE (enabled is ignored), so
