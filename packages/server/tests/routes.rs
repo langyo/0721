@@ -14074,6 +14074,43 @@ async fn adopt_under_another_owners_parent_is_refused() {
     assert!(rows.is_empty(), "no row was inserted: {rows:?}");
 }
 
+/// `adopt_validates_the_requested_name`: an explicit `name` that
+/// `validate_file_name` refuses (a `..` segment, a slash, empty) is
+/// invalid params — before any row is written.
+/// MUT:P3-ADOPT-NAME — skipping `validate_file_name` reddens this.
+#[tokio::test]
+async fn adopt_validates_the_requested_name() {
+    let key = sha_key(17);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+    for bad in ["../escape", "a/b", "", "."] {
+        let (_, envelope) = rpc(
+            &fx.state,
+            &fx.admin_token,
+            "storage.unregistered.adopt",
+            serde_json::json!({
+                "bucket": fx.bucket_slug,
+                "key": key,
+                "owner_id": fx.member_id,
+                "name": bad,
+            }),
+        )
+        .await;
+        assert_eq!(
+            rpc_error_code(&envelope),
+            -32602,
+            "an invalid name {bad:?} must be refused as invalid params: {envelope}"
+        );
+    }
+    let rows = fx
+        .state
+        .store
+        .list_live_rows_by_storage_key(&key)
+        .await
+        .unwrap();
+    assert!(rows.is_empty(), "no row for any refused name: {rows:?}");
+}
+
 /// The unsupported-backend refusal: ipfs answers a DISTINCT documented
 /// error (never a silent empty list). Rides the ipfs stub state.
 #[tokio::test]
