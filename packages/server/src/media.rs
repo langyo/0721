@@ -222,28 +222,19 @@ async fn row_is_visible_without_read(
     Ok(access.any() && !access.read)
 }
 
-/// The R-J serving row: the first row by `id ASC` (the store's
-/// traversal order) whose bucket is `Ready ∧ enabled` — bytes for the
-/// original AND the thumbnail (including the lazy write) come from THAT
-/// row's bucket. Availability = the registry's Ready state AND the
-/// store's `enabled` flag (the registry snapshot can trail a runtime
-/// disable; the row in the store is the authority for the flag).
-async fn serving_row<'a>(
-    state: &AppState,
-    rows: &[&'a i0721_proto::FileRecord],
+/// The PURE serving-row selection inside the authorized set: sort the
+/// rows by `id ASC` (the set's construction order — witnesses first —
+/// must not decide; the id does), then take the first one the caller's
+/// availability predicate accepts. Defense-in-depth for future stores
+/// whose key-scan order is not `id ASC`.
+fn select_serving_row<'a>(
+    authorized: &[&'a i0721_proto::FileRecord],
+    is_servable: impl Fn(&i0721_proto::FileRecord) -> bool,
 ) -> Option<&'a i0721_proto::FileRecord> {
-    for row in rows {
-        if state.registry.for_row(row).is_err() || !row_bucket_ready(state, row) {
-            continue;
-        }
-        if let Some(bucket) = bucket_of_row(state, row).await.ok().flatten() {
-            if !bucket.enabled {
-                continue;
-            }
-        }
-        return Some(row);
-    }
-    None
+    let mut rows: Vec<&'a i0721_proto::FileRecord> = authorized.to_vec();
+    rows.sort_by_key(|row| row.id);
+    rows.dedup();
+    rows.into_iter().find(|row| is_servable(row))
 }
 
 /// Whether the row's bucket (the NULL shape reads through the bootstrap
@@ -337,12 +328,25 @@ pub async fn download(
         }
     };
     // R-J: the serving row is the first by `id ASC` WITHIN
-    // authorized_rows — the set's construction order (witnesses first)
-    // must not decide; the id does.
-    let mut authorized = authorized;
-    authorized.sort_by_key(|row| row.id);
-    authorized.dedup();
-    let face = if let Some(row) = serving_row(&state, &authorized).await {
+    // authorized_rows — the pure selection pins the order and the
+    // availability predicate (Ready ∧ enabled) together. The async
+    // availability facts (registry Ready, store `enabled`) are
+    // precomputed per row; the selection itself stays synchronous.
+    let mut servable = std::collections::HashSet::new();
+    for row in &authorized {
+        if state.registry.for_row(row).is_ok()
+            && row_bucket_ready(&state, row)
+            && bucket_of_row(&state, row)
+                .await
+                .ok()
+                .flatten()
+                .is_none_or(|bucket| bucket.enabled)
+        {
+            servable.insert(row.id);
+        }
+    }
+    let face = if let Some(row) = select_serving_row(&authorized, |row| servable.contains(&row.id))
+    {
         Face::Serve(row.id)
     } else if matches!(actor, MediaActor::Anonymous) {
         // A held (the set is non-empty only when it did) but no usable
@@ -471,4 +475,66 @@ async fn regenerate_thumbnail(
         .map_err(|err| ApiError::internal(format!("thumbnail regeneration failed: {err}")))?;
     store.put(BlobSlot::Cache, thumb_key, &thumbnail).await?;
     Ok(("image/webp".to_owned(), thumbnail))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_serving_row;
+    use i0721_proto::{FileKind, FileRecord};
+    use jiff::Timestamp;
+    use uuid::Uuid;
+
+    /// A minimal live row with the given id and storage key.
+    fn row(id: u128, storage_key: &str) -> FileRecord {
+        FileRecord {
+            id: Uuid::from_u128(id),
+            owner_id: Uuid::from_u128(1),
+            parent_id: None,
+            name: format!("row-{id}"),
+            kind: FileKind::Image,
+            mime: "image/png".to_owned(),
+            size: 1,
+            sha256: storage_key.to_owned(),
+            bucket_id: None,
+            storage_backend: "local".to_owned(),
+            storage_key: storage_key.to_owned(),
+            thumbnail_key: None,
+            original_name: "x".to_owned(),
+            created_at: Timestamp::now(),
+            deleted_at: None,
+        }
+    }
+
+    /// MUT:P2B-SORT — dropping the `id ASC` sort (relying on the
+    /// caller's order) turns this red: the authorized slice arrives in
+    /// REVERSE id order, with the lowest-id SERVABLE row in the middle;
+    /// the selection must still return that row.
+    #[test]
+    fn select_serving_row_ignores_the_caller_order() {
+        let rows = [row(3, "c"), row(1, "a"), row(2, "b")];
+        // All rows servable — ONLY the id decides, never the position.
+        let authorized: Vec<&FileRecord> = rows.iter().collect();
+        let picked = select_serving_row(&authorized, |_| true).expect("a servable row exists");
+        assert_eq!(
+            picked.id,
+            Uuid::from_u128(1),
+            "the selection follows `id ASC`, never the caller's order"
+        );
+    }
+
+    /// MUT:P2B-SORT-FIRST — taking the FIRST row regardless of
+    /// servability turns this red: the lowest-id row is NOT servable;
+    /// the next-lowest servable row must win.
+    #[test]
+    fn select_serving_row_skips_unservable_low_ids() {
+        let rows = [row(1, "a"), row(2, "b"), row(3, "c")];
+        let authorized: Vec<&FileRecord> = rows.iter().collect();
+        let picked = select_serving_row(&authorized, |r| r.id != Uuid::from_u128(1))
+            .expect("a servable row exists");
+        assert_eq!(
+            picked.id,
+            Uuid::from_u128(2),
+            "unservable low ids are skipped; the first SERVABLE row wins"
+        );
+    }
 }
