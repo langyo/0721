@@ -13588,14 +13588,13 @@ async fn unregistered_off_rpc_list_refuses() {
         serde_json::json!({"bucket": fx.bucket_slug}),
     )
     .await;
-    // The lane's OWN admin gate follows the codebase's -32005 AUTH
-    // convention (require_admin everywhere); the spec's -32006 face is
-    // the show=false arm below (the lane exists but answers "not
-    // found" for everyone).
+    // B-SPEC's error table, storage.* row: an invisible surface answers
+    // -32006 — a member must not even learn that the surface exists, so
+    // the refusal is the SAME code and copy as the show=false arm below.
     assert_eq!(
         rpc_error_code(&envelope),
-        -32005,
-        "a non-admin must be refused at the admin gate: {envelope}"
+        -32006,
+        "a non-admin is refused as not-found (never a permission oracle): {envelope}"
     );
     let _ = status;
 

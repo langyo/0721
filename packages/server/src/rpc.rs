@@ -1990,13 +1990,22 @@ pub fn build_server(state: AppState) -> RpcServer {
                 }
                 let args: UnregisteredListParams = params(&ctx)?;
                 let caller = user_of(&ctx);
-                require_admin(&caller).await?;
+                // The unregistered-object surface is INVISIBLE to a
+                // non-admin (B-SPEC's error table, storage.* row: "bucket
+                // not visible → -32006"; a member must not learn that the
+                // surface — or anything in the bucket — exists). The other
+                // three unregistered methods are management ACTIONS and
+                // keep require_admin's -32005.
+                // MUT:P3-REQUIRE-ADMIN — dropping this gate reddens
+                // `unregistered_off_rpc_list_refuses` (non-admin arm).
+                if caller.role != Role::Admin {
+                    return Err(api_err(ApiError::not_found(
+                        "the unregistered-object surface is disabled (storage_unregistered.show)",
+                    )));
+                }
                 // R-E: the switch gates the LIST itself — with show=false
                 // even an admin learns nothing (a corrupt/unreadable
                 // setting is OFF too, fail-closed).
-                // MUT:P3-REQUIRE-ADMIN — dropping the require_admin call
-                // above reddens `unregistered_off_rpc_list_refuses`
-                // (non-admin arm).
                 let show = crate::api::unregistered::unregistered_show(&state).await.map_err(api_err)?;
                 if !show {
                     return Err(api_err(ApiError::not_found(
