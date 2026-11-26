@@ -23,6 +23,10 @@
 - **存储**：桶登记表（`storage_buckets`）+ 每行 `files.bucket_id`——字节读写按行路由到该行自己的桶；
   `I0721_STORAGE_BACKEND` 只在首次执行桶迁移的启动时必读（0007 建出 `bootstrap-<backend>` 引导桶并回填全部行），此后忽略；
   旧标签的行留在停用的遗留引导桶里，状态与原因见 `/api/health`。后端 = local | s3（`object_store` ^0.12）| ipfs（kubo RPC + MFS）。
+- **未注册对象（P3）**：桶里没有活行的对象**默认不可见**（一切面按行服务；`/media` 与不存在同形 404）。
+  管理员开关 `storage_unregistered.show`（默认关、每次调用重读、四态非 true 即关）打开后才可 `storage.unregistered.list`
+  与 `adopt`；扫描只枚举 `media/` 前缀（`cache/` 缩略图永不进列表），adopt 以 key 为 sha256 且**不转码**，
+  目标属主配额照查。**没有**按 key 删除——先 adopt 再走正常删除（回收守卫靠活行）。
 - **匿名直链（R-J，P2b 起生效）**：同一 storage_key 可同时落在公开桶与私有桶——`/media/{key}` 的判定是**集合谓词**：
   A =「∃ 活行位于 `anonymous_read = TRUE` 的桶」（不看 enabled）。匿名只会得到 200 或 404（无 403/503 预言机）；
   会话/API key 走 `authorized_rows`（A 见证行 ∪ 对请求者有 `Read` 的行；key 另须该桶 ∈ key 的 `buckets`，调用时求交），
