@@ -9,6 +9,7 @@ import {
   type HAboutLink,
 } from "@celestia-island/hikari";
 import { Info, Languages, Palette } from "lucide-vue-next";
+import { appVersionLabel } from "@/lib/versionLabel";
 import { computed, defineComponent, onMounted, ref, type PropType } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -77,7 +78,7 @@ export default defineComponent({
      * is the panel's own build identity; the server/engine identity is a
      * separate fact and rides a component row (HkAboutBody's anatomy for
      * "engines"), never the app slot. */
-    const appVersion: string = __APP_VERSION__;
+    const appVersion: string = appVersionLabel();
 
     const componentRows = computed<HAboutComponentVersion[]>(() => {
       const rows: HAboutComponentVersion[] = [];

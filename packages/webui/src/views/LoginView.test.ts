@@ -377,7 +377,12 @@ describe("LoginView status strip (family footer)", () => {
     await flushPromises();
     const bar = w.getComponent(HkStatusBar);
     expect(bar.props("engineVersion")).toBe("sentinel-engine-9.9.9");
-    expect(bar.props("version")).toBe(__APP_VERSION__);
+    // Family rule: the bar carries `<semver> <branch>:<hash7>` when the build
+    // had git metadata, and the bare semver otherwise.
+    const identity = __APP_BUILD_IDENTITY__;
+    expect(bar.props("version")).toBe(
+      identity ? `${__APP_VERSION__} ${identity}` : __APP_VERSION__,
+    );
     expect(bar.props("connectionStatus")).toBe("idle");
     // The strip is this face's own footer: standalone must stay OFF, or
     // the bar renders its own fixed <footer> and nests inside ours.

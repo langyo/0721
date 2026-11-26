@@ -6,6 +6,7 @@ import {
   type HkLoginChannel,
 } from "@celestia-island/hikari";
 import { KeyRound, Unplug } from "lucide-vue-next";
+import { appVersionLabel } from "@/lib/versionLabel";
 import { computed, h, defineComponent, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -87,7 +88,7 @@ export default defineComponent({
      *  proof: see `onVerify`. */
     const probed = ref(false);
     const { health } = useEngineHealth();
-    const appVersion: string = __APP_VERSION__;
+    const appVersion: string = appVersionLabel();
     const channel = ref("");
     const loading = ref(false);
     /** The in-flight state of the step-1 probe, separate from the password

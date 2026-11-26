@@ -17,6 +17,14 @@ ARG BASE_IMAGE=debian:bookworm-slim
 
 FROM ${NODE_IMAGE} AS stage-webui
 
+# The panel's footer shows `<version> <branch>:<hash7>`. This stage has no
+# `.git` (the COPY list below is package-scoped on purpose), so the CI job
+# that owns the checkout resolves the identity and hands it in — same
+# contract as celestia-erp's `deploy/Dockerfile`. Empty = the footer
+# degrades to the bare version (never a fabricated branch).
+ARG PANEL_BUILD_IDENTITY=""
+ENV PANEL_BUILD_IDENTITY=${PANEL_BUILD_IDENTITY}
+
 # python3 runs the i18n gate inside the webui build command; corepack
 # ships with node and pins the pnpm version the lockfile expects.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \

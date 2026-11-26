@@ -32,6 +32,18 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
+      # The panel footer shows `<version> <branch>:<hash7>`; this job's
+      # checkout HAS git, the docker build context does not, so the identity
+      # is resolved here and handed in (celestia-erp's contract).
+      - name: Resolve the build identity
+        id: identity
+        run: |
+          branch="${GITHUB_REF_NAME}"
+          case "${GITHUB_REF}" in
+            refs/tags/*) branch="master" ;;
+          esac
+          echo "value=${branch}:$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -39,3 +51,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PANEL_BUILD_IDENTITY=${{ steps.identity.outputs.value }}

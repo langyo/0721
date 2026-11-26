@@ -156,7 +156,12 @@ describe("AppShell (family grouped chrome)", () => {
     await flushPromises();
     const bar = wrapper.getComponent(HkStatusBar);
     expect(bar.props("engineVersion")).toBe("sentinel-engine-9.9.9");
-    expect(bar.props("version")).toBe(__APP_VERSION__);
+    // Family rule: the bar carries `<semver> <branch>:<hash7>` when the build
+    // had git metadata, and the bare semver otherwise.
+    const identity = __APP_BUILD_IDENTITY__;
+    expect(bar.props("version")).toBe(
+      identity ? `${__APP_VERSION__} ${identity}` : __APP_VERSION__,
+    );
     // No RPC client in a unit test: the transport probe reads disconnected.
     expect(bar.props("connectionStatus")).toBe("disconnected");
   });

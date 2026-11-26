@@ -5,6 +5,7 @@ import { resolve } from "path";
 import { defineConfig, type Plugin } from "vitest/config";
 
 import { bareSpecifierGatePlugin } from "./src/build/bareSpecifierGate";
+import { resolveBuildIdentity } from "./src/lib/buildIdentity";
 
 const pkgDir = import.meta.dirname;
 
@@ -37,6 +38,13 @@ function cleanOutDirContents(outDir: string): Plugin {
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify("0.4.0"),
+    // Absent git metadata leaves this as `null` on purpose: the view then
+    // prints the bare version rather than a fabricated identity.
+    // `resolveBuildIdentity` owns the ladder (env hand-off → git → undefined);
+    // it lives in src/lib so the parse rules carry unit tests.
+    __APP_BUILD_IDENTITY__: JSON.stringify(
+      resolveBuildIdentity(resolve(pkgDir, "../..")) ?? null,
+    ),
   },
   plugins: [
     cleanOutDirContents(resolve(pkgDir, "../../dist/webui")),
