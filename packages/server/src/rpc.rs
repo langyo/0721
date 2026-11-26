@@ -2072,10 +2072,16 @@ pub fn build_server(state: AppState) -> RpcServer {
                     .await
                     .map_err(store_err)?
                     .ok_or_else(|| api_err(ApiError::not_found("no such bucket")))?;
-                let bucket_store = state
-                    .registry
-                    .resolve(&bucket.slug)
-                    .map_err(|err| api_err(ApiError::internal(format!("storage backend unavailable: {err}"))))?;
+                // MUT:P3-ADOPT-DISABLED — a disabled or credential-less target
+                // bucket must refuse the adopt with the storage-unavailable
+                // fault (-32010), never re-route the row into another
+                // bucket's store.
+                let bucket_store = state.registry.resolve(&bucket.slug).map_err(|err| {
+                    JsonRpcError::new(
+                        rpc_error_codes::STORAGE_UNAVAILABLE,
+                        format!("storage backend unavailable: {err}"),
+                    )
+                })?;
                 let name = match args.name {
                     Some(name) => {
                         validate_file_name(&name)
@@ -2092,9 +2098,21 @@ pub fn build_server(state: AppState) -> RpcServer {
                         .map_err(store_err)?
                         .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
                         .ok_or_else(|| api_err(ApiError::bad_request("folder not found")))?;
-                    if folder.owner_id != args.owner_id.unwrap_or(caller.id) {
+                    let target_owner = args.owner_id.unwrap_or(caller.id);
+                    // MUT:P3-ADOPT-PARENT-OWNER — the folder must belong to
+                    // the adopt's target owner.
+                    if folder.owner_id != target_owner {
                         return Err(api_err(ApiError::bad_request(
                             "the parent folder must belong to the adopt's target owner",
+                        )));
+                    }
+                    // MUT:P3-ADOPT-PARENT-BUCKET — R-G's per-bucket folder tree:
+                    // the row is born into the target bucket, so its parent
+                    // must sit in the SAME bucket (the invariant `set_parent`
+                    // and `create_folder` enforce on every other path).
+                    if folder.bucket_id != Some(bucket.id) {
+                        return Err(api_err(ApiError::conflict(
+                            "the parent folder sits in another bucket",
                         )));
                     }
                 }
