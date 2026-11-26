@@ -13981,6 +13981,54 @@ async fn adopt_into_a_disabled_bucket_answers_storage_unavailable() {
     );
 }
 
+/// `adopt_under_a_parent_in_another_bucket_is_refused`: R-G's per-bucket
+/// folder tree — the row is born into the target bucket, so its parent
+/// must sit in the SAME bucket. A folder in the bootstrap bucket (owned
+/// by the target owner) cannot parent an adopt into the "orphans"
+/// bucket. MUT:P3-ADOPT-PARENT-BUCKET — dropping the
+/// `folder.bucket_id != Some(bucket.id)` check reddens this.
+#[tokio::test]
+async fn adopt_under_a_parent_in_another_bucket_is_refused() {
+    let key = sha_key(14);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+    // A folder in the BOOTSTRAP bucket (the other bucket), owned by the
+    // adopt's target owner — the ownership dimension alone must NOT
+    // let this through.
+    let bootstrap_id = fx.state.registry.bootstrap_bucket_id().unwrap();
+    let folder = fx
+        .state
+        .store
+        .create_folder(fx.member_id, None, "elsewhere", Some(bootstrap_id))
+        .await
+        .unwrap();
+
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+            "owner_id": fx.member_id,
+            "parent_id": folder.id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32007,
+        "a parent in another bucket is a conflict: {envelope}"
+    );
+    let rows = fx
+        .state
+        .store
+        .list_live_rows_by_storage_key(&key)
+        .await
+        .unwrap();
+    assert!(rows.is_empty(), "no row was inserted: {rows:?}");
+}
+
 /// The unsupported-backend refusal: ipfs answers a DISTINCT documented
 /// error (never a silent empty list). Rides the ipfs stub state.
 #[tokio::test]
