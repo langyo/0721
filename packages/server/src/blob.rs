@@ -29,6 +29,14 @@ pub trait BlobStore: Send + Sync {
 
     /// Remove a blob (absent keys are fine).
     async fn delete(&self, slot: BlobSlot, key: &str) -> Result<(), std::io::Error>;
+
+    /// Enumerate the MEDIA-slot keys (`None` = this backend cannot be
+    /// scanned — ipfs; the RPC surface answers a distinct refusal, never
+    /// a silent empty list). The MEDIA slot only: `cache/` never enters
+    /// the unregistered diff (thumbnails legitimately have no rows).
+    async fn list_media_keys(&self) -> Result<Option<Vec<String>>, std::io::Error> {
+        Ok(None)
+    }
 }
 
 /// Reject keys that could escape their slot directory.
@@ -109,6 +117,27 @@ impl BlobStore for LocalBlobStore {
             Err(err) => Err(err),
         }
     }
+
+    async fn list_media_keys(&self) -> Result<Option<Vec<String>>, std::io::Error> {
+        // The enumeration IS the prefix exclusion: only `media/` files
+        // are read, so a stray `cache/` entry can never appear (and
+        // orphan thumbnails are invisible to the unregistered lane by
+        // construction, not by a post-filter).
+        let mut keys = Vec::new();
+        let mut entries = tokio::fs::read_dir(&self.media_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            if !file_type.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if is_safe_key(&name) {
+                keys.push(name);
+            }
+        }
+        keys.sort();
+        Ok(Some(keys))
+    }
 }
 
 /// The in-memory [`BlobStore`] (tests, and the embeddable lane).
@@ -157,6 +186,19 @@ impl BlobStore for MemoryBlobStore {
             .remove(&(slot, key.to_owned()));
         Ok(())
     }
+
+    async fn list_media_keys(&self) -> Result<Option<Vec<String>>, std::io::Error> {
+        let mut keys: Vec<String> = self
+            .blobs
+            .lock()
+            .expect("blob mutex")
+            .keys()
+            .filter(|(slot, _)| *slot == BlobSlot::Media)
+            .map(|(_, key)| key.clone())
+            .collect();
+        keys.sort();
+        Ok(Some(keys))
+    }
 }
 
 #[cfg(test)]
@@ -190,5 +232,95 @@ mod tests {
         assert!(is_safe_key("deadbeef.webp"));
         let store = MemoryBlobStore::new();
         assert!(store.put(BlobSlot::Media, "../escape", b"x").await.is_err());
+    }
+
+    /// MUT:P3-CACHE-PREFIX — listing the CACHE slot too (or merging the
+    /// two slots in `list_media_keys`) turns this red: a cache key shows
+    /// up in the media enumeration.
+    #[tokio::test]
+    async fn memory_list_media_keys_excludes_the_cache_slot() {
+        let store = MemoryBlobStore::new();
+        store
+            .put(BlobSlot::Media, "media-only", b"m")
+            .await
+            .unwrap();
+        store
+            .put(BlobSlot::Cache, "thumb.webp", b"t")
+            .await
+            .unwrap();
+        let keys = store.list_media_keys().await.unwrap().unwrap();
+        assert_eq!(keys, vec!["media-only".to_owned()]);
+    }
+
+    /// MUT:P3-LOCAL-LIST — returning an empty list (or reading the cache
+    /// dir) reddens this: the tmp-dir scan must report every regular
+    /// media file and nothing from `media-cache/`.
+    #[tokio::test]
+    async fn local_list_media_keys_scans_the_media_dir_only() {
+        let root = std::env::temp_dir().join(format!("i0721-blob-list-{}", std::process::id()));
+        let store = LocalBlobStore::open(&root).unwrap();
+        store.put(BlobSlot::Media, "key-b", b"2").await.unwrap();
+        store.put(BlobSlot::Media, "key-a", b"1").await.unwrap();
+        store
+            .put(BlobSlot::Cache, "thumb.webp", b"t")
+            .await
+            .unwrap();
+        // A stray subdirectory under media/ is not a media blob.
+        std::fs::create_dir_all(root.join("media").join("nested")).unwrap();
+        let keys = store.list_media_keys().await.unwrap().unwrap();
+        assert_eq!(
+            keys,
+            vec!["key-a".to_owned(), "key-b".to_owned()],
+            "regular media files only, sorted, cache/ and dirs excluded"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// MUT:P3-LOCAL-SYMLINK — following symlinks (reading `metadata()`
+    /// instead of the entry's `file_type()`) reddens this: a symlink
+    /// pointing OUTSIDE the media dir must never enter the enumeration.
+    #[tokio::test]
+    async fn local_list_media_keys_never_lists_a_symlink_escape() {
+        let root = std::env::temp_dir().join(format!("i0721-blob-symlink-{}", std::process::id()));
+        let store = LocalBlobStore::open(&root).unwrap();
+        store.put(BlobSlot::Media, "real-key", b"1").await.unwrap();
+        // A REAL file outside the media dir, linked INTO it.
+        let outside = root.join("outside-target");
+        std::fs::write(&outside, b"secret").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, root.join("media").join("escape-link")).unwrap();
+        let keys = store.list_media_keys().await.unwrap().unwrap();
+        assert_eq!(
+            keys,
+            vec!["real-key".to_owned()],
+            "a symlinked entry (whatever it points at) is never a media blob: {keys:?}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// MUT:P3-LOCAL-UNSAFE — relaxing `is_safe_key` to allow `/` (or
+    /// any path-constructing character) reddens this: nested paths and
+    /// dot-dot-style names must never enter the enumeration.
+    #[tokio::test]
+    async fn local_list_media_keys_never_lists_an_unsafe_name() {
+        let root = std::env::temp_dir().join(format!("i0721-blob-unsafe-{}", std::process::id()));
+        let store = LocalBlobStore::open(&root).unwrap();
+        store.put(BlobSlot::Media, "safe-key", b"1").await.unwrap();
+        // A nested path a/b under media/ (a file whose name contains a
+        // `/` can only exist as a subdirectory entry).
+        std::fs::create_dir_all(root.join("media").join("a")).unwrap();
+        std::fs::write(root.join("media").join("a").join("b"), b"nested").unwrap();
+        // A creatable name that `is_safe_key` refuses (a space is not in
+        // the safe alphabet — the same class of unsafe name as `/` or
+        // `..`, which the filesystem itself forbids as literal file
+        // names).
+        std::fs::write(root.join("media").join("bad name"), b"unsafe").unwrap();
+        let keys = store.list_media_keys().await.unwrap().unwrap();
+        assert_eq!(
+            keys,
+            vec!["safe-key".to_owned()],
+            "nested paths and unsafe names are never media blobs: {keys:?}"
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 }

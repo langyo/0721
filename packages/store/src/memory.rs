@@ -351,6 +351,19 @@ impl Store for MemoryStore {
             .count() as u64)
     }
 
+    async fn storage_keys_live_in_bucket(
+        &self,
+        bucket_id: Option<Uuid>,
+    ) -> Result<std::collections::HashSet<String>, StoreError> {
+        let inner = self.inner.lock().map_err(lock_err)?;
+        Ok(inner
+            .files
+            .iter()
+            .filter(|f| f.deleted_at.is_none() && f.bucket_id == bucket_id)
+            .map(|f| f.storage_key.clone())
+            .collect())
+    }
+
     async fn get_file_by_owner_bucket_and_sha256(
         &self,
         owner_id: Uuid,

@@ -246,5 +246,24 @@
     "forbidden": "読み取り権限がありません",
     "unavailable": "ストレージが利用できません",
     "missing": "見つかりません"
+  },
+  "unregistered": {
+    "title": "未登録オブジェクト",
+    "show": "未登録オブジェクトを表示",
+    "pickBucket": "バケットを選択",
+    "unsupported": "このバックエンドはスキャンできません",
+    "empty": "このバケットに未登録オブジェクトはありません",
+    "key": "キー",
+    "size": "サイズ",
+    "mime": "MIME",
+    "adopt": "取り込む",
+    "adoptTitle": "オブジェクトを取り込む",
+    "owner": "所有者",
+    "ownerSelf": "自分（既定）",
+    "parent": "親フォルダ ID",
+    "parentHint": "任意",
+    "name": "表示名",
+    "nameHint": "既定はキー",
+    "adopted": "取り込みました"
   }
 }

@@ -246,5 +246,24 @@
     "forbidden": "Aucune permission de lecture",
     "unavailable": "Stockage indisponible",
     "missing": "Introuvable"
+  },
+  "unregistered": {
+    "title": "Objets non enregistrés",
+    "show": "Afficher les objets non enregistrés",
+    "pickBucket": "Choisir un bucket",
+    "unsupported": "Ce backend ne peut pas être analysé",
+    "empty": "Aucun objet non enregistré dans ce bucket",
+    "key": "Clé",
+    "size": "Taille",
+    "mime": "MIME",
+    "adopt": "Adopter",
+    "adoptTitle": "Adopter l'objet",
+    "owner": "Propriétaire",
+    "ownerSelf": "vous-même (par défaut)",
+    "parent": "ID du dossier parent",
+    "parentHint": "facultatif",
+    "name": "Nom affiché",
+    "nameHint": "par défaut, la clé",
+    "adopted": "Objet adopté"
   }
 }

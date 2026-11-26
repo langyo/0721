@@ -246,5 +246,24 @@
     "forbidden": "No read permission",
     "unavailable": "Storage unavailable",
     "missing": "Not found"
+  },
+  "unregistered": {
+    "title": "Unregistered objects",
+    "show": "Show unregistered objects",
+    "pickBucket": "Pick a bucket",
+    "unsupported": "This backend cannot be scanned",
+    "empty": "No unregistered objects in this bucket",
+    "key": "Key",
+    "size": "Size",
+    "mime": "MIME",
+    "adopt": "Adopt",
+    "adoptTitle": "Adopt object",
+    "owner": "Owner",
+    "ownerSelf": "yourself (the default)",
+    "parent": "Parent folder id",
+    "parentHint": "optional",
+    "name": "Display name",
+    "nameHint": "defaults to the key",
+    "adopted": "Object adopted"
   }
 }

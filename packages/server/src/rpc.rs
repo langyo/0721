@@ -554,6 +554,10 @@ pub fn build_server(state: AppState) -> RpcServer {
     let state_storage_buckets_delete = state.clone();
     let state_storage_defaults_get = state.clone();
     let state_storage_defaults_set = state.clone();
+    let state_storage_unregistered_get = state.clone();
+    let state_storage_unregistered_put = state.clone();
+    let state_storage_unregistered_list = state.clone();
+    let state_storage_unregistered_adopt = state.clone();
     RpcServer::builder()
         .auth(move |headers: &HeaderMap, uri: &Uri| {
             let state = state.clone();
@@ -1941,6 +1945,194 @@ pub fn build_server(state: AppState) -> RpcServer {
                     .await
                     .map_err(store_err)?;
                 Ok(Value::Null)
+            }
+        })
+        .method_ctx("storage.unregistered.get", move |ctx: RpcRequestCtx| {
+            let state = state_storage_unregistered_get.clone();
+            async move {
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                let show = crate::api::unregistered::unregistered_show(&state).await.map_err(api_err)?;
+                to_value(serde_json::json!({ "show": show }))
+            }
+        })
+        .method_ctx("storage.unregistered.put", move |ctx: RpcRequestCtx| {
+            let state = state_storage_unregistered_put.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct ShowParams {
+                    show: bool,
+                }
+                let args: ShowParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                state
+                    .store
+                    .set_setting(
+                        crate::api::unregistered::UNREGISTERED_SHOW_SETTINGS_KEY,
+                        serde_json::Value::Bool(args.show),
+                    )
+                    .await
+                    .map_err(store_err)?;
+                Ok(Value::Null)
+            }
+        })
+        .method_ctx("storage.unregistered.list", move |ctx: RpcRequestCtx| {
+            let state = state_storage_unregistered_list.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct UnregisteredListParams {
+                    bucket: String,
+                    #[serde(default)]
+                    offset: Option<u64>,
+                    #[serde(default)]
+                    limit: Option<u64>,
+                }
+                let args: UnregisteredListParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                // The unregistered-object surface is INVISIBLE to a
+                // non-admin (B-SPEC's error table, storage.* row: "bucket
+                // not visible → -32006"; a member must not learn that the
+                // surface — or anything in the bucket — exists). The other
+                // three unregistered methods are management ACTIONS and
+                // keep require_admin's -32005.
+                // MUT:P3-REQUIRE-ADMIN — dropping this gate reddens
+                // `unregistered_off_rpc_list_refuses` (non-admin arm).
+                if caller.role != Role::Admin {
+                    return Err(api_err(ApiError::not_found(
+                        "the unregistered-object surface is disabled (storage_unregistered.show)",
+                    )));
+                }
+                // R-E: the switch gates the LIST itself — with show=false
+                // even an admin learns nothing (a corrupt/unreadable
+                // setting is OFF too, fail-closed).
+                let show = crate::api::unregistered::unregistered_show(&state).await.map_err(api_err)?;
+                if !show {
+                    return Err(api_err(ApiError::not_found(
+                        "the unregistered-object surface is disabled (storage_unregistered.show)",
+                    )));
+                }
+                let bucket = state
+                    .store
+                    .get_storage_bucket_by_slug(&args.bucket)
+                    .await
+                    .map_err(store_err)?
+                    .ok_or_else(|| api_err(ApiError::not_found("no such bucket")))?;
+                let (offset, limit) = PageArgs {
+                    offset: args.offset,
+                    limit: args.limit,
+                }
+                .sanitize();
+                let bucket_store = state
+                    .registry
+                    .resolve(&bucket.slug)
+                    .map_err(|err| api_err(ApiError::internal(format!("storage backend unavailable: {err}"))))?;
+                let (items, total) =
+                    crate::api::unregistered::list_unregistered(&state, &bucket, &bucket_store, offset, limit)
+                        .await
+                        .map_err(api_err)?;
+                to_value(PageResult { total, offset, limit, items })
+            }
+        })
+        .method_ctx("storage.unregistered.adopt", move |ctx: RpcRequestCtx| {
+            let state = state_storage_unregistered_adopt.clone();
+            async move {
+                #[derive(serde::Deserialize)]
+                struct AdoptParams {
+                    bucket: String,
+                    key: String,
+                    #[serde(default)]
+                    owner_id: Option<Uuid>,
+                    #[serde(default)]
+                    parent_id: Option<Uuid>,
+                    #[serde(default)]
+                    name: Option<String>,
+                }
+                let args: AdoptParams = params(&ctx)?;
+                let caller = user_of(&ctx);
+                require_admin(&caller).await?;
+                // R-E gates adopt too: an OFF switch means the lane does
+                // not exist, not merely that listing is hidden.
+                let show = crate::api::unregistered::unregistered_show(&state).await.map_err(api_err)?;
+                if !show {
+                    return Err(api_err(ApiError::not_found(
+                        "the unregistered-object surface is disabled (storage_unregistered.show)",
+                    )));
+                }
+                // The sha256 namespace gate (draft §7.4) BEFORE any store
+                // touch.
+                if !crate::api::unregistered::is_sha256_key(&args.key) {
+                    return Err(api_err(ApiError::bad_request(
+                        "the key is outside the sha256 namespace (64 lowercase hex chars required)",
+                    )));
+                }
+                let bucket = state
+                    .store
+                    .get_storage_bucket_by_slug(&args.bucket)
+                    .await
+                    .map_err(store_err)?
+                    .ok_or_else(|| api_err(ApiError::not_found("no such bucket")))?;
+                // MUT:P3-ADOPT-DISABLED — a disabled or credential-less target
+                // bucket must refuse the adopt with the storage-unavailable
+                // fault (-32010), never re-route the row into another
+                // bucket's store.
+                let bucket_store = state.registry.resolve(&bucket.slug).map_err(|err| {
+                    JsonRpcError::new(
+                        rpc_error_codes::STORAGE_UNAVAILABLE,
+                        format!("storage backend unavailable: {err}"),
+                    )
+                })?;
+                let name = match args.name {
+                    Some(name) => {
+                        validate_file_name(&name)
+                            .map_err(|err| api_err(ApiError::bad_request(err.to_string())))?;
+                        name
+                    }
+                    None => args.key.clone(),
+                };
+                if let Some(parent_id) = args.parent_id {
+                    let folder = state
+                        .store
+                        .get_file(parent_id)
+                        .await
+                        .map_err(store_err)?
+                        .filter(|r| r.deleted_at.is_none() && r.kind == i0721_proto::FileKind::Folder)
+                        .ok_or_else(|| api_err(ApiError::bad_request("folder not found")))?;
+                    let target_owner = args.owner_id.unwrap_or(caller.id);
+                    // MUT:P3-ADOPT-PARENT-OWNER — the folder must belong to
+                    // the adopt's target owner.
+                    if folder.owner_id != target_owner {
+                        return Err(api_err(ApiError::bad_request(
+                            "the parent folder must belong to the adopt's target owner",
+                        )));
+                    }
+                    // MUT:P3-ADOPT-PARENT-BUCKET — R-G's per-bucket folder tree:
+                    // the row is born into the target bucket, so its parent
+                    // must sit in the SAME bucket (the invariant `set_parent`
+                    // and `create_folder` enforce on every other path).
+                    if folder.bucket_id != Some(bucket.id) {
+                        return Err(api_err(ApiError::conflict(
+                            "the parent folder sits in another bucket",
+                        )));
+                    }
+                }
+                let record = crate::api::unregistered::adopt(
+                    &state,
+                    &bucket,
+                    &bucket_store,
+                    &caller,
+                    crate::api::unregistered::AdoptTarget {
+                        bucket_id: bucket.id,
+                        storage_backend: bucket.backend.as_str().to_owned(),
+                        owner_id: args.owner_id.unwrap_or(caller.id),
+                        parent_id: args.parent_id,
+                        name,
+                        key: args.key,
+                    },
+                )
+                .await
+                .map_err(api_err)?;
+                to_value(FileDto::from(record))
             }
         })
         .build()

@@ -20,6 +20,7 @@ import {
   Link2,
   LogOut,
   Settings,
+  PackageOpen,
   SlidersHorizontal,
   Unplug,
   Users as UsersIcon,
@@ -113,6 +114,7 @@ export default defineComponent({
     const SYSTEM_ITEMS: NavItem[] = [
       { key: "users", path: "/users", labelKey: "common.users.title", icon: UsersIcon },
       { key: "buckets", path: "/buckets", labelKey: "common.buckets.title", icon: Database },
+      { key: "unregistered", path: "/unregistered", labelKey: "common.unregistered.title", icon: PackageOpen },
       { key: "providers", path: "/providers", labelKey: "common.providers.title", icon: Unplug },
       { key: "site-settings", path: "/settings", labelKey: "common.nav.settings", icon: SlidersHorizontal },
     ];

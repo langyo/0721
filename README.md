@@ -138,6 +138,40 @@ Deployment examples: `deploy/docker-compose.s3.yml` (service + MinIO +
 create-bucket init) and `deploy/docker-compose.ipfs.yml` (service +
 kubo).
 
+## Unregistered objects
+
+An object can live in a bucket without a database row: an interrupted
+upload, a file copied in by an operator, or an upload whose row was
+hard-deleted by a very old build. Those objects are **hidden by
+default** — every user-facing surface (file lists, timeline, search,
+`/media`, thumbnails, the MCP tools) serves rows, so an object with no
+row simply does not exist there, and an anonymous request for one
+answers the same 404 as a key that never existed.
+
+An admin can turn the admin-only inspection lane on with
+`storage.unregistered.put {show: true}` (off by default; the switch is
+read on every call, and a corrupt or unreadable setting reads as off).
+With it on, `storage.unregistered.list {bucket}` returns the objects
+that have no live row, and `storage.unregistered.adopt` claims one as a
+real row. Adopt takes the object's key as the row's `sha256` and does
+**not** re-encode the bytes (a transcode would change the hash and
+silently orphan the original); the row is born with no thumbnail (it
+is generated lazily on first use), the target owner is the caller's
+choice (default: the admin running the adopt), and the target owner's
+quota is checked. Only a 64-character lowercase hex sha256 key can be
+adopted.
+
+**Only listed media is scannable.** The scan enumerates the `media/`
+prefix only, so a thumbnail's `cache/` object is never offered as an
+"unregistered image" (thumbnails legitimately have no row of their
+own). Orphan thumbnails are not shown and not deletable — they belong
+to a garbage collector this service does not ship yet.
+
+There is deliberately **no delete-by-key** for unregistered objects:
+adopt it, then delete the row through the normal path. The reclaim
+logic's compare-and-restore guard is built on live rows, so deleting
+bytes with no row would risk another owner's identical content.
+
 ## Deploy
 
 The compose file (`deploy/docker-compose.yml`) brings up PostgreSQL 17

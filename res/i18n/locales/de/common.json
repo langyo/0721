@@ -246,5 +246,24 @@
     "forbidden": "Keine Leseberechtigung",
     "unavailable": "Speicher nicht verfügbar",
     "missing": "Nicht gefunden"
+  },
+  "unregistered": {
+    "title": "Nicht registrierte Objekte",
+    "show": "Nicht registrierte Objekte anzeigen",
+    "pickBucket": "Bucket wählen",
+    "unsupported": "Dieses Backend kann nicht gescannt werden",
+    "empty": "Keine nicht registrierten Objekte in diesem Bucket",
+    "key": "Schlüssel",
+    "size": "Größe",
+    "mime": "MIME",
+    "adopt": "Übernehmen",
+    "adoptTitle": "Objekt übernehmen",
+    "owner": "Besitzer",
+    "ownerSelf": "Sie selbst (Standard)",
+    "parent": "Überordner-ID",
+    "parentHint": "optional",
+    "name": "Anzeigename",
+    "nameHint": "Standard: der Schlüssel",
+    "adopted": "Objekt übernommen"
   }
 }

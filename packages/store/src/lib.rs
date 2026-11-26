@@ -375,6 +375,15 @@ pub trait Store: Send + Sync {
     /// legacy NULL rows the same way.
     async fn count_live_files_by_bucket(&self, bucket_id: Option<Uuid>) -> Result<u64, StoreError>;
 
+    /// The DISTINCT live `storage_key`s in ONE bucket — the unregistered
+    /// diff's live-row side (draft §7.2). Bucket-scoped exactly like
+    /// [`Store::count_live_files_by_bucket`]: a key registered in another
+    /// bucket stays unregistered here.
+    async fn storage_keys_live_in_bucket(
+        &self,
+        bucket_id: Option<Uuid>,
+    ) -> Result<std::collections::HashSet<String>, StoreError>;
+
     /// The owner's live dedupe probe WITH the bucket dimension (R-C):
     /// `Some(row)` when this owner already holds this content in THIS
     /// bucket; the cross-bucket probe reuses [`Store::get_file_by_owner_and_sha256`].

@@ -11,6 +11,7 @@
 //! The `object_store` crate handles sigv4 signing internally; this
 //! module is purely configuration + the [`BlobStore`] adapter.
 
+use futures::StreamExt as _;
 use std::fmt;
 use std::sync::Arc;
 
@@ -192,6 +193,35 @@ impl BlobStore for S3BlobStore {
             }
             .into()),
         }
+    }
+
+    async fn list_media_keys(&self) -> Result<Option<Vec<String>>, std::io::Error> {
+        // The MEDIA prefix only — the enumeration itself is the `cache/`
+        // exclusion (never a post-filter; MUT:P3-CACHE-PREFIX — listing
+        // both prefixes here reddens `unregistered_cache_prefix_never_listed`).
+        let prefix = StorePath::from(slot_prefix(BlobSlot::Media));
+        let mut keys = Vec::new();
+        let mut listings = self.store.list(Some(&prefix));
+        while let Some(meta) = listings.next().await {
+            let location = meta
+                .map_err(|source| S3Error {
+                    source,
+                    key: prefix.to_string(),
+                })?
+                .location;
+            let key = location.to_string();
+            let key = key
+                .strip_prefix(&format!("{}/", slot_prefix(BlobSlot::Media)))
+                .unwrap_or_default()
+                .to_owned();
+            if !key.is_empty() && crate::blob::is_safe_key(&key) {
+                keys.push(key);
+            }
+            // A nested or unsafe path under media/ is not a media blob;
+            // skip it rather than fail the whole scan.
+        }
+        keys.sort();
+        Ok(Some(keys))
     }
 }
 

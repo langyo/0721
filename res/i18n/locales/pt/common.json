@@ -246,5 +246,24 @@
     "forbidden": "Sem permissão de leitura",
     "unavailable": "Armazenamento indisponível",
     "missing": "Não encontrado"
+  },
+  "unregistered": {
+    "title": "Objetos não registados",
+    "show": "Mostrar objetos não registados",
+    "pickBucket": "Escolher um bucket",
+    "unsupported": "Este backend não pode ser varrido",
+    "empty": "Sem objetos não registados neste bucket",
+    "key": "Chave",
+    "size": "Tamanho",
+    "mime": "MIME",
+    "adopt": "Adotar",
+    "adoptTitle": "Adotar objeto",
+    "owner": "Proprietário",
+    "ownerSelf": "você (predefinido)",
+    "parent": "ID da pasta pai",
+    "parentHint": "opcional",
+    "name": "Nome de exibição",
+    "nameHint": "por omissão, a chave",
+    "adopted": "Objeto adotado"
   }
 }

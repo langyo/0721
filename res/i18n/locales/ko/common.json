@@ -246,5 +246,24 @@
     "forbidden": "읽기 권한이 없습니다",
     "unavailable": "스토리지를 사용할 수 없습니다",
     "missing": "찾을 수 없습니다"
+  },
+  "unregistered": {
+    "title": "미등록 객체",
+    "show": "미등록 객체 표시",
+    "pickBucket": "버킷 선택",
+    "unsupported": "이 백엔드는 스캔할 수 없습니다",
+    "empty": "이 버킷에 미등록 객체가 없습니다",
+    "key": "키",
+    "size": "크기",
+    "mime": "MIME",
+    "adopt": "편입",
+    "adoptTitle": "객체 편입",
+    "owner": "소유자",
+    "ownerSelf": "본인(기본값)",
+    "parent": "상위 폴더 ID",
+    "parentHint": "선택",
+    "name": "표시 이름",
+    "nameHint": "기본값은 키",
+    "adopted": "객체를 편입했습니다"
   }
 }
