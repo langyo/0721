@@ -13612,6 +13612,39 @@ async fn unregistered_off_rpc_list_refuses() {
     );
 }
 
+/// S3 (message equality): the non-admin refusal and the show=false
+/// refusal share the SAME copy — the lead's "same copy" ruling. The
+/// codes are pinned in `unregistered_off_rpc_list_refuses`; this pins
+/// the message strings being byte-identical.
+/// MUT:P3-ORACLE-MSG — giving the non-admin arm a distinct message
+/// reddens this.
+#[tokio::test]
+async fn the_non_admin_refusal_shares_the_show_false_copy() {
+    let key = sha_key(19);
+    let fx = orphan_fixture(&[&key]).await;
+
+    let (_, non_admin) = rpc(
+        &fx.state,
+        &fx.member_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    let (_, show_false) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    let non_admin_msg = non_admin["error"]["message"].as_str().unwrap();
+    let show_false_msg = show_false["error"]["message"].as_str().unwrap();
+    assert_eq!(
+        non_admin_msg, show_false_msg,
+        "the non-admin refusal uses the SAME copy as the show=false refusal: {non_admin_msg:?} vs {show_false_msg:?}"
+    );
+}
+
 /// `unregistered_cache_prefix_never_listed`: with show=true, the orphan
 /// MEDIA object IS listed (positive arm) and the orphan CACHE object is
 /// NOT (negative arm). MUT:P3-CACHE-PREFIX — enumerating the cache slot
