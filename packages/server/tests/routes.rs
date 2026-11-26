@@ -13786,6 +13786,74 @@ async fn unregistered_adopt_then_visible() {
     let _ = &fx;
 }
 
+/// `a_soft_deleted_rows_object_reappears_as_unregistered`: the diff is
+/// against LIVE rows only — after adopting an object and soft-deleting
+/// its row (the blob stays until reclaim), the object is unregistered
+/// AGAIN and must be listed. MUT:P3-DIFF-SOFTDELETED — dropping the
+/// `deleted_at IS NULL` filter from `storage_keys_live_in_bucket` makes
+/// the dead row hide the object, so this list goes empty and the test
+/// reddens.
+#[tokio::test]
+async fn a_soft_deleted_rows_object_reappears_as_unregistered() {
+    let key = sha_key(11);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+
+    let (status, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+            "owner_id": fx.member_id,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let file_id = envelope["result"]["id"].as_str().unwrap().to_owned();
+
+    // Adopting made it registered: the diff is empty.
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    assert_eq!(
+        envelope["result"]["total"].as_u64().unwrap(),
+        0,
+        "the adopted object is registered: {envelope}"
+    );
+
+    // Soft-delete the row (the blob survives until reclaim).
+    let uuid = uuid::Uuid::parse_str(&file_id).unwrap();
+    fx.state
+        .store
+        .soft_delete_file(uuid)
+        .await
+        .expect("soft delete");
+
+    // The row is no longer LIVE, so the object is unregistered again.
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    let items = envelope["result"]["items"].as_array().unwrap();
+    // The wire carries the object's `key` (the DTO's field name), not a
+    // row id — the object has no row while unregistered.
+    assert!(
+        items
+            .iter()
+            .any(|item| item["key"] == serde_json::Value::String(key.clone())),
+        "a soft-deleted row's object is unregistered again: {items:?}"
+    );
+}
+
 fn envelope_ts(id: &str) -> serde_json::Value {
     serde_json::Value::String(id.to_owned())
 }
