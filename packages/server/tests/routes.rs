@@ -13409,6 +13409,8 @@ async fn unregistered_off_list_hides_orphans() {
 /// `unregistered_off_search_never_returns_orphans`: searching the
 /// service surface (the webui filters its own pages; the file surface is
 /// `files.list`) for the orphan's key fragment returns nothing.
+/// MUT:P3-SHOW-DEFAULT / MUT:P3-THUMB-WRITE — any surface that stopped
+/// serving rows would surface it here.
 #[tokio::test]
 async fn unregistered_off_search_never_returns_orphans() {
     let key = sha_key(2);
@@ -13501,7 +13503,8 @@ async fn unregistered_off_thumbnail_404() {
 
 /// `unregistered_off_mcp_tools_never_see_orphans`: all five tools see
 /// nothing — `list_files` does not list it, the four per-object tools
-/// answer `isError` for the orphan key/id.
+/// answer `isError` for the orphan key/id. MUT:P3-SHOW-DEFAULT and
+/// MUT:P3-THUMB-WRITE are the wrong shapes this pins against.
 #[tokio::test]
 async fn unregistered_off_mcp_tools_never_see_orphans() {
     let key = sha_key(5);
@@ -13509,7 +13512,8 @@ async fn unregistered_off_mcp_tools_never_see_orphans() {
     let api_key = mcp_api_key(&fx.state, &fx.admin_token, "orphan-key").await;
     let (mut sse, session_id) = mcp_handshake(&fx.state, &api_key).await;
 
-    // tools/list + list_files: the orphan never appears.
+    // tools/list + list_files: the orphan does not appear
+    // (MUT:P3-SHOW-DEFAULT would surface it).
     let status = mcp_post_frame(
         &fx.state,
         &session_id,
@@ -13531,7 +13535,7 @@ async fn unregistered_off_mcp_tools_never_see_orphans() {
     );
 
     // search_files scans rows (the orphan has none): its answer is an
-    // EMPTY list, never the orphan.
+    // EMPTY list, not the orphan (MUT:P3-SHOW-DEFAULT's wrong shape).
     let status = mcp_call_tool(
         &fx.state,
         &session_id,
@@ -14251,7 +14255,8 @@ async fn two_owners_may_adopt_the_same_orphan_key() {
     // re-lists per call, so SEQUENTIAL adopts of one key cannot both
     // pass (the second sees the key already live) — the judged-legal
     // shape is the concurrent window, which the store accepts (the
-    // uniqueness is (owner, sha), never (bucket, key)).
+    // uniqueness is (owner, sha), not (bucket, key)). The reclaim half
+    // is pinned by MUT:P3-REFCOUNT at the store layer.
     let (status, envelope) = rpc(
         &fx.state,
         &fx.admin_token,
@@ -14355,7 +14360,8 @@ async fn two_owners_may_adopt_the_same_orphan_key() {
 }
 
 /// The unsupported-backend refusal: ipfs answers a DISTINCT documented
-/// error (never a silent empty list). Rides the ipfs stub state.
+/// error rather than a silent empty list (MUT:P3-IPFS-NONE — returning
+/// `Some(vec![])` instead of `None` reddens this). Rides the ipfs stub state.
 #[tokio::test]
 async fn unregistered_ipfs_backend_answers_the_documented_refusal() {
     let (state, _stub) = ipfs_stub_state().await;
@@ -14386,7 +14392,8 @@ async fn unregistered_ipfs_backend_answers_the_documented_refusal() {
 
 /// `s3_lists_media_keys_by_prefix`: the real RustFS lane sibling of
 /// `s3_real_endpoint_round_trip` — media keys are listed with the
-/// `media/` prefix stripped; `cache/` keys are never in the answer.
+/// `media/` prefix stripped; `cache/` keys are absent from the answer
+/// (MUT:P3-CACHE-PREFIX reddens this when the slot is swapped).
 #[tokio::test]
 #[ignore = "opt-in: set I0721_TEST_S3=1 + I0721_S3_* env"]
 async fn s3_lists_media_keys_by_prefix() {
