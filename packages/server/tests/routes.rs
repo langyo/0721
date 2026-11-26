@@ -13708,6 +13708,14 @@ async fn unregistered_adopt_then_visible() {
     .await;
     let before = envelope["result"]["total"].as_u64().unwrap();
     assert_eq!(before, 1, "the orphan is listed first: {envelope}");
+    // `modified_at` reads "unknown" until a backend stamps mtimes — a
+    // follow-up (the memory store exposes none; the wire type stays a
+    // plain string, so a real stamp later is wire-safe).
+    assert_eq!(
+        envelope["result"]["items"][0]["modified_at"],
+        "unknown",
+        "the sentinel survives the wire unchanged"
+    );
 
     let (status, envelope) = rpc(
         &fx.state,
