@@ -2303,7 +2303,7 @@ fn set_stub_roles(stub: &ProviderStub, roles: Option<serde_json::Value>) {
 }
 
 /// The role the STORE holds for the account an OAuth round minted, read
-/// back by its username (never from the response the login itself
+/// back by its username (not from the response the login itself
 /// produced — the assertion must not be able to agree with a wrong
 /// projection).
 async fn stored_role_of(state: &AppState, username: &str) -> i0721_proto::Role {
@@ -2451,12 +2451,12 @@ async fn oauth_returning_member_with_the_admin_tag_is_promoted() {
 
 /// The update path, isolated from the rest of the login: the store double
 /// records `set_user_role` calls, so a `find_or_create_user` that computes
-/// a role and never writes it is caught here — on the in-memory lane, with
+/// a role and skips the write is caught here — on the in-memory lane, with
 /// no database involved.
 ///
 /// The counterfactual is the point: `auth.verify` re-loads the user from
 /// the store, so it cannot notice a `find_or_create_user` that reads the
-/// binding and quietly does nothing. This asserts the WRITE itself, and
+/// binding and quietly skips the write. This asserts the WRITE itself, and
 /// the role the returned record carries.
 #[derive(Default)]
 struct RoleRecorder {
@@ -2868,7 +2868,7 @@ impl Store for RecordingRoleStore {
 /// behind: `find_or_create_user` must reach the store with the provider's
 /// statement (and the very write it makes), for a returning binding and
 /// for a `None` provider alike. This is the case a no-op
-/// `find_or_create_user` cannot pass — it never calls the store at all.
+/// `find_or_create_user` cannot pass — it skips the store entirely.
 #[tokio::test]
 async fn find_or_create_user_writes_the_role_the_provider_states() {
     let recorder = Arc::new(RoleRecorder::default());
@@ -2963,7 +2963,7 @@ async fn find_or_create_user_writes_the_role_the_provider_states() {
     );
     assert_eq!(silent.role, Role::Admin, "the stored admin role stands");
 
-    // The local admin account has no binding and is never reachable here.
+    // The local admin account has no binding and is unreachable here.
     assert_eq!(
         state.store.get_user(seeded.id).await.unwrap().unwrap().role,
         Role::Admin,
@@ -2971,7 +2971,7 @@ async fn find_or_create_user_writes_the_role_the_provider_states() {
     );
 }
 
-/// A provider that says NOTHING about roles must never move a local role:
+/// A provider that says NOTHING about roles has no say over a local role:
 /// GitHub-shaped UserInfo (no `roles` key at all) leaves the admin this
 /// account holds in place. (Reading the absence as "member" would demote
 /// every admin on every unrelated provider's login.)
