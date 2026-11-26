@@ -1070,6 +1070,21 @@ impl Store for MemoryStore {
         row.quota_bytes = quota_bytes;
         Ok(())
     }
+
+    async fn set_user_role(
+        &self,
+        user_id: Uuid,
+        role: i0721_proto::Role,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.inner.lock().map_err(lock_err)?;
+        let row = inner
+            .users
+            .iter_mut()
+            .find(|u| u.id == user_id)
+            .ok_or_else(|| conflict("user not found".to_owned()))?;
+        row.role = role;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1289,5 +1304,40 @@ mod tests {
         store.create_file(new_file(owner.id, "aa")).await.unwrap();
         assert!(store.delete_user(owner.id).await.unwrap());
         assert_eq!(store.count_files(None).await.unwrap(), 0);
+    }
+
+    /// `set_user_role` writes the row and reads back through `get_user`
+    /// (up AND down — a role sync must be able to demote).
+    #[tokio::test]
+    async fn set_user_role_writes_the_row_both_ways() {
+        let store = MemoryStore::new();
+        let user = store.create_user(new_user("role-user")).await.unwrap();
+        assert_eq!(user.role, Role::Member);
+
+        store.set_user_role(user.id, Role::Admin).await.unwrap();
+        assert_eq!(
+            store.get_user(user.id).await.unwrap().unwrap().role,
+            Role::Admin,
+            "a member is promoted to admin"
+        );
+
+        store.set_user_role(user.id, Role::Member).await.unwrap();
+        assert_eq!(
+            store.get_user(user.id).await.unwrap().unwrap().role,
+            Role::Member,
+            "an admin is demoted back to member"
+        );
+        // The write touches ONE row.
+        assert_eq!(store.count_users().await.unwrap(), 1);
+    }
+
+    /// An unknown id is `Conflict` — the same answer `set_user_quota` gives.
+    #[tokio::test]
+    async fn set_user_role_of_a_missing_user_is_a_conflict() {
+        let store = MemoryStore::new();
+        assert!(matches!(
+            store.set_user_role(Uuid::new_v4(), Role::Admin).await,
+            Err(StoreError::Conflict(_))
+        ));
     }
 }

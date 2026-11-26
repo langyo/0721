@@ -340,6 +340,14 @@ pub trait Store: Send + Sync {
         quota_bytes: Option<i64>,
     ) -> Result<(), StoreError>;
 
+    /// Set a user's role (the OAuth lane's role-sync write).
+    ///
+    /// Semantics match [`Store::set_user_quota`]: an id with no row is a
+    /// `StoreError::Conflict` (the caller resolved the id from a binding
+    /// it had just read — a vanished row is a contradiction, not a no-op).
+    async fn set_user_role(&self, user_id: Uuid, role: i0721_proto::Role)
+        -> Result<(), StoreError>;
+
     // ── bucket registry (the B-P1 slice; the write RPC arrives in P2a) ──
 
     /// Every registered bucket (the registry's startup load and the

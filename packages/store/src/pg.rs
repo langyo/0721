@@ -1670,4 +1670,21 @@ impl Store for PgStore {
         self.executor.execute(&cmd).await?;
         Ok(())
     }
+
+    async fn set_user_role(
+        &self,
+        user_id: Uuid,
+        role: i0721_proto::Role,
+    ) -> Result<(), StoreError> {
+        // The column is TEXT under a CHECK constraint (`admin` | `member`):
+        // `Role::as_str` is the ONE tag table, so an unrepresentable value
+        // cannot be written by construction.
+        let cmd = update_command::<UserModel>(
+            vec![("role", Value::Text(role.as_str().to_owned()))],
+            UserColumn::Id.eq(user_id).into_inner(),
+            false,
+        )?;
+        self.executor.execute(&cmd).await?;
+        Ok(())
+    }
 }

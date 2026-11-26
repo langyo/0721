@@ -1826,6 +1826,20 @@ struct ProviderStub {
     /// v2 token response IS the profile, behind a `data` envelope) and there
     /// is no UserInfo leg.
     feishu_identity: bool,
+    /// The UserInfo body the stub answers (the RP reads it as
+    /// `ProviderIdentity::claims`). Mutable so one fixture can serve a
+    /// provider that grants admin, then one that withholds it, then one
+    /// that says nothing at all about roles.
+    userinfo: std::sync::Mutex<serde_json::Value>,
+}
+
+/// The UserInfo body every pre-existing case was written against: a
+/// subject and a display name, and NO `roles` key.
+fn default_userinfo() -> serde_json::Value {
+    serde_json::json!({
+        "sub": "subject-abcdef01",
+        "name": "Stub User",
+    })
 }
 
 impl ProviderStub {
@@ -1932,13 +1946,7 @@ impl ProviderStub {
                                 axum::Json(serde_json::json!({"error": "bad_token"})),
                             );
                         }
-                        (
-                            StatusCode::OK,
-                            axum::Json(serde_json::json!({
-                                "sub": "subject-abcdef01",
-                                "name": "Stub User",
-                            })),
-                        )
+                        (StatusCode::OK, axum::Json(stub.userinfo.lock().unwrap().clone()))
                     }
                 }),
             )
@@ -1965,6 +1973,7 @@ async fn spawn_provider_stub(
         secret: "stub-secret-9999".to_owned(),
         authorize_hits: std::sync::Mutex::new(0),
         feishu_identity,
+        userinfo: std::sync::Mutex::new(default_userinfo()),
     });
     let app = stub.clone().router();
     tokio::spawn(async move {
@@ -2039,6 +2048,13 @@ async fn browser_round(location: &str) -> String {
         .to_owned()
 }
 
+/// The `AuthSession` body the login answered, stashed as a response
+/// extension: response bodies are streams, so a test that wants to read
+/// the minted session's `user.role` must take a copy here rather than at
+/// the call site (where body and headers can no longer be seen together).
+#[derive(Clone)]
+struct SessionBody(Vec<u8>);
+
 /// One full OAuth round against the stub: redirect entry → browser
 /// authorize leg → callback. Returns the callback's response.
 async fn oauth_login_round(state: &AppState) -> axum::http::Response<Body> {
@@ -2063,7 +2079,7 @@ async fn oauth_login_round(state: &AppState) -> axum::http::Response<Body> {
     let flow_value = flow_cookie(&redirect);
     let back = browser_round(&location).await;
 
-    app(state)
+    let response = app(state)
         .oneshot(
             Request::builder()
                 .uri(back)
@@ -2073,7 +2089,18 @@ async fn oauth_login_round(state: &AppState) -> axum::http::Response<Body> {
                 .unwrap(),
         )
         .await
-        .unwrap()
+        .unwrap();
+    // Keep the body AND the headers: `oneshot` hands the request back on
+    // failure and a split body/response is exactly how a stale session
+    // projection slips through a role assertion.
+    let (parts, body) = response.into_parts();
+    let bytes = axum::body::to_bytes(body, 65536)
+        .await
+        .unwrap_or_default()
+        .to_vec();
+    let mut response = axum::http::Response::from_parts(parts, Body::empty());
+    response.extensions_mut().insert(SessionBody(bytes));
+    response
 }
 
 #[tokio::test]
@@ -2261,6 +2288,725 @@ async fn oauth_second_login_is_idempotent() {
         state.store.count_users().await.unwrap(),
         users_after_first,
         "the same (provider, subject) never mints twice"
+    );
+}
+
+/// Re-point the stub's UserInfo at a body carrying an explicit `roles`
+/// array (the ERP's RBAC statement) — or, with `None`-like omission, at
+/// a body that says nothing about roles.
+fn set_stub_roles(stub: &ProviderStub, roles: Option<serde_json::Value>) {
+    let mut body = default_userinfo();
+    if let Some(roles) = roles {
+        body["roles"] = roles;
+    }
+    *stub.userinfo.lock().unwrap() = body;
+}
+
+/// The role the STORE holds for the account an OAuth round minted, read
+/// back by its username (never from the response the login itself
+/// produced — the assertion must not be able to agree with a wrong
+/// projection).
+async fn stored_role_of(state: &AppState, username: &str) -> i0721_proto::Role {
+    state
+        .store
+        .get_user_by_username(username)
+        .await
+        .unwrap()
+        .expect("the OAuth round minted this account")
+        .role
+}
+
+/// The role the login's own 302 body renders (the `AuthSession` the
+/// OAuth callback answers with) — the OTHER face of "the session must
+/// carry the synced role". Read apart from `auth.verify` on purpose:
+/// `auth.verify` re-loads the user from the store, so it stays green even
+/// when the minted session projection is stale.
+fn session_body_role(response: &axum::http::Response<Body>) -> serde_json::Value {
+    let bytes = response
+        .extensions()
+        .get::<SessionBody>()
+        .expect("the callback body was captured")
+        .0
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).expect("the session body is JSON");
+    json["user"]["role"].clone()
+}
+
+/// The role the RPC lane reports for the session the login planted, read
+/// over `auth.verify` with the minted cookie — the user-visible face of
+/// the sync (a stale `UserDto` here would leave the panel showing the
+/// wrong role even though the row moved).
+async fn session_role(response: &axum::http::Response<Body>, state: &AppState) -> String {
+    let token = response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|c| c.starts_with("i0721-token="))
+        .expect("the login plants the session cookie")
+        .split(';')
+        .next()
+        .unwrap()
+        .strip_prefix("i0721-token=")
+        .unwrap()
+        .to_owned();
+    let (status, envelope) = rpc(state, &token, "auth.verify", serde_json::Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    envelope["result"]["role"]
+        .as_str()
+        .expect("auth.verify answers a role")
+        .to_owned()
+}
+
+/// The upstream ERP's `roles` array decides the LOCAL role: a first login
+/// carrying `["member","admin"]` mints an ADMIN account, and the session
+/// the same round plants already reports it.
+#[tokio::test]
+async fn oauth_first_login_with_the_admin_tag_mints_an_admin() {
+    let (state, stub, _base, _admin) = oauth_test_state_with_stub().await;
+    set_stub_roles(&stub, Some(serde_json::json!(["member", "admin"])));
+
+    let response = oauth_login_round(&state).await;
+    assert_eq!(response.status(), StatusCode::FOUND);
+
+    assert_eq!(
+        stored_role_of(&state, "stub_subject-").await,
+        Role::Admin,
+        "a first login whose roles carry \"admin\" mints an admin, not a member"
+    );
+    assert_eq!(
+        session_role(&response, &state).await,
+        "admin",
+        "the session UserDto reflects the synced role, not a stale member"
+    );
+    // The minted session's OWN body, not only the re-loading `auth.verify`:
+    // the panel reads the role the callback answered with.
+    assert_eq!(
+        session_body_role(&response),
+        serde_json::json!("admin"),
+        "the callback's AuthSession body carries the synced admin role"
+    );
+}
+
+/// The provider's statement is applied BOTH ways: the same subject coming
+/// back WITHOUT the admin tag is DEMOTED. (A sync that only ever
+/// promoted would leave an expelled administrator with full access
+/// forever — that is the failure this case exists for.)
+#[tokio::test]
+async fn oauth_second_login_without_the_admin_tag_demotes() {
+    let (state, stub, _base, _admin) = oauth_test_state_with_stub().await;
+
+    set_stub_roles(&stub, Some(serde_json::json!(["member", "admin"])));
+    let first = oauth_login_round(&state).await;
+    assert_eq!(first.status(), StatusCode::FOUND);
+    assert_eq!(stored_role_of(&state, "stub_subject-").await, Role::Admin);
+
+    set_stub_roles(&stub, Some(serde_json::json!(["member"])));
+    let second = oauth_login_round(&state).await;
+    assert_eq!(second.status(), StatusCode::FOUND);
+
+    assert_eq!(
+        state.store.count_users().await.unwrap(),
+        2,
+        "demotion never mints a second account (the seeded admin + this one)"
+    );
+    assert_eq!(
+        stored_role_of(&state, "stub_subject-").await,
+        Role::Member,
+        "the admin tag left the provider's answer → the stored role follows DOWN"
+    );
+    assert_eq!(
+        session_role(&second, &state).await,
+        "member",
+        "the demoted session reports member"
+    );
+}
+
+/// The other direction, from a first login that was already a member: an
+/// admin tag on a LATER login promotes the existing account in place.
+#[tokio::test]
+async fn oauth_returning_member_with_the_admin_tag_is_promoted() {
+    let (state, stub, _base, _admin) = oauth_test_state_with_stub().await;
+
+    set_stub_roles(&stub, Some(serde_json::json!(["member"])));
+    let first = oauth_login_round(&state).await;
+    assert_eq!(first.status(), StatusCode::FOUND);
+    assert_eq!(stored_role_of(&state, "stub_subject-").await, Role::Member);
+
+    set_stub_roles(&stub, Some(serde_json::json!(["member", "admin"])));
+    let second = oauth_login_round(&state).await;
+    assert_eq!(second.status(), StatusCode::FOUND);
+    assert_eq!(
+        state.store.count_users().await.unwrap(),
+        2,
+        "promotion updates the bound account, it does not mint a new one"
+    );
+    assert_eq!(
+        stored_role_of(&state, "stub_subject-").await,
+        Role::Admin,
+        "an admin tag on a returning login promotes the existing account"
+    );
+    assert_eq!(session_role(&second, &state).await, "admin");
+}
+
+/// The update path, isolated from the rest of the login: the store double
+/// records `set_user_role` calls, so a `find_or_create_user` that computes
+/// a role and never writes it is caught here — on the in-memory lane, with
+/// no database involved.
+///
+/// The counterfactual is the point: `auth.verify` re-loads the user from
+/// the store, so it cannot notice a `find_or_create_user` that reads the
+/// binding and quietly does nothing. This asserts the WRITE itself, and
+/// the role the returned record carries.
+#[derive(Default)]
+struct RoleRecorder {
+    calls: std::sync::Mutex<Vec<(uuid::Uuid, Role)>>,
+}
+
+impl RoleRecorder {
+    fn take(&self) -> Vec<(uuid::Uuid, Role)> {
+        std::mem::take(&mut *self.calls.lock().unwrap())
+    }
+}
+
+/// Delegates to a memory store, recording every `set_user_role`.
+struct RecordingRoleStore {
+    inner: MemoryStore,
+    recorder: Arc<RoleRecorder>,
+}
+
+#[async_trait::async_trait]
+impl Store for RecordingRoleStore {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    async fn get_file_by_owner_bucket_and_sha256(
+        &self,
+        owner: uuid::Uuid,
+        bucket: Option<uuid::Uuid>,
+        sha: &str,
+    ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        self.inner
+            .get_file_by_owner_bucket_and_sha256(owner, bucket, sha)
+            .await
+    }
+    async fn set_user_role(
+        &self,
+        user_id: uuid::Uuid,
+        role: Role,
+    ) -> Result<(), i0721_store::StoreError> {
+        self.recorder.calls.lock().unwrap().push((user_id, role));
+        self.inner.set_user_role(user_id, role).await
+    }
+    async fn get_setting(
+        &self,
+        key: &str,
+    ) -> Result<Option<serde_json::Value>, i0721_store::StoreError> {
+        self.inner.get_setting(key).await
+    }
+    async fn set_setting(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Result<(), i0721_store::StoreError> {
+        self.inner.set_setting(key, value).await
+    }
+    async fn get_oauth_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<uuid::Uuid>, i0721_store::StoreError> {
+        self.inner.get_oauth_identity(provider, subject).await
+    }
+    async fn link_oauth_identity(
+        &self,
+        provider: &str,
+        subject: &str,
+        user_id: uuid::Uuid,
+    ) -> Result<(), i0721_store::StoreError> {
+        self.inner
+            .link_oauth_identity(provider, subject, user_id)
+            .await
+    }
+    async fn oauth_providers_for_user(
+        &self,
+        user_id: uuid::Uuid,
+    ) -> Result<Vec<String>, i0721_store::StoreError> {
+        self.inner.oauth_providers_for_user(user_id).await
+    }
+    async fn get_user(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<UserRecord>, i0721_store::StoreError> {
+        self.inner.get_user(id).await
+    }
+    async fn get_user_by_username(
+        &self,
+        name: &str,
+    ) -> Result<Option<UserRecord>, i0721_store::StoreError> {
+        self.inner.get_user_by_username(name).await
+    }
+    async fn list_users(
+        &self,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<UserRecord>, i0721_store::StoreError> {
+        self.inner.list_users(offset, limit).await
+    }
+    async fn count_users(&self) -> Result<u64, i0721_store::StoreError> {
+        self.inner.count_users().await
+    }
+    async fn create_user(&self, user: CreateUser) -> Result<UserRecord, i0721_store::StoreError> {
+        self.inner.create_user(user).await
+    }
+    async fn delete_user(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+        self.inner.delete_user(id).await
+    }
+    async fn list_files(
+        &self,
+        buckets: Option<&[uuid::Uuid]>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        self.inner.list_files(buckets, offset, limit).await
+    }
+    async fn count_files(
+        &self,
+        buckets: Option<&[uuid::Uuid]>,
+    ) -> Result<u64, i0721_store::StoreError> {
+        self.inner.count_files(buckets).await
+    }
+    async fn get_file(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        self.inner.get_file(id).await
+    }
+    async fn get_file_by_owner_and_sha256(
+        &self,
+        owner: uuid::Uuid,
+        sha: &str,
+    ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        self.inner.get_file_by_owner_and_sha256(owner, sha).await
+    }
+    async fn create_file(
+        &self,
+        file: i0721_proto::NewFile,
+    ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+        self.inner.create_file(file).await
+    }
+    async fn rename_file(
+        &self,
+        id: uuid::Uuid,
+        name: &str,
+    ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        self.inner.rename_file(id, name).await
+    }
+    async fn soft_delete_file(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+        self.inner.soft_delete_file(id).await
+    }
+    async fn sum_live_sizes(&self, owner: uuid::Uuid) -> Result<i64, i0721_store::StoreError> {
+        self.inner.sum_live_sizes(owner).await
+    }
+    async fn set_user_quota(
+        &self,
+        user: uuid::Uuid,
+        quota: Option<i64>,
+    ) -> Result<(), i0721_store::StoreError> {
+        self.inner.set_user_quota(user, quota).await
+    }
+    async fn list_storage_buckets(
+        &self,
+    ) -> Result<Vec<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
+        self.inner.list_storage_buckets().await
+    }
+    async fn get_storage_bucket_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
+        self.inner.get_storage_bucket_by_slug(slug).await
+    }
+    async fn upsert_storage_bucket(
+        &self,
+        slug: &str,
+        d: &str,
+        a: bool,
+        g: bool,
+        e: bool,
+    ) -> Result<i0721_proto::StorageBucketRecord, i0721_store::StoreError> {
+        self.inner.upsert_storage_bucket(slug, d, a, g, e).await
+    }
+    async fn delete_storage_bucket(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+        self.inner.delete_storage_bucket(id).await
+    }
+    async fn storage_keys_live_in_bucket(
+        &self,
+        bucket: Option<uuid::Uuid>,
+    ) -> Result<std::collections::HashSet<String>, i0721_store::StoreError> {
+        self.inner.storage_keys_live_in_bucket(bucket).await
+    }
+    async fn count_live_files_by_bucket(
+        &self,
+        bucket: Option<uuid::Uuid>,
+    ) -> Result<u64, i0721_store::StoreError> {
+        self.inner.count_live_files_by_bucket(bucket).await
+    }
+    async fn list_live_rows_by_storage_key(
+        &self,
+        key: &str,
+    ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        self.inner.list_live_rows_by_storage_key(key).await
+    }
+    async fn count_live_files_by_storage_key(
+        &self,
+        bucket: Option<uuid::Uuid>,
+        key: &str,
+    ) -> Result<u64, i0721_store::StoreError> {
+        self.inner
+            .count_live_files_by_storage_key(bucket, key)
+            .await
+    }
+    async fn count_live_files_by_thumbnail_key(
+        &self,
+        bucket: Option<uuid::Uuid>,
+        key: &str,
+    ) -> Result<u64, i0721_store::StoreError> {
+        self.inner
+            .count_live_files_by_thumbnail_key(bucket, key)
+            .await
+    }
+    async fn count_folder(
+        &self,
+        owner: uuid::Uuid,
+        parent: Option<uuid::Uuid>,
+        kind: Option<String>,
+        buckets: Option<&[uuid::Uuid]>,
+    ) -> Result<u64, i0721_store::StoreError> {
+        self.inner.count_folder(owner, parent, kind, buckets).await
+    }
+    async fn list_folder(
+        &self,
+        owner: uuid::Uuid,
+        parent: Option<uuid::Uuid>,
+        kind: Option<String>,
+        buckets: Option<&[uuid::Uuid]>,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        self.inner
+            .list_folder(owner, parent, kind, buckets, offset, limit)
+            .await
+    }
+    async fn folder_name_taken(
+        &self,
+        owner: uuid::Uuid,
+        parent: Option<uuid::Uuid>,
+        bucket: Option<uuid::Uuid>,
+        name: &str,
+        exclude: Option<uuid::Uuid>,
+    ) -> Result<bool, i0721_store::StoreError> {
+        self.inner
+            .folder_name_taken(owner, parent, bucket, name, exclude)
+            .await
+    }
+    async fn create_folder(
+        &self,
+        owner: uuid::Uuid,
+        parent: Option<uuid::Uuid>,
+        name: &str,
+        bucket: Option<uuid::Uuid>,
+    ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+        self.inner.create_folder(owner, parent, name, bucket).await
+    }
+    async fn set_parent(
+        &self,
+        id: uuid::Uuid,
+        parent: Option<uuid::Uuid>,
+    ) -> Result<(), i0721_store::StoreError> {
+        self.inner.set_parent(id, parent).await
+    }
+    async fn ancestor_ids(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+        self.inner.ancestor_ids(id).await
+    }
+    async fn subtree_live_ids(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+        self.inner.subtree_live_ids(id).await
+    }
+    async fn soft_delete_many(&self, ids: &[uuid::Uuid]) -> Result<u64, i0721_store::StoreError> {
+        self.inner.soft_delete_many(ids).await
+    }
+    async fn get_files_by_ids(
+        &self,
+        ids: &[uuid::Uuid],
+    ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        self.inner.get_files_by_ids(ids).await
+    }
+    async fn create_share(
+        &self,
+        share: i0721_proto::NewShare,
+    ) -> Result<i0721_proto::ShareRecord, i0721_store::StoreError> {
+        self.inner.create_share(share).await
+    }
+    async fn get_share(
+        &self,
+        token: &str,
+    ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        self.inner.get_share(token).await
+    }
+    async fn find_share_by_file(
+        &self,
+        owner: uuid::Uuid,
+        file: uuid::Uuid,
+    ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        self.inner.find_share_by_file(owner, file).await
+    }
+    async fn list_shares(
+        &self,
+        owner: uuid::Uuid,
+    ) -> Result<Vec<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        self.inner.list_shares(owner).await
+    }
+    async fn delete_share(&self, token: &str) -> Result<bool, i0721_store::StoreError> {
+        self.inner.delete_share(token).await
+    }
+    async fn delete_shares_for_files(
+        &self,
+        ids: &[uuid::Uuid],
+    ) -> Result<u64, i0721_store::StoreError> {
+        self.inner.delete_shares_for_files(ids).await
+    }
+    async fn create_api_key(
+        &self,
+        record: &i0721_proto::ApiKeyRecord,
+    ) -> Result<(), i0721_store::StoreError> {
+        self.inner.create_api_key(record).await
+    }
+    async fn list_api_keys(
+        &self,
+        owner: uuid::Uuid,
+    ) -> Result<Vec<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        self.inner.list_api_keys(owner).await
+    }
+    async fn revoke_api_key(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+        self.inner.revoke_api_key(id).await
+    }
+    async fn update_api_key(
+        &self,
+        id: uuid::Uuid,
+        name: &str,
+        scopes_json: &str,
+        expires_at: Option<&str>,
+    ) -> Result<bool, i0721_store::StoreError> {
+        self.inner
+            .update_api_key(id, name, scopes_json, expires_at)
+            .await
+    }
+    async fn find_api_key_by_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        self.inner.find_api_key_by_hash(hash).await
+    }
+    async fn find_api_key_by_id(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        self.inner.find_api_key_by_id(id).await
+    }
+    async fn touch_api_key(&self, id: uuid::Uuid) -> Result<(), i0721_store::StoreError> {
+        self.inner.touch_api_key(id).await
+    }
+    async fn settings_state(
+        &self,
+        key: &str,
+    ) -> Result<i0721_store::SettingsState, i0721_store::StoreError> {
+        self.inner.settings_state(key).await
+    }
+    async fn get_bucket_grant(
+        &self,
+        user: uuid::Uuid,
+        bucket: uuid::Uuid,
+    ) -> Result<Option<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+        self.inner.get_bucket_grant(user, bucket).await
+    }
+    async fn set_bucket_grant(
+        &self,
+        user: uuid::Uuid,
+        bucket: uuid::Uuid,
+        r: bool,
+        w: bool,
+        s: bool,
+    ) -> Result<(), i0721_store::StoreError> {
+        self.inner.set_bucket_grant(user, bucket, r, w, s).await
+    }
+    async fn list_bucket_grants_for_user(
+        &self,
+        user: uuid::Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+        self.inner.list_bucket_grants_for_user(user).await
+    }
+    async fn list_bucket_grants_for_bucket(
+        &self,
+        bucket: uuid::Uuid,
+    ) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+        self.inner.list_bucket_grants_for_bucket(bucket).await
+    }
+    async fn a_live_key_references_bucket_slug(
+        &self,
+        slug: &str,
+    ) -> Result<bool, i0721_store::StoreError> {
+        self.inner.a_live_key_references_bucket_slug(slug).await
+    }
+}
+
+/// The ROLE ITSELF is computed and said, not only the row it leaves
+/// behind: `find_or_create_user` must reach the store with the provider's
+/// statement (and the very write it makes), for a returning binding and
+/// for a `None` provider alike. This is the case a no-op
+/// `find_or_create_user` cannot pass — it never calls the store at all.
+#[tokio::test]
+async fn find_or_create_user_writes_the_role_the_provider_states() {
+    let recorder = Arc::new(RoleRecorder::default());
+    let (mut state, admin) = test_state().await;
+    state.store = Arc::new(RecordingRoleStore {
+        inner: MemoryStore::new(),
+        recorder: Arc::clone(&recorder),
+    });
+    // Re-seed the fixture through the recording wrapper (which delegates).
+    let seeded = state
+        .store
+        .create_user(CreateUser {
+            username: admin.username.clone(),
+            display_name: admin.display_name.clone(),
+            role: Role::Admin,
+            password_hash: admin.password_hash.clone(),
+        })
+        .await
+        .unwrap();
+
+    // First login with an admin statement: minted AS admin, no role write.
+    let first = i0721_server::oauth::find_or_create_user(
+        &state,
+        "stub",
+        "subject-abcdef01",
+        Some("Stub User"),
+        Some(Role::Admin),
+    )
+    .await
+    .expect("first login mints");
+    assert_eq!(
+        first.role,
+        Role::Admin,
+        "the minted row carries the stated role"
+    );
+    assert!(
+        recorder.take().is_empty(),
+        "a first login folds the role into create_user; it owes no second write"
+    );
+
+    // Returning login WITHOUT the tag: exactly one write, to Member.
+    let demoted = i0721_server::oauth::find_or_create_user(
+        &state,
+        "stub",
+        "subject-abcdef01",
+        Some("Stub User"),
+        Some(Role::Member),
+    )
+    .await
+    .expect("returning login syncs");
+    assert_eq!(
+        recorder.take(),
+        vec![(first.id, Role::Member)],
+        "the demotion is WRITTEN through set_user_role, to this user, as member"
+    );
+    assert_eq!(
+        demoted.role,
+        Role::Member,
+        "the returned record is the POST-write row, not the pre-write copy"
+    );
+
+    // Returning login with the tag back: promoted, again as one write.
+    let promoted = i0721_server::oauth::find_or_create_user(
+        &state,
+        "stub",
+        "subject-abcdef01",
+        Some("Stub User"),
+        Some(Role::Admin),
+    )
+    .await
+    .expect("returning login syncs up");
+    assert_eq!(
+        recorder.take(),
+        vec![(first.id, Role::Admin)],
+        "the promotion is written too"
+    );
+    assert_eq!(promoted.role, Role::Admin);
+
+    // A provider that says nothing: no write, role untouched.
+    let silent = i0721_server::oauth::find_or_create_user(
+        &state,
+        "stub",
+        "subject-abcdef01",
+        Some("Stub User"),
+        None,
+    )
+    .await
+    .expect("a silent provider still logs in");
+    assert!(
+        recorder.take().is_empty(),
+        "no statement, no write: a GitHub-shaped login must not demote"
+    );
+    assert_eq!(silent.role, Role::Admin, "the stored admin role stands");
+
+    // The local admin account has no binding and is never reachable here.
+    assert_eq!(
+        state.store.get_user(seeded.id).await.unwrap().unwrap().role,
+        Role::Admin,
+        "an OAuth sync never touches a local password account"
+    );
+}
+
+/// A provider that says NOTHING about roles must never move a local role:
+/// GitHub-shaped UserInfo (no `roles` key at all) leaves the admin this
+/// account holds in place. (Reading the absence as "member" would demote
+/// every admin on every unrelated provider's login.)
+#[tokio::test]
+async fn oauth_login_without_a_roles_claim_keeps_the_stored_role() {
+    let (state, stub, _base, _admin) = oauth_test_state_with_stub().await;
+
+    set_stub_roles(&stub, Some(serde_json::json!(["admin"])));
+    let first = oauth_login_round(&state).await;
+    assert_eq!(first.status(), StatusCode::FOUND);
+    assert_eq!(stored_role_of(&state, "stub_subject-").await, Role::Admin);
+
+    // No `roles` key at all.
+    set_stub_roles(&stub, None);
+    let second = oauth_login_round(&state).await;
+    assert_eq!(second.status(), StatusCode::FOUND);
+    assert_eq!(
+        stored_role_of(&state, "stub_subject-").await,
+        Role::Admin,
+        "an absent \"roles\" claim states nothing and must not demote"
+    );
+    assert_eq!(
+        session_role(&second, &state).await,
+        "admin",
+        "the untouched role is what the session reports"
+    );
+
+    // A wrongly-typed `roles` is equally silent.
+    set_stub_roles(&stub, Some(serde_json::json!("member")));
+    let third = oauth_login_round(&state).await;
+    assert_eq!(third.status(), StatusCode::FOUND);
+    assert_eq!(
+        stored_role_of(&state, "stub_subject-").await,
+        Role::Admin,
+        "a non-array \"roles\" is not a statement either"
     );
 }
 
@@ -8506,6 +9252,13 @@ async fn failing_settings_state() -> AppState {
         ) -> Result<(), i0721_store::StoreError> {
             self.0.set_user_quota(u, q).await
         }
+        async fn set_user_role(
+            &self,
+            u: uuid::Uuid,
+            r: i0721_proto::Role,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_user_role(u, r).await
+        }
         async fn create_api_key(
             &self,
             r: &i0721_proto::ApiKeyRecord,
@@ -11893,6 +12646,13 @@ async fn mcp_get_share_link_on_a_store_failure_answers_the_iserror_tool_error() 
         ) -> Result<(), i0721_store::StoreError> {
             self.0.set_user_quota(u, q).await
         }
+        async fn set_user_role(
+            &self,
+            u: uuid::Uuid,
+            r: i0721_proto::Role,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_user_role(u, r).await
+        }
         async fn create_api_key(
             &self,
             r: &i0721_proto::ApiKeyRecord,
@@ -14826,6 +15586,13 @@ async fn unreadable_settings_state() -> AppState {
             quota: Option<i64>,
         ) -> Result<(), i0721_store::StoreError> {
             self.0.set_user_quota(user, quota).await
+        }
+        async fn set_user_role(
+            &self,
+            user: uuid::Uuid,
+            role: i0721_proto::Role,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_user_role(user, role).await
         }
         async fn upsert_storage_bucket(
             &self,
