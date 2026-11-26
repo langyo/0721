@@ -65,6 +65,12 @@ export const router = createRouter({
           meta: { titleKey: "common.buckets.title", admin: true },
         },
         {
+          path: "unregistered",
+          name: "unregistered",
+          component: () => import("@/views/UnregisteredView"),
+          meta: { titleKey: "common.unregistered.title", admin: true },
+        },
+        {
           path: "settings",
           name: "site-settings",
           component: () => import("@/views/SettingsView"),

@@ -41,6 +41,7 @@ export type { SettingHealth } from "./SettingHealth.ts";
 export type { ShareDto } from "./ShareDto.ts";
 export type { SiteConfig } from "./SiteConfig.ts";
 export type { SiteConfigStrict } from "./SiteConfigStrict.ts";
+export type { UnregisteredObject } from "./UnregisteredObject.ts";
 export type { UploadConfig } from "./UploadConfig.ts";
 export type { UploadConfigStrict } from "./UploadConfigStrict.ts";
 export type { UserDto } from "./UserDto.ts";

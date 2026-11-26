@@ -246,5 +246,24 @@
     "forbidden": "Sin permiso de lectura",
     "unavailable": "Almacenamiento no disponible",
     "missing": "No encontrado"
+  },
+  "unregistered": {
+    "title": "Objetos no registrados",
+    "show": "Mostrar objetos no registrados",
+    "pickBucket": "Elegir un bucket",
+    "unsupported": "Este backend no puede escanearse",
+    "empty": "No hay objetos no registrados en este bucket",
+    "key": "Clave",
+    "size": "Tamaño",
+    "mime": "MIME",
+    "adopt": "Adoptar",
+    "adoptTitle": "Adoptar objeto",
+    "owner": "Propietario",
+    "ownerSelf": "usted (predeterminado)",
+    "parent": "Id. de carpeta padre",
+    "parentHint": "opcional",
+    "name": "Nombre visible",
+    "nameHint": "por defecto, la clave",
+    "adopted": "Objeto adoptado"
   }
 }

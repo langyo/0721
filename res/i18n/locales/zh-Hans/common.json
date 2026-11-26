@@ -246,5 +246,24 @@
     "forbidden": "无读取权限",
     "unavailable": "存储不可用",
     "missing": "不存在"
+  },
+  "unregistered": {
+    "title": "未注册对象",
+    "show": "显示未注册对象",
+    "pickBucket": "选择桶",
+    "unsupported": "该后端不支持扫描",
+    "empty": "此桶中没有未注册对象",
+    "key": "键",
+    "size": "大小",
+    "mime": "MIME",
+    "adopt": "收录",
+    "adoptTitle": "收录对象",
+    "owner": "所有者",
+    "ownerSelf": "自己（默认）",
+    "parent": "父文件夹 id",
+    "parentHint": "可选",
+    "name": "显示名",
+    "nameHint": "默认为键",
+    "adopted": "已收录"
   }
 }

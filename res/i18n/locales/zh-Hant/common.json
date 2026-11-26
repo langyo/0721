@@ -246,5 +246,24 @@
     "forbidden": "無讀取權限",
     "unavailable": "儲存不可用",
     "missing": "不存在"
+  },
+  "unregistered": {
+    "title": "未註冊物件",
+    "show": "顯示未註冊物件",
+    "pickBucket": "選擇儲存桶",
+    "unsupported": "該後端不支援掃描",
+    "empty": "此儲存桶中沒有未註冊物件",
+    "key": "鍵",
+    "size": "大小",
+    "mime": "MIME",
+    "adopt": "收錄",
+    "adoptTitle": "收錄物件",
+    "owner": "擁有者",
+    "ownerSelf": "自己（預設）",
+    "parent": "父資料夾 id",
+    "parentHint": "可選",
+    "name": "顯示名稱",
+    "nameHint": "預設為鍵",
+    "adopted": "已收錄"
   }
 }
