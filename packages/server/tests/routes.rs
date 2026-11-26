@@ -7162,15 +7162,18 @@ fn tool_specs_match_the_permission_table_exactly() {
     );
 }
 
-/// The `-32001` code the scope refusal rides.
-const SCOPE_DENIED: i64 = -32001;
+/// The code a permission refusal rides: the plana family's `-32005`,
+/// **imported from the service** rather than copied, so a lane that went
+/// back to a number of its own turns these assertions red instead of
+/// leaving the tests agreeing with a constant nobody sends.
+const SCOPE_DENIED: i64 = i0721_server::rpc::rpc_error_codes::AUTH;
 
 /// The exact refusal text the spec fixes (one phrasing, every surface).
 fn scope_denied_message(op: &str, tool: &str) -> String {
     format!("scope denied: this API key lacks the \"{op}\" permission required by tool \"{tool}\"")
 }
 
-/// ② Every tool × (key lacking its op → `-32001`; key holding it →
+/// ② Every tool × (key lacking its op → the permission frame; key holding it →
 /// allowed). "Allowed" is proven by the call producing a TOOL result (a
 /// domain error for the deliberately non-existent ids is fine — what
 /// must NOT happen is the protocol refusal).
@@ -7243,7 +7246,7 @@ async fn mcp_tool_calls_require_the_mapped_permission() {
         assert_eq!(envelope["id"], id, "{tool}: the frame carries its id");
         assert_eq!(
             envelope["error"]["code"], SCOPE_DENIED,
-            "{tool} without {op} is a -32001 protocol error: {envelope}"
+            "{tool} without {op} is a permission protocol error: {envelope}"
         );
         assert!(
             envelope.get("result").is_none(),
@@ -7253,6 +7256,15 @@ async fn mcp_tool_calls_require_the_mapped_permission() {
             envelope["error"]["message"],
             scope_denied_message(op, tool),
             "{tool}: the refusal names the permission and the tool"
+        );
+        // The ops refusal carries NO `data`: there is no bucket to name at
+        // this point (the bucket checks come later, per tool), and a `data`
+        // here would be a place for one to leak from. The two bucket arms
+        // are distinguished by `data.denial`; this arm is distinguished by
+        // having none.
+        assert!(
+            envelope["error"].get("data").is_none(),
+            "{tool}: the ops refusal must not carry data: {envelope}"
         );
 
         // The SAME tool with a key that holds the op gets past the gate.
@@ -10297,7 +10309,7 @@ async fn a_member_reads_media_from_the_signup_bucket_but_lists_only_their_own_ro
 }
 
 /// `bucket_scope_denials_are_jsonrpc_frames_not_tool_errors`: a key
-/// whose `buckets` array lacks the target bucket answers the `-32001`
+/// whose `buckets` array lacks the target bucket answers the permission
 /// FRAME (top-level error), never an isError tool result.
 /// MUT:M-P2A11 — a pre-check answering ToolError instead of Frame turns
 /// this red.
@@ -10311,7 +10323,8 @@ async fn bucket_scope_denials_are_jsonrpc_frames_not_tool_errors() {
     let file_id = up["id"].as_str().unwrap().to_owned();
 
     // A key whose buckets EXPLICITLY excludes the file's bucket (the
-    // bootstrap bucket): the share tool's R-L arm ② fires → frame -32001.
+    // bootstrap bucket): the share tool's R-L arm ② fires → the
+    // permission frame.
     let (_, key) = mcp_api_key_with_at(&state, &admin_token, "no-buckets", all_ops(), None).await;
     // Rewrite the key's scopes with an explicit EMPTY buckets array (the
     // RPC materializes granted_buckets when the field is omitted).
@@ -10354,16 +10367,354 @@ async fn bucket_scope_denials_are_jsonrpc_frames_not_tool_errors() {
         envelope.get("result").is_none(),
         "never an isError result: {envelope}"
     );
+    // The two permission refusals share one code (the family's), so the
+    // thing that tells them apart is `data.denial` — the key's own bucket
+    // list here, the acting user's grant in the arm-③ test below.
+    assert_eq!(
+        envelope["error"]["data"]["denial"], "key_scope",
+        "a key whose bucket list excludes the bucket says so: {envelope}"
+    );
+    assert!(
+        envelope["error"]["data"]["bucket"].is_string(),
+        "the refusal names the bucket it is about: {envelope}"
+    );
+}
+
+/// A file that is not the caller's must not teach the caller anything about
+/// it — and in particular not the slug of the bucket it sits in.
+///
+/// `get_share_link`'s pre-check loads the file by id, and `get_file` is not
+/// owner-scoped; the "not your file" answer is the tool body's, which runs
+/// *after* the pre-check. So for a foreign file id the pre-check used to reach
+/// the share-bit arm and answer `data.denial="user_access"` with the bucket's
+/// slug — disclosing a slug the caller has no grant to see, structured by the
+/// very field that was added to tell the arms apart. The rule the rest of this
+/// file already holds (§7: what the caller cannot see answers as if it were
+/// not there) is the fix.
+///
+/// The caller's key lists the bucket in `buckets` on purpose: that arm must
+/// pass, so the refusal is about the *file*, and the test is about what the
+/// refusal is allowed to say.
+#[tokio::test]
+async fn mcp_get_share_link_for_someone_elses_file_names_no_bucket() {
+    let (base_state, _admin_token) = test_state_with_token().await;
+    let (state, bucket_id, _store) = plant_second_bucket(&base_state, "not-yours", true);
+    // The store row MUST carry the registry's id, or the upload finds no row
+    // to route to (the same seeding the share-bit test below does).
+    state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store")
+        .seed_bucket(i0721_proto::StorageBucketRecord {
+            id: bucket_id,
+            slug: "not-yours".to_owned(),
+            display_name: "not-yours".to_owned(),
+            backend: i0721_proto::BucketBackend::Local,
+            location: "loc".to_owned(),
+            endpoint_ref: "x".to_owned(),
+            // Private: an anonymous caller would not see it either.
+            anonymous_read: false,
+            grant_on_signup: false,
+            enabled: true,
+            is_bootstrap: false,
+            created_at: Timestamp::now(),
+        });
+    async fn new_member(state: &AppState) -> i0721_proto::UserRecord {
+        state
+            .store
+            .create_user(CreateUser {
+                username: format!("m-{}", uuid::Uuid::new_v4().simple()),
+                display_name: "m".to_owned(),
+                role: Role::Member,
+                password_hash: None,
+            })
+            .await
+            .unwrap()
+    }
+    // The owner can write to the bucket; the caller cannot even read it.
+    let owner = new_member(&state).await;
+    state
+        .store
+        .set_bucket_grant(owner.id, bucket_id, true, true, true)
+        .await
+        .unwrap();
+    let owner_token = state.signer.sign(owner.id, Timestamp::now());
+    let (_, up) = upload_bucket(
+        &state,
+        &owner_token,
+        png_of(4, 4),
+        "theirs.png",
+        "not-yours",
+    )
+    .await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+    let caller = new_member(&state).await;
+    // The caller's key holds every op AND lists the bucket: nothing about the
+    // key refuses, so whatever refuses is about the file.
+    let (_, key) = plant_api_key(
+        &state,
+        caller.id,
+        "caller",
+        r#"{"ops":["read","upload","share"],"buckets":["not-yours"]}"#,
+        None,
+    )
+    .await;
+
+    let (mut sse, session_id) = mcp_handshake(&state, &key).await;
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        1,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": file_id}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "data:").await;
+    let envelope = sse_envelope(&frames);
+    let text = envelope.to_string();
+    assert!(
+        !text.contains("not-yours"),
+        "a file the caller does not own must not reveal its bucket: {envelope}"
+    );
+    // And it is refused the way a file that is not there is refused: a tool
+    // result, not a permission frame — a frame would confirm the file exists.
+    assert!(
+        envelope.get("error").is_none(),
+        "no permission frame for a file the caller cannot see: {envelope}"
+    );
+    assert_eq!(envelope["result"]["isError"], true, "{envelope}");
+}
+
+/// The other half of the share rule: an admin's key DOES share another
+/// user's file.
+///
+/// The rule is the RPC lane's — the owner, or an admin — and an API key acts
+/// as its owner, admin included. (A version of this PR made the lane
+/// owner-only and wrote "an API key never elevates" into the README; the
+/// review showed an admin's key already targeting any user's folder through
+/// `upload_file` in this same lane, so the sentence was false and the
+/// owner-only rule was a divergence nobody had asked for.)
+#[tokio::test]
+async fn mcp_get_share_link_lets_an_admin_share_another_users_file() {
+    let (base_state, _admin_token) = test_state_with_token().await;
+    let (mut state, bucket_id, _store) = plant_second_bucket(&base_state, "admin-shares", true);
+    // A share link needs somewhere to point; the fixture has no origin.
+    let mut config = (*state.config).clone();
+    config.public_origin = Some("https://res.example.test".to_owned());
+    state.config = std::sync::Arc::new(config);
+    state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store")
+        .seed_bucket(i0721_proto::StorageBucketRecord {
+            id: bucket_id,
+            slug: "admin-shares".to_owned(),
+            display_name: "admin-shares".to_owned(),
+            backend: i0721_proto::BucketBackend::Local,
+            location: "loc".to_owned(),
+            endpoint_ref: "x".to_owned(),
+            anonymous_read: false,
+            grant_on_signup: false,
+            enabled: true,
+            is_bootstrap: false,
+            created_at: Timestamp::now(),
+        });
+    let owner = state
+        .store
+        .create_user(CreateUser {
+            username: format!("o-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "o".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    state
+        .store
+        .set_bucket_grant(owner.id, bucket_id, true, true, true)
+        .await
+        .unwrap();
+    let owner_token = state.signer.sign(owner.id, Timestamp::now());
+    let (_, up) = upload_bucket(
+        &state,
+        &owner_token,
+        png_of(4, 4),
+        "theirs.png",
+        "admin-shares",
+    )
+    .await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+    // An admin's key. The admin holds NO grant on the bucket at all, and the
+    // share bit is a `bucket_grants` column: the tool must not ask an admin
+    // for it (`files.share_create` does not — it wraps the same check in
+    // `if user.role != Role::Admin`). Asserted through the outcome: a refusal
+    // here would be `data.denial = "user_access"`.
+    let admin = state
+        .store
+        .create_user(CreateUser {
+            username: format!("a-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "a".to_owned(),
+            role: Role::Admin,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let (_, key) = plant_api_key(
+        &state,
+        admin.id,
+        "admin",
+        r#"{"ops":["read","upload","share"],"buckets":["admin-shares"]}"#,
+        None,
+    )
+    .await;
+
+    let (mut sse, session_id) = mcp_handshake(&state, &key).await;
+    let status = mcp_post_frame(
+        &state,
+        &session_id,
+        1,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": file_id}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "data:").await;
+    let envelope = sse_envelope(&frames);
+    assert!(
+        envelope.get("error").is_none(),
+        "an admin is not refused a permission frame: {envelope}"
+    );
+    // A tool that succeeds carries no `isError` at all — that member is how
+    // a failure is marked. And the result is a link, by its shape.
+    assert!(
+        envelope["result"].get("isError").is_none(),
+        "a success is not marked as an error: {envelope}"
+    );
+    let text = envelope["result"]["content"][0]["text"].as_str().unwrap();
+    let link: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert!(
+        link["url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("https://res.example.test/s/")),
+        "a share link for the member's file: {link}"
+    );
+}
+
+/// A user with no password, in `role`, for the share tests below.
+async fn share_lane_user(state: &AppState, role: Role) -> i0721_proto::UserRecord {
+    state
+        .store
+        .create_user(CreateUser {
+            username: format!("u-{}", uuid::Uuid::new_v4().simple()),
+            display_name: "u".to_owned(),
+            role,
+            password_hash: None,
+        })
+        .await
+        .unwrap()
+}
+
+/// `get_share_link` for `file_id` through `key`: the tool's text, which must
+/// not be an error.
+async fn share_link_text(state: &AppState, key: &str, file_id: &str) -> String {
+    let (mut sse, session_id) = mcp_handshake(state, key).await;
+    let status = mcp_post_frame(
+        state,
+        &session_id,
+        1,
+        "tools/call",
+        serde_json::json!({"name": "get_share_link", "arguments": {"file_id": file_id}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "data:").await;
+    let envelope = sse_envelope(&frames);
+    assert!(envelope.get("error").is_none(), "{envelope}");
+    assert_ne!(envelope["result"]["isError"], true, "{envelope}");
+    envelope["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// A file has ONE live share, whoever asks for the link.
+///
+/// The share belongs to the file, so the RPC lane records the file's owner on
+/// it — and this lane recorded the *acting user*, which was the same thing
+/// while only the owner could get here. The moment an admin's key could, an
+/// admin's call minted a second token on the member's file instead of
+/// answering with the member's (measured by the review: two rows, two
+/// tokens). The same call from two different keys must answer with one token.
+#[tokio::test]
+async fn an_admin_and_the_owner_get_the_same_link_for_one_file() {
+    let (base_state, _admin_token) = test_state_with_token().await;
+    let (mut state, bucket_id, _store) = plant_second_bucket(&base_state, "one-link", true);
+    let mut config = (*state.config).clone();
+    config.public_origin = Some("https://res.example.test".to_owned());
+    state.config = std::sync::Arc::new(config);
+    state
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store")
+        .seed_bucket(i0721_proto::StorageBucketRecord {
+            id: bucket_id,
+            slug: "one-link".to_owned(),
+            display_name: "one-link".to_owned(),
+            backend: i0721_proto::BucketBackend::Local,
+            location: "loc".to_owned(),
+            endpoint_ref: "x".to_owned(),
+            anonymous_read: false,
+            grant_on_signup: false,
+            enabled: true,
+            is_bootstrap: false,
+            created_at: Timestamp::now(),
+        });
+    let owner = share_lane_user(&state, Role::Member).await;
+    state
+        .store
+        .set_bucket_grant(owner.id, bucket_id, true, true, true)
+        .await
+        .unwrap();
+    let owner_token = state.signer.sign(owner.id, Timestamp::now());
+    let (_, up) = upload_bucket(&state, &owner_token, png_of(4, 4), "mine.png", "one-link").await;
+    let file_id = up["id"].as_str().unwrap().to_owned();
+    let admin = share_lane_user(&state, Role::Admin).await;
+    let scopes = r#"{"ops":["read","upload","share"],"buckets":["one-link"]}"#;
+    let (_, owner_key) = plant_api_key(&state, owner.id, "owner", scopes, None).await;
+    let (_, admin_key) = plant_api_key(&state, admin.id, "admin", scopes, None).await;
+
+    let first = share_link_text(&state, &owner_key, &file_id).await;
+    let second = share_link_text(&state, &admin_key, &file_id).await;
+    let owner_link: serde_json::Value = serde_json::from_str(&first).unwrap();
+    let admin_link: serde_json::Value = serde_json::from_str(&second).unwrap();
+    assert_eq!(
+        owner_link["token"], admin_link["token"],
+        "one file, one live share, whoever asks: {first} vs {second}"
+    );
+    // And the store agrees: the file's shares, by its OWNER's id, are one.
+    let rows = state
+        .store
+        .list_shares(owner.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|share| share.file_id.to_string() == file_id)
+        .count();
+    assert_eq!(rows, 1, "the share is recorded against the file's owner");
 }
 
 /// §7's MCP `upload_file` second arm: a key whose `buckets` array does
-/// not include the target bucket answers the `-32001` FRAME naming the
+/// not include the target bucket answers the permission FRAME naming the
 /// bucket (order: ops → key buckets → user access) rather than an
 /// isError tool result. MUT:§7-UP pins this shape.
 /// MUT:§7-UP — dropping the key-buckets check from the upload lane's
 /// precheck (mcp.rs) turns this red.
 #[tokio::test]
-async fn mcp_upload_file_with_a_bucket_outside_the_key_answers_the_32001_frame() {
+async fn mcp_upload_file_with_a_bucket_outside_the_key_answers_the_permission_frame() {
     let (base_state, admin_token) = test_state_with_token().await;
     let (state, _second_id, _store) = plant_second_bucket(&base_state, "mcp-target", true);
     plant_bucket(&state, "mcp-target", true, false, true).await;
@@ -10418,15 +10769,23 @@ async fn mcp_upload_file_with_a_bucket_outside_the_key_answers_the_32001_frame()
         envelope.get("result").is_none(),
         "never an isError result: {envelope}"
     );
+    assert_eq!(
+        envelope["error"]["data"]["denial"], "key_scope",
+        "the upload lane's second arm is the key's list, not the user's grant: {envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["data"]["bucket"], "mcp-target",
+        "the refusal names the bucket it is about: {envelope}"
+    );
 }
 
 /// R-L arm ③ over MCP: the key's buckets INCLUDE the file's bucket but
-/// the USER holds an explicit deny-share grant row → the `-32005` FRAME
+/// the USER holds an explicit deny-share grant row → the permission FRAME
 /// naming the bucket (§7's third share arm).
 /// MUT:R-L-MCP — dropping the `Need::Share` frame from
 /// `get_share_link`'s precheck (mcp.rs) turns this red.
 #[tokio::test]
-async fn mcp_get_share_link_without_the_user_share_bit_answers_the_32005_frame() {
+async fn mcp_get_share_link_without_the_user_share_bit_answers_the_permission_frame() {
     let (base_state, _admin_token) = test_state_with_token().await;
     let (state, second_id, _store) = plant_second_bucket(&base_state, "share-gated", true);
     // The store row MUST carry the registry's id (bucket_row_for_id
@@ -10503,7 +10862,7 @@ async fn mcp_get_share_link_without_the_user_share_bit_answers_the_32005_frame()
     let frames = sse_read_until(&mut sse, "\"error\"").await;
     let envelope = sse_envelope(&frames);
     assert_eq!(
-        envelope["error"]["code"], -32005,
+        envelope["error"]["code"], SCOPE_DENIED,
         "the missing user share bit is a FRAME: {envelope}"
     );
     assert!(
@@ -10512,6 +10871,16 @@ async fn mcp_get_share_link_without_the_user_share_bit_answers_the_32005_frame()
             .unwrap()
             .contains("share-gated"),
         "the frame names the bucket: {envelope}"
+    );
+    // Arm ③ rides the same code as arm ② — deliberately, because both are
+    // "permission" to a client — and says which permission in `data`.
+    assert_eq!(
+        envelope["error"]["data"]["denial"], "user_access",
+        "the user's missing grant, not the key's list: {envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["data"]["bucket"], "share-gated",
+        "the refusal names the bucket it is about: {envelope}"
     );
 }
 
