@@ -139,5 +139,13 @@ tokio-tungstenite = "^0.30"
 plana-rpc-server = { git = "https://github.com/celestia-island/plana", branch = "master", version = "0.2" }
 plana = { git = "https://github.com/celestia-island/plana", branch = "master", version = "0.8" }
 
+# The family error landing's server half: a failed browser NAVIGATION
+# (an OAuth callback whose exchange failed, a revoked share link, a 502
+# from a restart window) is answered with this SPA's own shell plus the
+# `hk-server-error` data island, which hikari's `createErrorReporting`
+# turns into HkErrorLanding. Unpublished family member: git master
+# (Cargo.lock pins the rev), the same shape as the plana pins above.
+plana-error-landing = { git = "https://github.com/celestia-island/plana", branch = "master", version = "^0.8" }
+
 [workspace.lints.rust]
 unsafe_code = "deny"

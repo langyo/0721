@@ -110,6 +110,14 @@ name = "plana-identity-relay"
 expression = "LicenseRef-SySL-1.0"
 license-files = [{ path = "../../LICENSE", hash = 0xda2b7c13 }]
 
+# The family error landing's server half (git master): same SySL 1.0 text
+# as the plana rows above — `packages/error_landing` inherits the workspace
+# `license-file = "LICENSE"`, so the file sits two levels up.
+[[licenses.clarify]]
+name = "plana-error-landing"
+expression = "LicenseRef-SySL-1.0"
+license-files = [{ path = "../../LICENSE", hash = 0xda2b7c13 }]
+
 [[licenses.clarify]]
 name = "ring"
 expression = "MIT AND ISC AND OpenSSL"

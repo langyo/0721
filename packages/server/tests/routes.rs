@@ -15723,3 +15723,162 @@ async fn unreadable_settings_state() -> AppState {
         Arc::new(test_config()),
     )
 }
+
+// ── the family error landing ───────────────────────────────────────────
+// A browser NAVIGATION that lands on an error is answered with this SPA's
+// own shell plus the `hk-server-error` data island hikari's
+// `createErrorReporting` reads; every other caller keeps the bytes the
+// handler produced. The layer sits innermost over the whole tree, so the
+// assertions below ride the REAL router (`routes::router`) — not a
+// miniature one — and the fallback's JSON 404 is the 4xx under test
+// because it is reachable with no fixture beyond the store.
+
+/// A document navigation: the headers a browser sends for a tab.
+fn navigation(path: &str) -> Request<Body> {
+    Request::get(path)
+        .header("sec-fetch-dest", "document")
+        .header(
+            header::ACCEPT,
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// The same path as a `fetch`/XHR caller: a resource load, never a
+/// navigation — it must keep its JSON so the SPA can show its own toast.
+fn fetch_like(path: &str) -> Request<Body> {
+    Request::get(path)
+        .header("sec-fetch-dest", "empty")
+        .header(header::ACCEPT, "*/*")
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_navigated_4xx_lands_on_the_spa_shell_with_the_status_island() {
+    let (state, _) = test_state().await;
+    let response = routes::router(state)
+        .oneshot(navigation("/api/v1/definitely-not-a-route"))
+        .await
+        .unwrap();
+
+    // The REAL status survives: the landing is a presentation of the
+    // failure, not a 200 that hides it.
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .expect("the landing is an HTML document")
+            .to_str()
+            .unwrap(),
+        "text/html; charset=utf-8"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("a landing is never cached")
+            .to_str()
+            .unwrap(),
+        "no-store"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+    assert!(
+        html.contains(r#"id="hk-server-error""#),
+        "the island hikari reads must be in the document"
+    );
+    assert!(
+        html.contains(r#""status":404"#),
+        "the island must carry the real status: {}",
+        &html[..html.len().min(400)]
+    );
+    assert!(
+        html.contains("<!doctype html>") || html.contains("<!DOCTYPE html>"),
+        "the landing is this SPA's own shell, not a built-in error page"
+    );
+}
+
+#[tokio::test]
+async fn a_fetch_4xx_keeps_its_json_byte_for_byte() {
+    let (state, _) = test_state().await;
+    let response = routes::router(state)
+        .oneshot(fetch_like("/api/v1/definitely-not-a-route"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/json"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        br#"{"error":"route not found"}"#,
+        "a non-navigation caller's body must not be touched"
+    );
+}
+
+#[tokio::test]
+async fn a_fetch_4xx_naming_json_in_accept_also_keeps_its_json() {
+    // The Accept fallback: a client with no `Sec-Fetch-*` that asks for
+    // JSON is an API caller, whatever it is called.
+    let (state, _) = test_state().await;
+    let response = routes::router(state)
+        .oneshot(
+            Request::get("/api/v1/definitely-not-a-route")
+                .header(header::ACCEPT, "application/json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    assert_eq!(body.as_ref(), br#"{"error":"route not found"}"#);
+}
+
+#[tokio::test]
+async fn a_successful_route_is_untouched_even_for_a_navigation() {
+    let (state, _) = test_state().await;
+    let response = routes::router(state)
+        .oneshot(
+            Request::get("/api/health")
+                .header("sec-fetch-dest", "document")
+                .header(header::ACCEPT, "text/html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .expect("health is JSON")
+            .to_str()
+            .unwrap(),
+        "application/json"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert!(
+        !String::from_utf8_lossy(&body).contains("hk-server-error"),
+        "the layer only answers errors"
+    );
+}

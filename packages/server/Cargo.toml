@@ -42,6 +42,7 @@ webp-animation = { workspace = true }
 ts-rs = { workspace = true }
 plana-rpc-server = { workspace = true }
 plana = { workspace = true }
+plana-error-landing = { workspace = true }
 reqwest = { workspace = true }
 getrandom = { workspace = true }
 anyhow = { workspace = true }
