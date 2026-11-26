@@ -275,4 +275,52 @@ mod tests {
         );
         std::fs::remove_dir_all(&root).ok();
     }
+
+    /// MUT:P3-LOCAL-SYMLINK — following symlinks (reading `metadata()`
+    /// instead of the entry's `file_type()`) reddens this: a symlink
+    /// pointing OUTSIDE the media dir must never enter the enumeration.
+    #[tokio::test]
+    async fn local_list_media_keys_never_lists_a_symlink_escape() {
+        let root = std::env::temp_dir().join(format!("i0721-blob-symlink-{}", std::process::id()));
+        let store = LocalBlobStore::open(&root).unwrap();
+        store.put(BlobSlot::Media, "real-key", b"1").await.unwrap();
+        // A REAL file outside the media dir, linked INTO it.
+        let outside = root.join("outside-target");
+        std::fs::write(&outside, b"secret").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, root.join("media").join("escape-link")).unwrap();
+        let keys = store.list_media_keys().await.unwrap().unwrap();
+        assert_eq!(
+            keys,
+            vec!["real-key".to_owned()],
+            "a symlinked entry (whatever it points at) is never a media blob: {keys:?}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// MUT:P3-LOCAL-UNSAFE — relaxing `is_safe_key` to allow `/` (or
+    /// any path-constructing character) reddens this: nested paths and
+    /// dot-dot-style names must never enter the enumeration.
+    #[tokio::test]
+    async fn local_list_media_keys_never_lists_an_unsafe_name() {
+        let root = std::env::temp_dir().join(format!("i0721-blob-unsafe-{}", std::process::id()));
+        let store = LocalBlobStore::open(&root).unwrap();
+        store.put(BlobSlot::Media, "safe-key", b"1").await.unwrap();
+        // A nested path a/b under media/ (a file whose name contains a
+        // `/` can only exist as a subdirectory entry).
+        std::fs::create_dir_all(root.join("media").join("a")).unwrap();
+        std::fs::write(root.join("media").join("a").join("b"), b"nested").unwrap();
+        // A creatable name that `is_safe_key` refuses (a space is not in
+        // the safe alphabet — the same class of unsafe name as `/` or
+        // `..`, which the filesystem itself forbids as literal file
+        // names).
+        std::fs::write(root.join("media").join("bad name"), b"unsafe").unwrap();
+        let keys = store.list_media_keys().await.unwrap().unwrap();
+        assert_eq!(
+            keys,
+            vec!["safe-key".to_owned()],
+            "nested paths and unsafe names are never media blobs: {keys:?}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
