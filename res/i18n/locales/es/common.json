@@ -240,5 +240,11 @@
     "grantSaved": "Permisos guardados",
     "grantHint": "Guardar los tres interruptores apagados escribe una fila de denegación explícita — sigue denegando aunque el cubo se abra por defecto más tarde.",
     "noMembers": "No hay miembros a quienes dar permisos."
+  },
+  "media": {
+    "signin": "Vuelve a iniciar sesión",
+    "forbidden": "Sin permiso de lectura",
+    "unavailable": "Almacenamiento no disponible",
+    "missing": "No encontrado"
   }
 }

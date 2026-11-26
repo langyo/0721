@@ -97,6 +97,43 @@ compose example). Production deployments must use `https://`.
 `I0721_MEDIA_ROOT` has no effect when the backend is `s3` or `ipfs`
 (it only configures the `local` backend's directory layout).
 
+## Buckets, anonymous direct links and shares
+
+Each file row carries its own bucket, and every byte read (original,
+thumbnail, share download) routes through THAT bucket — two rows with
+the same content hash can sit in different buckets, and `/media/{key}`
+resolves per request through the row that authorizes the caller. That
+same-key cross-bucket visibility is the premise to remember: content is
+keyed by its hash, so a public and a private bucket can both hold the
+same key, and the ANSWER depends on which bucket the requesting
+identity is allowed to read.
+
+- **Anonymous direct links**: a bucket with `anonymous_read = TRUE`
+  serves its media to anyone — no session, no key. A private bucket's
+  media answers 404 to anonymous requests (indistinguishable from a
+  missing key: no 403, no 503 oracle), while a signed-in session or API
+  key the bucket grants `Read` still gets 200 with a `private, no-store`
+  cache directive.
+- **Cache non-revocation**: `public, max-age=31536000, immutable` is
+  issued whenever the serving bucket is anonymous-readable. Flipping
+  `anonymous_read` to false CANNOT retract caches already issued to
+  browsers and intermediaries — the directive is the point of the
+  feature. Emergency takedown means deleting the OBJECT (or the file
+  row), never toggling the flag.
+- **`s3:*` scope**: each registered bucket's credentials are the
+  deployment-wide S3 identity scoped to that bucket's ARN (with
+  ListBucket). The bucket system trusts the storage credential's
+  permission face; per-user authorization lives entirely in the
+  `bucket_grants` table, and a mis-scoped credential would let the
+  service read/write outside what the grants expect — keep the
+  credential policies `s3:*` on the bucket's own ARN only.
+- **Shares survive privatisation**: revoking a bucket's
+  `anonymous_read`, disabling it, or revoking the owner's access does
+  NOT invalidate shares already issued — a share's bytes route through
+  the file ROW's bucket, and the owner's `files.share_list` keeps
+  listing them. Creating a NEW share still requires the actor's current
+  share bit on the bucket at call time.
+
 Deployment examples: `deploy/docker-compose.s3.yml` (service + MinIO +
 create-bucket init) and `deploy/docker-compose.ipfs.yml` (service +
 kubo).
@@ -293,7 +330,7 @@ deferred-ops disabled (this instance serves no `ops.*`).
 - `POST /api/v1/auth/logout` — expires the cookie and supersedes all outstanding tokens
 - `POST /api/v1/auth/ws-ticket` — mints the one-time WebSocket admission ticket
 - `POST /api/v1/files` — multipart `file` upload (binary + progress events; optional `?name=`)
-- `GET /media/{key}[?thumbnail=true]` — the public path legacy image links depend on (referrer allow-list honored)
+- `GET /media/{key}[?thumbnail=true]` — the public path legacy image links depend on (referrer allow-list honored). Access is judged by the file row's BUCKET: a bucket with `anonymous_read = TRUE` serves anyone (200 or 404 — an anonymous request never distinguishes availability); otherwise a signed-in caller whose bucket grants `Read` still gets 200, a visible-but-unreadable bucket answers 403, and an unusable bucket answers 503. Cache directives follow the same predicate: anonymous-readable 2xx responses carry `public, max-age=31536000, immutable`, everything else is `no-store` (private 2xx) or `no-store` (all failures)
 - `GET /api/mcp/sse` — the MCP stream handshake, authenticated by an `Authorization: Bearer i0721-…` API key (minted on the API keys page or via `keys.create`). The session cookie is deliberately NOT accepted here: an agent carries the key, not a browser session, and a cookie-authenticated stream would let any page a signed-in browser visits open one
 - `POST /api/mcp/message?sessionId=…` — one JSON-RPC frame for that stream; the session id comes from the stream's first `endpoint` frame, and the response is pushed back over the stream, so the POST itself only answers 202
 

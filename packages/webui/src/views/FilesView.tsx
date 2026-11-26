@@ -355,6 +355,18 @@ export default defineComponent({
     const bar = useActionBar();
     const uploadChromeSize = useChromeActionSize();
     const uploadLabel = computed(() => t("common.files.uploadHere"));
+
+    // The 「创建分享」 affordance is gated by the actor's SHARE bit on
+    // the CURRENT root bucket (P2b): the selected slug decides (the
+    // empty slug = the plain root = every visible bucket's rows, where
+    // the share bit cannot be read per row — the server still enforces
+    // R-L at `files.share_create`, so an optimistic button only risks
+    // the honest -32005 toast).
+    const currentBucketShare = computed(() => {
+      if (!selectedBucket.value) return true;
+      const bucket = buckets.value.find((b) => b.slug === selectedBucket.value);
+      return bucket?.my_access?.share ?? false;
+    });
     bar.setActions(() => {
       return [h(HkIconButton, {
         size: uploadChromeSize.value, variant: "ghost",
@@ -445,8 +457,8 @@ export default defineComponent({
                         <button type="button" class="t-action" title={t("common.files.move")} onClick={() => { moveTarget.value = f; moveParent.value = ""; }}>
                           <Move size={14} />
                         </button>
-                        {f.kind !== "folder" ? (
-                          <button type="button" class="t-action" title={t("common.files.share")} onClick={() => { shareTarget.value = f; shareLink.value = null; }}>
+                        {f.kind !== "folder" && currentBucketShare.value ? (
+                          <button type="button" class="t-action" title={t("common.files.share")} data-testid="create-share" onClick={() => { shareTarget.value = f; shareLink.value = null; }}>
                             <Link2 size={14} />
                           </button>
                         ) : null}

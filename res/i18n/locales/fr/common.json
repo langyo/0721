@@ -240,5 +240,11 @@
     "grantSaved": "Droits enregistrés",
     "grantHint": "Enregistrer les trois commutateurs sur « désactivé » écrit une ligne de refus explicite — elle reste un refus même si ce seau devient ouvert par défaut plus tard.",
     "noMembers": "Aucun membre à autoriser."
+  },
+  "media": {
+    "signin": "Veuillez vous reconnecter",
+    "forbidden": "Aucune permission de lecture",
+    "unavailable": "Stockage indisponible",
+    "missing": "Introuvable"
   }
 }

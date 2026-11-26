@@ -240,5 +240,11 @@
     "grantSaved": "Permissões guardadas",
     "grantHint": "Guardar os três interruptores desligados escreve uma linha de negação explícita — continua a negar mesmo que o balde se torne aberto por omissão.",
     "noMembers": "Não há membros a quem dar permissões."
+  },
+  "media": {
+    "signin": "Inicie sessão novamente",
+    "forbidden": "Sem permissão de leitura",
+    "unavailable": "Armazenamento indisponível",
+    "missing": "Não encontrado"
   }
 }

@@ -5,14 +5,17 @@
 //! the cached WebP thumbnail — regenerating it on demand when the cache
 //! entry is missing.
 
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use serde::Deserialize;
 
 use crate::api::settings::site_config;
 use crate::blob::BlobSlot;
+use crate::bucket_acl::{resolve_access, BucketAccess};
 use crate::error::ApiError;
 use crate::pipeline::thumbnail_for_media;
 use crate::state::AppState;
@@ -49,6 +52,208 @@ pub(crate) async fn referer_allows(
         .any(|allowed| allowed == host))
 }
 
+/// The credential the media lane accepted (`None` = anonymous).
+#[derive(Debug, Clone)]
+pub(crate) enum MediaActor {
+    /// No session cookie, no Bearer key: the anonymous lane (I3 — its
+    /// only possible answers are 200 and 404).
+    Anonymous,
+    /// A proven session (JWT cookie / Bearer JWT).
+    Session(Arc<i0721_proto::UserRecord>),
+    /// A live API key (I6: its authority = `ops` ∩ `buckets` ∩ the
+    /// owner's current grants — the owner is the acting user).
+    ApiKey {
+        user: Arc<i0721_proto::UserRecord>,
+        buckets: std::collections::BTreeSet<String>,
+    },
+}
+
+/// Resolve the media lane's credential: a Bearer API key (`i0721-…`) is
+/// a live MCP key; any other Bearer or the session cookie is a JWT.
+async fn media_actor(state: &AppState, headers: &HeaderMap) -> Result<MediaActor, ApiError> {
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        });
+    if let Some(raw) = bearer {
+        if crate::mcp::KEY_PREFIX.is_empty() || raw.starts_with(crate::mcp::KEY_PREFIX) {
+            let record = crate::mcp::verify_api_key(state, raw).await?;
+            let user = state
+                .store
+                .get_user(record.user_id)
+                .await?
+                .ok_or_else(|| ApiError::unauthorized("user not found"))?;
+            return Ok(MediaActor::ApiKey {
+                user: Arc::new(user),
+                buckets: crate::key_scopes::parse_scopes_buckets(&record.scopes),
+            });
+        }
+        let user = session_user_from_token(state, raw).await?;
+        return Ok(MediaActor::Session(user));
+    }
+    if let Some(token) = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|pair| {
+                pair.trim()
+                    .strip_prefix("i0721-token=")
+                    .filter(|t| !t.is_empty())
+            })
+        })
+    {
+        let user = session_user_from_token(state, token).await?;
+        return Ok(MediaActor::Session(user));
+    }
+    Ok(MediaActor::Anonymous)
+}
+
+/// Verify a JWT and load its user — the RPC `verify_identity` semantics
+/// (signature + expiry + watermark) for the REST media lane.
+async fn session_user_from_token(
+    state: &AppState,
+    token: &str,
+) -> Result<Arc<i0721_proto::UserRecord>, ApiError> {
+    let claims = state
+        .signer
+        .verify(token)
+        .map_err(|err| ApiError::unauthorized(format!("invalid token: {err}")))?;
+    let user_id: uuid::Uuid = claims
+        .sub
+        .parse()
+        .map_err(|_| ApiError::unauthorized("invalid token subject"))?;
+    let user = state
+        .store
+        .get_user(user_id)
+        .await?
+        .ok_or_else(|| ApiError::unauthorized("user not found"))?;
+    let watermark = state
+        .store
+        .get_setting(&crate::auth::watermark_key(user.id))
+        .await?
+        .and_then(|value| value.as_str().map(str::to_owned));
+    if !crate::auth::clears_watermark(watermark.as_deref(), claims.iat) {
+        return Err(ApiError::unauthorized("token expired"));
+    }
+    Ok(Arc::new(user))
+}
+
+/// The bucket record of one live row — the store's rows with the
+/// registry's id→slug map as the fixture-lane fallback (the same
+/// posture `bucket_row_for_id` uses for the per-id lookups).
+async fn bucket_of_row(
+    state: &AppState,
+    row: &i0721_proto::FileRecord,
+) -> Result<Option<i0721_proto::StorageBucketRecord>, ApiError> {
+    let Some(bucket_id) = row.bucket_id else {
+        // The legacy NULL-bucket shape resolves to the enabled bootstrap
+        // bucket — its row when the store seeds one, otherwise the
+        // registry's synthetic posture.
+        let id = state
+            .registry
+            .bootstrap_bucket_id()
+            .map_err(|err| ApiError::internal(format!("storage backend unavailable: {err}")))?;
+        return crate::bucket_acl::bucket_row_for_id(state.store.as_ref(), &state.registry, id)
+            .await
+            .map_err(ApiError::from);
+    };
+    crate::bucket_acl::bucket_row_for_id(state.store.as_ref(), &state.registry, bucket_id)
+        .await
+        .map_err(ApiError::from)
+}
+
+/// Whether the actor READS through this row's bucket: the owner's grant
+/// (the R-A resolution) — for an API key additionally intersected with
+/// the key's `buckets` (I6's call-time intersection), admin = all.
+async fn actor_reads_row(
+    state: &AppState,
+    actor: &MediaActor,
+    row: &i0721_proto::FileRecord,
+) -> Result<bool, ApiError> {
+    let Some(bucket) = bucket_of_row(state, row).await? else {
+        return Ok(false);
+    };
+    let user = match actor {
+        MediaActor::Anonymous => return Ok(false),
+        MediaActor::Session(user) => user,
+        MediaActor::ApiKey { user, buckets } => {
+            if !buckets.contains(&bucket.slug) {
+                return Ok(false);
+            }
+            user
+        }
+    };
+    if user.role == i0721_proto::Role::Admin {
+        return Ok(true);
+    }
+    Ok(resolve_access(state.store.as_ref(), user, &bucket)
+        .await?
+        .read)
+}
+
+/// Whether the row's bucket is VISIBLE to the actor but holds no `Read`
+/// bit — the 403 face's condition (session/key only; anonymous never
+/// 403s, I3). Visibility = the R-A `any()` bit set (Q14).
+async fn row_is_visible_without_read(
+    state: &AppState,
+    actor: &MediaActor,
+    row: &i0721_proto::FileRecord,
+) -> Result<bool, ApiError> {
+    let Some(bucket) = bucket_of_row(state, row).await? else {
+        return Ok(false);
+    };
+    let user = match actor {
+        MediaActor::Anonymous => return Ok(false),
+        MediaActor::Session(user) => user,
+        MediaActor::ApiKey { user, buckets } => {
+            if !buckets.contains(&bucket.slug) {
+                return Ok(false);
+            }
+            user
+        }
+    };
+    if user.role == i0721_proto::Role::Admin {
+        return Ok(false);
+    }
+    let access: BucketAccess = resolve_access(state.store.as_ref(), user, &bucket).await?;
+    Ok(access.any() && !access.read)
+}
+
+/// The PURE serving-row selection inside the authorized set: sort the
+/// rows by `id ASC` (the set's construction order — witnesses first —
+/// must not decide; the id does), then take the first one the caller's
+/// availability predicate accepts. Defense-in-depth for future stores
+/// whose key-scan order is not `id ASC`.
+fn select_serving_row<'a>(
+    authorized: &[&'a i0721_proto::FileRecord],
+    is_servable: impl Fn(&i0721_proto::FileRecord) -> bool,
+) -> Option<&'a i0721_proto::FileRecord> {
+    let mut rows: Vec<&'a i0721_proto::FileRecord> = authorized.to_vec();
+    rows.sort_by_key(|row| row.id);
+    rows.dedup();
+    rows.into_iter().find(|row| is_servable(row))
+}
+
+/// Whether the row's bucket (the NULL shape reads through the bootstrap
+/// bucket) is `Ready` in the registry.
+fn row_bucket_ready(state: &AppState, row: &i0721_proto::FileRecord) -> bool {
+    let bucket_id = row
+        .bucket_id
+        .or_else(|| state.registry.bootstrap_bucket_id().ok());
+    bucket_id
+        .and_then(|id| state.registry.slug_for_bucket_id(id))
+        .is_some_and(|slug| {
+            state
+                .registry
+                .health()
+                .into_iter()
+                .any(|h| h.slug == slug && h.state == "ready")
+        })
+}
+
 /// `GET /media/{key}`
 pub async fn download(
     State(state): State<AppState>,
@@ -79,17 +284,103 @@ pub async fn download(
         }
     }
 
-    // R-J's P1 form: the determination is a SET predicate over ALL live
-    // rows with this key (never a short-circuit to the first row), and
-    // the serving row is the first one by `id ASC` whose bucket is
-    // Ready AND enabled. No live row → 404; live rows but no usable
-    // serving row → 404 (P1 has anonymous requests only — the 503/403
-    // session branches are P2b). The Referer 403 / malformed-Referer
-    // 400 above stay exactly as they were.
+    let actor = media_actor(&state, &headers).await?;
+
+    // R-J's full form: the determination is a SET predicate over ALL
+    // live rows with this key (never a short-circuit to the first row).
+    // A = "some live row sits in a bucket with anonymous_read = TRUE"
+    // (enabled IGNORED — a disabled public bucket still makes the key
+    // anonymous-visible; availability is the serving row's business).
     let rows = state.store.list_live_rows_by_storage_key(&key).await?;
+    let mut a_witnesses: Vec<&i0721_proto::FileRecord> = Vec::new();
+    for row in &rows {
+        if let Some(bucket) = bucket_of_row(&state, row).await? {
+            if bucket.anonymous_read {
+                a_witnesses.push(row);
+            }
+        }
+    }
+    let a = !a_witnesses.is_empty();
+
+    // The serving row under the actor's authorized set.
+    enum Face {
+        Serve(uuid::Uuid),
+        NotFound,
+        Forbidden,
+        Unavailable,
+    }
+    let authorized: Vec<&i0721_proto::FileRecord> = match &actor {
+        // Anonymous: the authorized set IS A's witness rows (the key is
+        // anonymous-visible); I3 — its only answers are 200 or 404.
+        MediaActor::Anonymous => a_witnesses.clone(),
+        // Session/API key: A's witnesses ∪ rows whose bucket grants the
+        // actor Read (API key ∩ the key's `buckets`; admin = all).
+        _ => {
+            let mut out = a_witnesses.clone();
+            for row in &rows {
+                if !out.iter().any(|w| w.id == row.id)
+                    && actor_reads_row(&state, &actor, row).await?
+                {
+                    out.push(row);
+                }
+            }
+            out
+        }
+    };
+    // R-J: the serving row is the first by `id ASC` WITHIN
+    // authorized_rows — the pure selection pins the order and the
+    // availability predicate (Ready ∧ enabled) together. The async
+    // availability facts (registry Ready, store `enabled`) are
+    // precomputed per row; the selection itself stays synchronous.
+    let mut servable = std::collections::HashSet::new();
+    for row in &authorized {
+        if state.registry.for_row(row).is_ok()
+            && row_bucket_ready(&state, row)
+            && bucket_of_row(&state, row)
+                .await
+                .ok()
+                .flatten()
+                .is_none_or(|bucket| bucket.enabled)
+        {
+            servable.insert(row.id);
+        }
+    }
+    let face = if let Some(row) = select_serving_row(&authorized, |row| servable.contains(&row.id))
+    {
+        Face::Serve(row.id)
+    } else if matches!(actor, MediaActor::Anonymous) {
+        // A held (the set is non-empty only when it did) but no usable
+        // serving row: 404 to anonymous, never a 503 (I3).
+        Face::NotFound
+    } else if !authorized.is_empty() {
+        Face::Unavailable
+    } else {
+        // `authorized_rows` empty: a live row in a VISIBLE bucket
+        // WITHOUT Read → 403 (session/key only); otherwise 404.
+        let mut visible_denied = false;
+        for row in &rows {
+            if row_is_visible_without_read(&state, &actor, row).await? {
+                visible_denied = true;
+                break;
+            }
+        }
+        if visible_denied {
+            Face::Forbidden
+        } else {
+            Face::NotFound
+        }
+    };
+    let Face::Serve(serving_id) = face else {
+        return Ok(match face {
+            Face::NotFound => not_found_response(),
+            Face::Forbidden => forbidden_response(),
+            Face::Unavailable => unavailable_response(),
+            Face::Serve(_) => unreachable!(),
+        });
+    };
     let serving = rows
         .iter()
-        .find(|row| state.registry.for_row(row).is_ok())
+        .find(|row| row.id == serving_id)
         .ok_or_else(|| ApiError::not_found("media not found"))?;
 
     // Every byte — original and thumbnail, cached or lazily regenerated
@@ -116,12 +407,50 @@ pub async fn download(
         (serving.mime.clone(), bytes)
     };
 
+    // R-S (I5): the cache directives live ONLY in this known-2xx branch.
+    // 2xx ∧ A → the immutable public directive; 2xx ∧ ¬A → private.
     let mut response = ([(header::CONTENT_TYPE, mime)], bytes).into_response();
     response.headers_mut().insert(
         header::CACHE_CONTROL,
-        header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+        header::HeaderValue::from_static(if a {
+            "public, max-age=31536000, immutable"
+        } else {
+            "private, no-store"
+        }),
     );
     Ok(response)
+}
+
+/// A 404 media answer with its no-store directive (R-S: EVERY non-2xx
+/// carries `no-store`).
+fn not_found_response() -> Response {
+    error_response(StatusCode::NOT_FOUND, "media not found")
+}
+
+/// A 403 media answer (the visible-but-unreadable face; session/key
+/// only).
+fn forbidden_response() -> Response {
+    error_response(
+        StatusCode::FORBIDDEN,
+        "you do not have read access to this media",
+    )
+}
+
+/// A 503 media answer (the unusable-bucket face; session/key only).
+fn unavailable_response() -> Response {
+    error_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "storage backend unavailable",
+    )
+}
+
+fn error_response(status: StatusCode, message: &str) -> Response {
+    let mut response = ApiError::new(status, message).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 async fn read_blob(
@@ -146,4 +475,66 @@ async fn regenerate_thumbnail(
         .map_err(|err| ApiError::internal(format!("thumbnail regeneration failed: {err}")))?;
     store.put(BlobSlot::Cache, thumb_key, &thumbnail).await?;
     Ok(("image/webp".to_owned(), thumbnail))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_serving_row;
+    use i0721_proto::{FileKind, FileRecord};
+    use jiff::Timestamp;
+    use uuid::Uuid;
+
+    /// A minimal live row with the given id and storage key.
+    fn row(id: u128, storage_key: &str) -> FileRecord {
+        FileRecord {
+            id: Uuid::from_u128(id),
+            owner_id: Uuid::from_u128(1),
+            parent_id: None,
+            name: format!("row-{id}"),
+            kind: FileKind::Image,
+            mime: "image/png".to_owned(),
+            size: 1,
+            sha256: storage_key.to_owned(),
+            bucket_id: None,
+            storage_backend: "local".to_owned(),
+            storage_key: storage_key.to_owned(),
+            thumbnail_key: None,
+            original_name: "x".to_owned(),
+            created_at: Timestamp::now(),
+            deleted_at: None,
+        }
+    }
+
+    /// MUT:P2B-SORT — dropping the `id ASC` sort (relying on the
+    /// caller's order) turns this red: the authorized slice arrives in
+    /// REVERSE id order, with the lowest-id SERVABLE row in the middle;
+    /// the selection must still return that row.
+    #[test]
+    fn select_serving_row_ignores_the_caller_order() {
+        let rows = [row(3, "c"), row(1, "a"), row(2, "b")];
+        // All rows servable — ONLY the id decides, never the position.
+        let authorized: Vec<&FileRecord> = rows.iter().collect();
+        let picked = select_serving_row(&authorized, |_| true).expect("a servable row exists");
+        assert_eq!(
+            picked.id,
+            Uuid::from_u128(1),
+            "the selection follows `id ASC`, never the caller's order"
+        );
+    }
+
+    /// MUT:P2B-SORT-FIRST — taking the FIRST row regardless of
+    /// servability turns this red: the lowest-id row is NOT servable;
+    /// the next-lowest servable row must win.
+    #[test]
+    fn select_serving_row_skips_unservable_low_ids() {
+        let rows = [row(1, "a"), row(2, "b"), row(3, "c")];
+        let authorized: Vec<&FileRecord> = rows.iter().collect();
+        let picked = select_serving_row(&authorized, |r| r.id != Uuid::from_u128(1))
+            .expect("a servable row exists");
+        assert_eq!(
+            picked.id,
+            Uuid::from_u128(2),
+            "unservable low ids are skipped; the first SERVABLE row wins"
+        );
+    }
 }

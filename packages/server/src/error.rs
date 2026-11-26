@@ -94,7 +94,16 @@ impl std::fmt::Display for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(self)).into_response()
+        // Every error answer is uncacheable (I5 / R-S: a non-2xx response
+        // carries `no-store` — including the bare error paths the media
+        // lane's own faces do not wrap). MUT:P2B-APIERR-NOSTORE — dropping
+        // this header reddens `every_api_error_answer_is_uncacheable`.
+        let mut response = (self.status, Json(self)).into_response();
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        response
     }
 }
 
@@ -114,5 +123,37 @@ impl From<std::io::Error> for ApiError {
     fn from(err: std::io::Error) -> Self {
         tracing::error!(error = %err, "blob failure");
         ApiError::internal("internal storage failure")
+    }
+}
+
+#[cfg(test)]
+mod no_store_tests {
+    use super::ApiError;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    /// MUT:P2B-APIERR-NOSTORE — every ApiError answer carries `no-store`
+    /// (R-S: non-2xx is uncacheable), whichever face produced it.
+    #[test]
+    fn every_api_error_answer_is_uncacheable() {
+        let cases = [
+            (StatusCode::NOT_FOUND, ApiError::not_found("probe")),
+            (StatusCode::FORBIDDEN, ApiError::forbidden("probe")),
+            (StatusCode::UNAUTHORIZED, ApiError::unauthorized("probe")),
+            (StatusCode::BAD_REQUEST, ApiError::bad_request("probe")),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiError::internal("probe"),
+            ),
+        ];
+        for (status, err) in cases {
+            let response = err.into_response();
+            assert_eq!(response.status(), status);
+            assert_eq!(
+                response.headers().get(axum::http::header::CACHE_CONTROL),
+                Some(&axum::http::HeaderValue::from_static("no-store")),
+                "{status} answers must carry no-store"
+            );
+        }
     }
 }

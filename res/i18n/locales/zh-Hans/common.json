@@ -240,5 +240,11 @@
     "grantSaved": "授权已保存",
     "grantHint": "三项全部关闭保存后写入一条显式拒绝行——即使该桶日后改为默认开放，它仍保持拒绝。",
     "noMembers": "没有可授权的用户。"
+  },
+  "media": {
+    "signin": "请重新登录",
+    "forbidden": "无读取权限",
+    "unavailable": "存储不可用",
+    "missing": "不存在"
   }
 }

@@ -159,9 +159,16 @@ pub async fn bucket_row_for_id(
     {
         return Ok(Some(row));
     }
-    Ok(registry
-        .slug_for_bucket_id(bucket_id)
-        .map(|slug| StorageBucketRecord {
+    // The registry knows the id's slug: prefer the STORE's row for that
+    // slug when one exists (the fixture lanes mint a registry whose
+    // bootstrap id differs from the seeded row's id — the store row is
+    // still the authority for its mutable fields). Only a slug with NO
+    // store row synthesizes the registry posture.
+    if let Some(slug) = registry.slug_for_bucket_id(bucket_id) {
+        if let Some(row) = store.get_storage_bucket_by_slug(&slug).await? {
+            return Ok(Some(row));
+        }
+        return Ok(Some(StorageBucketRecord {
             id: bucket_id,
             slug,
             display_name: String::new(),
@@ -173,7 +180,9 @@ pub async fn bucket_row_for_id(
             enabled: true,
             is_bootstrap: false,
             created_at: jiff::Timestamp::MIN,
-        }))
+        }));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
