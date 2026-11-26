@@ -1,4 +1,4 @@
-import { initTheme } from "@celestia-island/hikari";
+import { createErrorReporting, initTheme } from "@celestia-island/hikari";
 import "@celestia-island/hikari/styles";
 import { createPinia } from "pinia";
 import { createApp } from "vue";
@@ -21,6 +21,16 @@ setLocale(i18n.global.locale.value);
 const pinia = createPinia();
 app.use(pinia);
 app.use(router);
+
+// The family error landing. Installed BEFORE `mount`, because install is
+// when it reads the server's handoff: a navigation the server answered
+// with an error arrives as this SPA's own shell plus the
+// `hk-server-error` data island, and the card has to go up before the
+// host tree draws (or the router guard redirects) anything. The same
+// install catches what crashes later — `app.config.errorHandler`, window
+// error events and unhandled rejections — so no bare error reaches a
+// visitor either way.
+app.use(createErrorReporting());
 
 // The brand presets must be installed BEFORE initTheme() so the very
 // first applyTheme() can resolve a persisted brand selection.

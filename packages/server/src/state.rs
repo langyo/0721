@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use i0721_store::Store;
+use plana_error_landing::ErrorLanding;
 use tokio::sync::Semaphore;
 
 use crate::auth::{JwtSigner, LoginLimiter};
@@ -45,6 +46,12 @@ pub struct AppState {
     pub oauth_attempts: Arc<LoginAttemptStore>,
     /// MCP SSE sessions (in-memory, TTL-pruned).
     pub mcp_sessions: crate::mcp::McpSessions,
+    /// The family error landing over the SPA shell, resolved once when the
+    /// state is assembled (`routes::error_landing` reads `index.html`
+    /// through `static_files::index_bytes`). `disabled()` when the build
+    /// has no dist to hand over, in which case the layer passes every
+    /// response through untouched.
+    pub error_landing: Arc<ErrorLanding>,
 }
 
 impl AppState {
@@ -76,6 +83,9 @@ impl AppState {
     ) -> Self {
         let signer = Arc::new(JwtSigner::new(&config.jwt_secret));
         let upload_slots = Arc::new(Semaphore::new(config.upload_concurrency));
+        // Resolved from the config BEFORE the struct takes ownership of
+        // it: the shell is read once per process, never per request.
+        let error_landing = Arc::new(crate::routes::error_landing(&config));
         Self {
             store,
             blobs,
@@ -89,6 +99,7 @@ impl AppState {
             discovery: Arc::new(DiscoveryCache::new()),
             oauth_attempts: Arc::new(LoginAttemptStore::new()),
             mcp_sessions: crate::mcp::McpSessions::new(),
+            error_landing,
         }
     }
 }

@@ -27,6 +27,7 @@ use axum::response::{IntoResponse, Response};
 #[cfg(not(feature = "embedded-frontend"))]
 use tokio::io::AsyncReadExt;
 
+use crate::config::Config;
 use crate::state::AppState;
 
 #[cfg(feature = "embedded-frontend")]
@@ -39,29 +40,62 @@ use include_dir::{include_dir, Dir};
 static WEBUI_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../dist/webui");
 
 /// The SPA shell bytes — `index.html`.
-async fn index_bytes(state: &AppState) -> Option<Vec<u8>> {
+///
+/// `pub(crate)` because the error landing speaks for the same document:
+/// `routes::router` hands the shell to `plana_error_landing::ErrorLanding`
+/// so a failed browser navigation is answered with the page the service
+/// would have served on `/`, never a second copy that could drift. Both
+/// modes are read here — the embedded tree and the dev lane's disk root.
+pub(crate) async fn index_bytes(config: &Config) -> Option<Vec<u8>> {
     #[cfg(feature = "embedded-frontend")]
     {
-        let _ = state;
+        // The embedded tree needs no I/O at all: the same read serves both
+        // callers, so the shell cannot describe two different documents.
+        index_bytes_blocking(config)
+    }
+    #[cfg(not(feature = "embedded-frontend"))]
+    {
+        read_disk(config, "index.html").await
+    }
+}
+
+/// The same shell, read synchronously — for callers outside a request
+/// future (`AppState` assembly, which cannot await before the struct that
+/// owns the shell exists).
+pub(crate) fn index_bytes_blocking(config: &Config) -> Option<Vec<u8>> {
+    #[cfg(feature = "embedded-frontend")]
+    {
+        let _ = config;
         WEBUI_DIR
             .get_file("index.html")
             .map(|f| f.contents().to_vec())
     }
     #[cfg(not(feature = "embedded-frontend"))]
     {
-        read_disk(state, "index.html").await
+        // One read at startup: the same confinement rule the async lane
+        // applies, with no await to give the runtime.
+        let path = "index.html";
+        if path.split('/').any(|segment| segment == "..") {
+            return None;
+        }
+        let root = config.static_dir.canonicalize().ok()?;
+        let resolved = root.join(path).canonicalize().ok()?;
+        if !resolved.starts_with(&root) {
+            return None;
+        }
+        std::fs::read(resolved).ok()
     }
 }
 
 /// Read one file by dist-relative path, dev mode.
 #[cfg(not(feature = "embedded-frontend"))]
-async fn read_disk(state: &AppState, path: &str) -> Option<Vec<u8>> {
+async fn read_disk(config: &Config, path: &str) -> Option<Vec<u8>> {
     // Confinement: the dev lane serves files from the configured static
     // directory only. A path carrying ParentDir is traversal, full stop.
     if path.split('/').any(|segment| segment == "..") {
         return None;
     }
-    let root = state.config.static_dir.canonicalize().ok()?;
+    let root = config.static_dir.canonicalize().ok()?;
     let full = root.join(path);
     let resolved = full.canonicalize().ok()?;
     if !resolved.starts_with(&root) {
@@ -86,7 +120,7 @@ async fn asset_bytes(state: &AppState, path: &str) -> Option<Vec<u8>> {
     }
     #[cfg(not(feature = "embedded-frontend"))]
     {
-        read_disk(state, path).await
+        read_disk(&state.config, path).await
     }
 }
 
@@ -152,7 +186,7 @@ pub async fn serve_asset(State(state): State<AppState>, Path(path): Path<String>
 }
 
 async fn serve_shell(state: &AppState) -> Response {
-    match index_bytes(state).await {
+    match index_bytes(&state.config).await {
         Some(bytes) => (
             StatusCode::OK,
             [

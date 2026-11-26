@@ -1273,6 +1273,7 @@ dependencies = [
  "object_store",
  "password-hash",
  "plana",
+ "plana-error-landing",
  "plana-identity-relay",
  "plana-rpc-server",
  "reqwest 0.12.28",
@@ -2248,7 +2249,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 [[package]]
 name = "plana"
 version = "0.8.1"
-source = "git+https://github.com/celestia-island/plana?branch=master#a544a3d1e4a29064ddbd7aa5f3781a85ae375ac3"
+source = "git+https://github.com/celestia-island/plana?branch=master#68e554f37c1f90242b2605f4aaab1be6da74e0d7"
 dependencies = [
  "anyhow",
  "axum",
@@ -2269,6 +2270,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "plana-error-landing"
+version = "0.8.1"
+source = "git+https://github.com/celestia-island/plana?branch=master#68e554f37c1f90242b2605f4aaab1be6da74e0d7"
+dependencies = [
+ "axum",
+ "http",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
 name = "plana-identity-relay"
 version = "0.8.1"
 source = "git+https://github.com/celestia-island/plana#4bcdfa23a9473822ab2514848e8c2f180b22995e"
@@ -2286,7 +2301,7 @@ dependencies = [
 [[package]]
 name = "plana-rpc-server"
 version = "0.2.0"
-source = "git+https://github.com/celestia-island/plana?branch=master#a544a3d1e4a29064ddbd7aa5f3781a85ae375ac3"
+source = "git+https://github.com/celestia-island/plana?branch=master#68e554f37c1f90242b2605f4aaab1be6da74e0d7"
 dependencies = [
  "axum",
  "futures",
