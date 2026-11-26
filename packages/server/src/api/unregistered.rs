@@ -82,7 +82,10 @@ pub(crate) struct AdoptTarget {
 /// MUT:P3-SHA-NAMESPACE — accepting any safe key here reddens
 /// `adopt_refuses_keys_outside_the_sha256_namespace`.
 pub(crate) fn is_sha256_key(key: &str) -> bool {
-    key.len() == 64 && key.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    key.len() == 64
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// The diff (draft §7.2): listed `media/` keys − the bucket's live rows'
@@ -98,9 +101,7 @@ pub(crate) async fn unregistered_diff(
     let listed = store
         .list_media_keys()
         .await
-        .map_err(|err| {
-            ApiError::internal(format!("the bucket cannot be scanned: {err}"))
-        })?
+        .map_err(|err| ApiError::internal(format!("the bucket cannot be scanned: {err}")))?
         // `None` = the backend cannot be scanned: a DISTINCT documented
         // refusal, never a silent empty list (which would leak the
         // opposite lie — "nothing unregistered here").
@@ -111,9 +112,14 @@ pub(crate) async fn unregistered_diff(
         })?;
     // The live rows of THIS bucket only — a key adopted in another
     // bucket stays unregistered here (the namespaces are per bucket).
-    let live: std::collections::HashSet<String> =
-        state.store.storage_keys_live_in_bucket(Some(bucket.id)).await?;
-    Ok(listed.into_iter().filter(|key| !live.contains(key)).collect())
+    let live: std::collections::HashSet<String> = state
+        .store
+        .storage_keys_live_in_bucket(Some(bucket.id))
+        .await?;
+    Ok(listed
+        .into_iter()
+        .filter(|key| !live.contains(key))
+        .collect())
 }
 
 /// Load one blob's metadata for the listing (size + modification + MIME
@@ -169,11 +175,12 @@ pub(crate) async fn list_unregistered(
 ///    id/backend, `thumbnail_key` NULL (lazy generation fills it);
 /// 4. the QUOTA check mirrored from `run_upload` — the target owner
 ///    over quota answers `too_large` (`-32008` on the RPC lane).
-/// MUT:P3-ADOPT-RELIST — dropping step 1 (trusting the caller's key)
-/// reddens `unregistered_adopt_refuses_vanished_key`.
-/// MUT:P3-ADOPT-PIPELINE — routing step 2 through `process_upload`
-/// reddens `adopt_uses_the_key_as_sha_and_does_not_transcode`.
-/// MUT:P3-ADOPT-QUOTA — dropping step 4 reddens `adopt_checks_quota`.
+///
+/// Mutation anchors: MUT:P3-ADOPT-RELIST (dropping step 1 — trusting the
+/// caller's key — reddens `unregistered_adopt_refuses_vanished_key`),
+/// MUT:P3-ADOPT-PIPELINE (routing step 2 through `process_upload`
+/// reddens `adopt_uses_the_key_as_sha_and_does_not_transcode`),
+/// MUT:P3-ADOPT-QUOTA (dropping step 4 reddens `adopt_checks_quota`).
 pub(crate) async fn adopt(
     state: &AppState,
     bucket: &i0721_proto::StorageBucketRecord,

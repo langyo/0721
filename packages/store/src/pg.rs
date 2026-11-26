@@ -630,7 +630,7 @@ impl Store for PgStore {
         };
         Ok(rows
             .into_iter()
-            .filter_map(|row| match row.iter().next() {
+            .filter_map(|row| match row.first() {
                 Some(Value::Text(key)) => Some(key.clone()),
                 _ => None,
             })

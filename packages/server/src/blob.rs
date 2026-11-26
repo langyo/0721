@@ -259,14 +259,8 @@ mod tests {
     async fn local_list_media_keys_scans_the_media_dir_only() {
         let root = std::env::temp_dir().join(format!("i0721-blob-list-{}", std::process::id()));
         let store = LocalBlobStore::open(&root).unwrap();
-        store
-            .put(BlobSlot::Media, "key-b", b"2")
-            .await
-            .unwrap();
-        store
-            .put(BlobSlot::Media, "key-a", b"1")
-            .await
-            .unwrap();
+        store.put(BlobSlot::Media, "key-b", b"2").await.unwrap();
+        store.put(BlobSlot::Media, "key-a", b"1").await.unwrap();
         store
             .put(BlobSlot::Cache, "thumb.webp", b"t")
             .await

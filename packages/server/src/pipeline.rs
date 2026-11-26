@@ -217,13 +217,10 @@ pub fn thumbnail_for_media(data: &[u8]) -> Result<Bytes, PipelineError> {
 /// records it as the row's best-effort mime.
 #[must_use]
 pub fn mime_hint_for(data: &[u8], key: &str) -> String {
-    if image::guess_format(data).is_ok() {
+    if let Ok(format) = image::guess_format(data) {
         // Content-detected: name the IMAGE format the bytes actually
         // are (the extension of a sha256 key carries no information).
-        if let Some(format) = image::guess_format(data).ok() {
-            return image_mime(format);
-        }
-        return "application/octet-stream".to_owned();
+        return image_mime(format);
     }
     mime_of(Some(key), None)
 }

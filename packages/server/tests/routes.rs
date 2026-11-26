@@ -13281,8 +13281,7 @@ async fn orphan_fixture(keys: &[&str]) -> OrphanFixture {
     let id = uuid::Uuid::new_v4();
     let slug = "orphans".to_owned();
     let store = Arc::new(i0721_server::blob::MemoryBlobStore::new());
-    base
-        .store
+    base.store
         .as_any()
         .downcast_ref::<MemoryStore>()
         .expect("the fixture store is the memory store")
@@ -13344,7 +13343,10 @@ async fn orphan_fixture(keys: &[&str]) -> OrphanFixture {
 fn sha_key(seed: u8) -> String {
     let mut hex = String::new();
     for i in 0..32u16 {
-        hex.push_str(&format!("{:02x}", ((i as u16).wrapping_add(seed as u16) * 7 + seed as u16) & 0xff));
+        hex.push_str(&format!(
+            "{:02x}",
+            ((i.wrapping_add(seed as u16) * 7 + seed as u16) & 0xff)
+        ));
     }
     hex
 }
@@ -13377,16 +13379,31 @@ async fn own_total(state: &AppState, token: &str) -> u64 {
 async fn unregistered_off_list_hides_orphans() {
     let key = sha_key(1);
     let fx = orphan_fixture(&[&key]).await;
-    let (status, envelope) = rpc(&fx.state, &fx.admin_token, "files.list", serde_json::json!({})).await;
+    let (status, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "files.list",
+        serde_json::json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let body = serde_json::to_string(rpc_result(&envelope)).unwrap();
     assert!(
         !body.contains(&key),
         "own listing must not show the orphan: {body}"
     );
-    let (_, envelope) = rpc(&fx.state, &fx.admin_token, "files.list", serde_json::json!({"scope":"timeline"})).await;
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "files.list",
+        serde_json::json!({"scope":"timeline"}),
+    )
+    .await;
     let body = serde_json::to_string(rpc_result(&envelope)).unwrap();
-    assert!(!body.contains(&key), "timeline must not show the orphan: {body}");
+    assert!(
+        !body.contains(&key),
+        "timeline must not show the orphan: {body}"
+    );
 }
 
 /// `unregistered_off_search_never_returns_orphans`: searching the
@@ -13403,9 +13420,14 @@ async fn unregistered_off_search_never_returns_orphans() {
         serde_json::json!({"scope": "timeline"}),
     )
     .await;
-    let items = envelope["result"]["items"].as_array().cloned().unwrap_or_default();
+    let items = envelope["result"]["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
-        !items.iter().any(|item| item.to_string().contains(&key[..12])),
+        !items
+            .iter()
+            .any(|item| item.to_string().contains(&key[..12])),
         "no search/list face may return the orphan: {items:?}"
     );
 }
@@ -13437,9 +13459,17 @@ async fn unregistered_off_media_404() {
         .await
         .unwrap();
     assert_eq!(orphan.status(), StatusCode::NOT_FOUND);
-    assert_eq!(orphan.status(), missing.status(), "same shape as nonexistent");
-    let orphan_body = axum::body::to_bytes(orphan.into_body(), 4096).await.unwrap();
-    let missing_body = axum::body::to_bytes(missing.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        orphan.status(),
+        missing.status(),
+        "same shape as nonexistent"
+    );
+    let orphan_body = axum::body::to_bytes(orphan.into_body(), 4096)
+        .await
+        .unwrap();
+    let missing_body = axum::body::to_bytes(missing.into_body(), 4096)
+        .await
+        .unwrap();
     assert_eq!(orphan_body, missing_body, "identical 404 bodies");
 }
 
@@ -13480,7 +13510,14 @@ async fn unregistered_off_mcp_tools_never_see_orphans() {
     let (mut sse, session_id) = mcp_handshake(&fx.state, &api_key).await;
 
     // tools/list + list_files: the orphan never appears.
-    let status = mcp_post_frame(&fx.state, &session_id, 1, "tools/list", serde_json::json!({})).await;
+    let status = mcp_post_frame(
+        &fx.state,
+        &session_id,
+        1,
+        "tools/list",
+        serde_json::json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let frames = sse_read_until(&mut sse, "\"tools\"").await;
     assert!(frames.contains("list_files"), "tools advertised: {frames}");
@@ -13495,7 +13532,13 @@ async fn unregistered_off_mcp_tools_never_see_orphans() {
 
     // search_files scans rows (the orphan has none): its answer is an
     // EMPTY list, never the orphan.
-    let status = mcp_call_tool(&fx.state, &session_id, "search_files", serde_json::json!({"query": &key[..12]})).await;
+    let status = mcp_call_tool(
+        &fx.state,
+        &session_id,
+        "search_files",
+        serde_json::json!({"query": &key[..12]}),
+    )
+    .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let frames = sse_read_until(&mut sse, "\"result\"").await;
     assert!(
@@ -13505,7 +13548,10 @@ async fn unregistered_off_mcp_tools_never_see_orphans() {
 
     // The three per-object tools answer isError for orphan/foreign ids.
     for (tool, arguments) in [
-        ("file_info", serde_json::json!({"id": uuid::Uuid::new_v4().to_string()})),
+        (
+            "file_info",
+            serde_json::json!({"id": uuid::Uuid::new_v4().to_string()}),
+        ),
         (
             "get_share_link",
             serde_json::json!({"file_id": uuid::Uuid::new_v4().to_string()}),
@@ -13513,7 +13559,10 @@ async fn unregistered_off_mcp_tools_never_see_orphans() {
         // An upload INTO a foreign folder: the folder-ownership gate is
         // the tool's isError path (the admin-key probe of a nonexistent
         // object surface).
-        ("upload_file", serde_json::json!({"content_base64": "aGk=", "name": "orphan-probe.png", "folder_id": uuid::Uuid::new_v4().to_string()})),
+        (
+            "upload_file",
+            serde_json::json!({"content_base64": "aGk=", "name": "orphan-probe.png", "folder_id": uuid::Uuid::new_v4().to_string()}),
+        ),
     ] {
         let status = mcp_call_tool(&fx.state, &session_id, tool, arguments).await;
         assert_eq!(status, StatusCode::ACCEPTED, "{tool}");
@@ -13653,12 +13702,28 @@ async fn unregistered_adopt_then_visible() {
         )
         .await
         .unwrap();
-    assert_eq!(media.status(), StatusCode::OK, "adopt makes the object visible");
-    let served = axum::body::to_bytes(media.into_body(), 1024 * 1024).await.unwrap();
-    assert_eq!(&served[..], b"orphan-bytes", "the ORIGINAL bytes, not a re-encode");
+    assert_eq!(
+        media.status(),
+        StatusCode::OK,
+        "adopt makes the object visible"
+    );
+    let served = axum::body::to_bytes(media.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        &served[..],
+        b"orphan-bytes",
+        "the ORIGINAL bytes, not a re-encode"
+    );
 
     // The row is in the owner's own list.
-    let (_, envelope) = rpc(&fx.state, &fx.member_token, "files.list", serde_json::json!({})).await;
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.member_token,
+        "files.list",
+        serde_json::json!({}),
+    )
+    .await;
     let items = envelope["result"]["items"].as_array().unwrap();
     assert!(
         items.iter().any(|item| item["id"] == envelope_ts(&file_id)),
@@ -13674,7 +13739,11 @@ async fn unregistered_adopt_then_visible() {
     )
     .await;
     let after = envelope["result"]["total"].as_u64().unwrap();
-    assert_eq!(after, before - 1, "one fewer unregistered object: {envelope}");
+    assert_eq!(
+        after,
+        before - 1,
+        "one fewer unregistered object: {envelope}"
+    );
     let _ = &fx;
 }
 
@@ -13783,7 +13852,7 @@ async fn adopt_uses_the_key_as_sha_and_does_not_transcode() {
         }),
     )
     .await;
-    assert_eq!(status_ok(&envelope), true, "{envelope}");
+    assert!(status_ok(&envelope), "{envelope}");
     let record = envelope["result"].clone();
     assert_eq!(
         record["sha256"].as_str().unwrap(),
@@ -13891,13 +13960,19 @@ async fn s3_lists_media_keys_by_prefix() {
         .await
         .expect("put cache");
 
-    let keys = store.list_media_keys().await.expect("list").expect("s3 supports listing");
+    let keys = store
+        .list_media_keys()
+        .await
+        .expect("list")
+        .expect("s3 supports listing");
     assert!(
         keys.contains(&media_key),
         "the media key is listed with its prefix stripped: {keys:?}"
     );
     assert!(
-        !keys.iter().any(|k| k.contains(&tag) && k.ends_with(".webp")),
+        !keys
+            .iter()
+            .any(|k| k.contains(&tag) && k.ends_with(".webp")),
         "cache/ keys never enter the media enumeration: {keys:?}"
     );
 
@@ -13941,7 +14016,10 @@ async fn unregistered_show_switch_four_state_fail_closed() {
         base.blobs.clone(),
         Arc::new(test_config()),
     );
-    assert!(!i0721_server::api::unregistered::show_of(&absent_state).await, "absent reads OFF");
+    assert!(
+        !i0721_server::api::unregistered::show_of(&absent_state).await,
+        "absent reads OFF"
+    );
     let _ = store;
 }
 
@@ -13971,10 +14049,16 @@ async fn unreadable_settings_state() -> AppState {
         ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.list_files(buckets, offset, limit).await
         }
-        async fn count_files(&self, buckets: Option<&[uuid::Uuid]>) -> Result<u64, i0721_store::StoreError> {
+        async fn count_files(
+            &self,
+            buckets: Option<&[uuid::Uuid]>,
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.count_files(buckets).await
         }
-        async fn get_file(&self, id: uuid::Uuid) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+        async fn get_file(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
             self.0.get_file(id).await
         }
         async fn create_file(
@@ -14117,7 +14201,9 @@ async fn unreadable_settings_state() -> AppState {
             offset: u64,
             limit: u64,
         ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
-            self.0.list_folder(owner, parent, kind, buckets, offset, limit).await
+            self.0
+                .list_folder(owner, parent, kind, buckets, offset, limit)
+                .await
         }
         async fn folder_name_taken(
             &self,
@@ -14127,7 +14213,9 @@ async fn unreadable_settings_state() -> AppState {
             name: &str,
             exclude: Option<uuid::Uuid>,
         ) -> Result<bool, i0721_store::StoreError> {
-            self.0.folder_name_taken(owner, parent, bucket, name, exclude).await
+            self.0
+                .folder_name_taken(owner, parent, bucket, name, exclude)
+                .await
         }
         async fn create_folder(
             &self,
@@ -14138,16 +14226,29 @@ async fn unreadable_settings_state() -> AppState {
         ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
             self.0.create_folder(owner, parent, name, bucket).await
         }
-        async fn set_parent(&self, id: uuid::Uuid, parent: Option<uuid::Uuid>) -> Result<(), i0721_store::StoreError> {
+        async fn set_parent(
+            &self,
+            id: uuid::Uuid,
+            parent: Option<uuid::Uuid>,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.set_parent(id, parent).await
         }
-        async fn ancestor_ids(&self, id: uuid::Uuid) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+        async fn ancestor_ids(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
             self.0.ancestor_ids(id).await
         }
-        async fn subtree_live_ids(&self, id: uuid::Uuid) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+        async fn subtree_live_ids(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
             self.0.subtree_live_ids(id).await
         }
-        async fn soft_delete_many(&self, ids: &[uuid::Uuid]) -> Result<u64, i0721_store::StoreError> {
+        async fn soft_delete_many(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.soft_delete_many(ids).await
         }
         async fn get_files_by_ids(
@@ -14162,22 +14263,39 @@ async fn unreadable_settings_state() -> AppState {
         ) -> Result<i0721_proto::ShareRecord, i0721_store::StoreError> {
             self.0.create_share(share).await
         }
-        async fn get_share(&self, token: &str) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        async fn get_share(
+            &self,
+            token: &str,
+        ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
             self.0.get_share(token).await
         }
-        async fn find_share_by_file(&self, owner: uuid::Uuid, file: uuid::Uuid) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        async fn find_share_by_file(
+            &self,
+            owner: uuid::Uuid,
+            file: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
             self.0.find_share_by_file(owner, file).await
         }
-        async fn list_shares(&self, owner: uuid::Uuid) -> Result<Vec<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+        async fn list_shares(
+            &self,
+            owner: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::ShareRecord>, i0721_store::StoreError> {
             self.0.list_shares(owner).await
         }
         async fn delete_share(&self, token: &str) -> Result<bool, i0721_store::StoreError> {
             self.0.delete_share(token).await
         }
-        async fn delete_shares_for_files(&self, ids: &[uuid::Uuid]) -> Result<u64, i0721_store::StoreError> {
+        async fn delete_shares_for_files(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.delete_shares_for_files(ids).await
         }
-        async fn set_user_quota(&self, user: uuid::Uuid, quota: Option<i64>) -> Result<(), i0721_store::StoreError> {
+        async fn set_user_quota(
+            &self,
+            user: uuid::Uuid,
+            quota: Option<i64>,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.set_user_quota(user, quota).await
         }
         async fn upsert_storage_bucket(
@@ -14190,10 +14308,16 @@ async fn unreadable_settings_state() -> AppState {
         ) -> Result<i0721_proto::StorageBucketRecord, i0721_store::StoreError> {
             self.0.upsert_storage_bucket(slug, d, a, g, e).await
         }
-        async fn delete_storage_bucket(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+        async fn delete_storage_bucket(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<bool, i0721_store::StoreError> {
             self.0.delete_storage_bucket(id).await
         }
-        async fn count_live_files_by_bucket(&self, id: Option<uuid::Uuid>) -> Result<u64, i0721_store::StoreError> {
+        async fn count_live_files_by_bucket(
+            &self,
+            id: Option<uuid::Uuid>,
+        ) -> Result<u64, i0721_store::StoreError> {
             self.0.count_live_files_by_bucket(id).await
         }
         async fn storage_keys_live_in_bucket(
@@ -14208,7 +14332,9 @@ async fn unreadable_settings_state() -> AppState {
             bucket: Option<uuid::Uuid>,
             sha: &str,
         ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
-            self.0.get_file_by_owner_bucket_and_sha256(owner, bucket, sha).await
+            self.0
+                .get_file_by_owner_bucket_and_sha256(owner, bucket, sha)
+                .await
         }
         async fn get_bucket_grant(
             &self,
@@ -14217,34 +14343,68 @@ async fn unreadable_settings_state() -> AppState {
         ) -> Result<Option<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
             self.0.get_bucket_grant(u, b).await
         }
-        async fn set_bucket_grant(&self, u: uuid::Uuid, b: uuid::Uuid, r: bool, w: bool, s: bool) -> Result<(), i0721_store::StoreError> {
+        async fn set_bucket_grant(
+            &self,
+            u: uuid::Uuid,
+            b: uuid::Uuid,
+            r: bool,
+            w: bool,
+            s: bool,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.set_bucket_grant(u, b, r, w, s).await
         }
-        async fn list_bucket_grants_for_user(&self, u: uuid::Uuid) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+        async fn list_bucket_grants_for_user(
+            &self,
+            u: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
             self.0.list_bucket_grants_for_user(u).await
         }
-        async fn list_bucket_grants_for_bucket(&self, b: uuid::Uuid) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+        async fn list_bucket_grants_for_bucket(
+            &self,
+            b: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
             self.0.list_bucket_grants_for_bucket(b).await
         }
-        async fn a_live_key_references_bucket_slug(&self, slug: &str) -> Result<bool, i0721_store::StoreError> {
+        async fn a_live_key_references_bucket_slug(
+            &self,
+            slug: &str,
+        ) -> Result<bool, i0721_store::StoreError> {
             self.0.a_live_key_references_bucket_slug(slug).await
         }
-        async fn create_api_key(&self, key: &i0721_proto::ApiKeyRecord) -> Result<(), i0721_store::StoreError> {
+        async fn create_api_key(
+            &self,
+            key: &i0721_proto::ApiKeyRecord,
+        ) -> Result<(), i0721_store::StoreError> {
             self.0.create_api_key(key).await
         }
-        async fn list_api_keys(&self, user: uuid::Uuid) -> Result<Vec<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        async fn list_api_keys(
+            &self,
+            user: uuid::Uuid,
+        ) -> Result<Vec<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
             self.0.list_api_keys(user).await
         }
         async fn revoke_api_key(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
             self.0.revoke_api_key(id).await
         }
-        async fn update_api_key(&self, id: uuid::Uuid, name: &str, ops: &str, expires_at: Option<&str>) -> Result<bool, i0721_store::StoreError> {
+        async fn update_api_key(
+            &self,
+            id: uuid::Uuid,
+            name: &str,
+            ops: &str,
+            expires_at: Option<&str>,
+        ) -> Result<bool, i0721_store::StoreError> {
             self.0.update_api_key(id, name, ops, expires_at).await
         }
-        async fn find_api_key_by_hash(&self, hash: &str) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        async fn find_api_key_by_hash(
+            &self,
+            hash: &str,
+        ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
             self.0.find_api_key_by_hash(hash).await
         }
-        async fn find_api_key_by_id(&self, id: uuid::Uuid) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+        async fn find_api_key_by_id(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
             self.0.find_api_key_by_id(id).await
         }
         async fn touch_api_key(&self, id: uuid::Uuid) -> Result<(), i0721_store::StoreError> {
