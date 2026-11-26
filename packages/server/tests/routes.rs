@@ -12119,6 +12119,25 @@ async fn set_bucket_anonymous(state: &AppState, slug: &str, anonymous_read: bool
     .await;
 }
 
+/// Flip `grant_on_signup` on a bucket row (members stop gaining the
+/// bucket by default — the fixture for isolating the role-based arms).
+async fn set_bucket_signup(state: &AppState, slug: &str, grant_on_signup: bool) {
+    let row = state
+        .store
+        .get_storage_bucket_by_slug(slug)
+        .await
+        .unwrap()
+        .expect("the bucket exists");
+    patch_bucket(
+        state,
+        slug,
+        row.anonymous_read,
+        grant_on_signup,
+        row.enabled,
+    )
+    .await;
+}
+
 /// Flip `enabled` on a bucket row (the bucket becomes unusable).
 async fn set_bucket_enabled(state: &AppState, slug: &str, enabled: bool) {
     let row = state
@@ -12237,6 +12256,77 @@ async fn private_bucket_media_200_with_session_read() {
         cache_of(&response).as_deref(),
         Some("private, no-store"),
         "2xx ∧ ¬A never carries a public directive"
+    );
+}
+
+/// `an_admin_reads_a_private_buckets_media_without_any_grant_row` — R-A's
+/// admin arm (admin → every bucket) must hold through the `/media` lane
+/// for an admin who is NOT the owner and holds NO grant row: a private
+/// bucket's bytes answer 200 to the admin session. MUT:P2B-ADMIN-MEDIA —
+/// removing the admin short-circuit from `actor_reads_row` turns this
+/// red (the owner-path tests survive that mutant; this one cannot).
+#[tokio::test]
+async fn an_admin_reads_a_private_buckets_media_without_any_grant_row() {
+    let (state, _seeded) = test_state().await;
+    let owner = state
+        .store
+        .create_user(CreateUser {
+            username: "private-owner".to_owned(),
+            display_name: "Owner".to_owned(),
+            role: Role::Member,
+            password_hash: Some(hash_password("owner-password").unwrap()),
+        })
+        .await
+        .unwrap();
+    let owner_token = login(&state, "private-owner", "owner-password").await;
+    let (_, dto) = upload(&state, &owner_token, tiny_png(), "owned.png").await;
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let expected = state
+        .blobs
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the owner's bytes sit in the bucket");
+
+    // Private bucket; the admin below is a DIFFERENT account with no
+    // grant row anywhere (R-A: admin → all buckets, by role alone).
+    set_bucket_anonymous(&state, "bootstrap", false).await;
+    set_bucket_signup(&state, "bootstrap", false).await;
+    let other_admin = state
+        .store
+        .create_user(CreateUser {
+            username: "second-admin".to_owned(),
+            display_name: "Second admin".to_owned(),
+            role: Role::Admin,
+            password_hash: Some(hash_password("second-password").unwrap()),
+        })
+        .await
+        .unwrap();
+    assert_ne!(other_admin.id, owner.id, "fixture: a different account");
+    let admin_token = login(&state, "second-admin", "second-password").await;
+
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+            &admin_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "an admin reaches a private bucket's media by role, with no grant row"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        expected.as_ref(),
+        "and it is the row's OWN bytes"
     );
 }
 
@@ -12665,6 +12755,46 @@ async fn anonymous_never_distinguishes_an_unavailable_bucket_from_absence() {
         cache_of(&absent),
         "the two 404s are indistinguishable, headers included"
     );
+    // MUT:P2B-I3-BODY — the sharper half of the pin: the two anonymous
+    // 404s are byte-identical in BODY and in the full header SET (a
+    // future branch that differs in wording or in an extra header would
+    // turn this red; comparing status + Cache-Control alone let that
+    // mutant survive).
+    let unavailable_headers = header_map_of(&unavailable);
+    let absent_headers = header_map_of(&absent);
+    assert_eq!(
+        unavailable_headers, absent_headers,
+        "the two 404s carry the same header set"
+    );
+    let unavailable_body = axum::body::to_bytes(unavailable.into_body(), 65536)
+        .await
+        .unwrap();
+    let absent_body = axum::body::to_bytes(absent.into_body(), 65536)
+        .await
+        .unwrap();
+    assert_eq!(
+        unavailable_body.as_ref(),
+        absent_body.as_ref(),
+        "the two 404s carry the same body"
+    );
+}
+
+/// A response's headers as a sorted, comparable list (the I3 body pin
+/// compares the whole set, not only Cache-Control).
+fn header_map_of(response: &axum::response::Response) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .filter(|(name, _)| name.as_str() != "date")
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                value.to_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    pairs.sort();
+    pairs
 }
 
 /// I6: `api_key_with_a_narrowed_bucket_set_never_serves_from_a_bucket_outside_it`
