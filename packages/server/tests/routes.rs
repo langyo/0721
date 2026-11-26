@@ -9315,6 +9315,95 @@ async fn thumbnail_bytes_come_from_the_bucket_of_the_row_that_authorised() {
     );
 }
 
+/// `a_lazily_regenerated_thumbnail_lands_in_the_serving_rows_bucket` —
+/// the LAZY half of I4: with the cache entry DELETED from the serving
+/// row's own store, `?thumbnail=true` regenerates from the original
+/// blob and WRITES the `.webp` into the SERVING row's bucket — never
+/// the bootstrap store. MUT:P2B-LAZY-WRITE — routing the lazy write to
+/// `state.blobs` (the bootstrap store) turns this red.
+#[tokio::test]
+async fn a_lazily_regenerated_thumbnail_lands_in_the_serving_rows_bucket() {
+    let (base_state, admin_token) = test_state_with_token().await;
+    // A second Ready bucket with its OWN store; the registry keeps the
+    // bootstrap entry too, so both stores are distinguishable.
+    let (state, _second_id, second_store) = plant_second_bucket(&base_state, "satellite", true);
+    plant_bucket_with_id(&state, _second_id, "satellite", false, false, true).await;
+    // The admin uploads INTO the second bucket: the row (and its cache
+    // slot) live in the satellite store, not the bootstrap store.
+    let (status, dto) =
+        upload_bucket(&state, &admin_token, tiny_png(), "lazy.png", "satellite").await;
+    assert_eq!(status, StatusCode::CREATED, "{dto}");
+    let key = dto["sha256"].as_str().unwrap().to_owned();
+    let thumb_key = format!("{key}.webp");
+    use i0721_server::blob::BlobSlot;
+    // The upload DID pre-build the cache entry — now DELETE it so the
+    // serving request must take the LAZY regeneration branch.
+    assert!(
+        second_store
+            .get(BlobSlot::Cache, &thumb_key)
+            .await
+            .unwrap()
+            .is_some(),
+        "the upload pre-built the cache entry in the row's bucket"
+    );
+    second_store
+        .delete(BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap();
+    assert!(
+        second_store
+            .get(BlobSlot::Cache, &thumb_key)
+            .await
+            .unwrap()
+            .is_none(),
+        "the cache slot is now empty: the lazy branch must run"
+    );
+    let response = app(&state)
+        .oneshot(bearer(
+            Request::builder()
+                .uri(format!("/media/{key}?thumbnail=true"))
+                .body(Body::empty())
+                .unwrap(),
+            &admin_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "the lazy branch regenerates the thumbnail"
+    );
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/webp",
+        "the regenerated thumbnail is webp"
+    );
+    // The regenerated `.webp` lands in the SERVING row's own bucket...
+    let landed = second_store
+        .get(BlobSlot::Cache, &thumb_key)
+        .await
+        .unwrap()
+        .expect("the lazy write lands in the serving row's bucket");
+    // ...and NEVER in the bootstrap store (the mutated write target).
+    assert!(
+        state
+            .blobs
+            .get(BlobSlot::Cache, &thumb_key)
+            .await
+            .unwrap()
+            .is_none(),
+        "the lazy write never touches the bootstrap store"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_ref(),
+        landed.as_ref(),
+        "the served bytes are the regenerated ones"
+    );
+}
+
 /// `folder_rows_carry_their_parents_bucket`: a child folder inherits the
 /// parent's `bucket_id`; a root folder takes the resolved bootstrap
 /// bucket. MUT:M-B2 — removing the `set_parent` cross-bucket guard turns
