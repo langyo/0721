@@ -15745,7 +15745,7 @@ fn navigation(path: &str) -> Request<Body> {
         .unwrap()
 }
 
-/// The same path as a `fetch`/XHR caller: a resource load, never a
+/// The same path as a `fetch`/XHR caller: a resource load, not a
 /// navigation — it must keep its JSON so the SPA can show its own toast.
 fn fetch_like(path: &str) -> Request<Body> {
     Request::get(path)
@@ -15888,7 +15888,7 @@ async fn a_successful_route_is_untouched_even_for_a_navigation() {
 async fn a_dev_lane_without_a_shell_passes_errors_through() {
     // The dev lane (`--no-default-features`) reads `index.html` from
     // `I0721_STATIC_DIR` instead of the compiled-in tree. A dist that is
-    // missing or does not carry a shell must degrade to the INERT layer:
+    // missing or carrying no shell degrades to the INERT layer:
     // the error answer stays the handler's JSON rather than a landing painted
     // from a document the service cannot serve.
     let mut config = test_config();
