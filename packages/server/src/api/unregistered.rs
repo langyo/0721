@@ -43,6 +43,13 @@ pub(crate) async fn unregistered_show(state: &AppState) -> Result<bool, ApiError
     ))
 }
 
+/// The test-facing alias (`show_of` in the routes tests): same four-state
+/// collapse; a store failure reads OFF (fail-closed) rather than panicking.
+#[allow(dead_code)]
+pub async fn show_of(state: &AppState) -> bool {
+    unregistered_show(state).await.unwrap_or(false)
+}
+
 /// A listed media key that has no live row in its bucket.
 #[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[ts(export, export_to = "../../webui/src/types/")]

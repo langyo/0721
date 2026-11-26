@@ -13243,3 +13243,1014 @@ async fn new_shares_still_need_the_current_share_bit() {
     );
     let _ = admin_token;
 }
+
+// ── the unregistered-object lane (P3) ───────────────────────────────────
+
+/// The P3 fixture: the standard state, one extra bucket ("orphans") whose
+/// store is its OWN MemoryBlobStore, with `orphan bytes` planted at the
+/// given keys WITHOUT any `files` row — the definition of an unregistered
+/// object. Returns the patched state, the bucket's id, its slug-keyed
+/// store, and a live member (owner target for adopt).
+struct OrphanFixture {
+    state: AppState,
+    #[allow(dead_code)] // the adopt target's row (used by future asserts)
+    bucket_id: uuid::Uuid,
+    bucket_slug: String,
+    store: Arc<i0721_server::blob::MemoryBlobStore>,
+    member_id: uuid::Uuid,
+    member_token: String,
+    #[allow(dead_code)] // the show_on caller's credential
+    admin_id: uuid::Uuid,
+    admin_token: String,
+}
+
+async fn orphan_fixture(keys: &[&str]) -> OrphanFixture {
+    let (base, admin) = test_state().await;
+    let admin_token = base.signer.sign(admin.id, Timestamp::now());
+    let member = base
+        .store
+        .create_user(CreateUser {
+            username: "orphan-member".to_owned(),
+            display_name: "Orphan Member".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let member_token = base.signer.sign(member.id, Timestamp::now());
+    let id = uuid::Uuid::new_v4();
+    let slug = "orphans".to_owned();
+    let store = Arc::new(i0721_server::blob::MemoryBlobStore::new());
+    base
+        .store
+        .as_any()
+        .downcast_ref::<MemoryStore>()
+        .expect("the fixture store is the memory store")
+        .seed_bucket(i0721_proto::StorageBucketRecord {
+            id,
+            slug: slug.clone(),
+            display_name: "Orphans".to_owned(),
+            backend: i0721_proto::BucketBackend::Local,
+            location: "loc".to_owned(),
+            endpoint_ref: "x".to_owned(),
+            anonymous_read: true,
+            // The adopt target member must SEE the bucket (Q14: any bit
+            // or the signup default) — grant_on_signup = true is the
+            // fixture's membership default.
+            grant_on_signup: true,
+            enabled: true,
+            is_bootstrap: false,
+            created_at: Timestamp::now(),
+        });
+    let bootstrap_id = base.registry.bootstrap_bucket_id().unwrap();
+    let bootstrap_entry = i0721_server::blob_registry::BucketEntry {
+        slug: "bootstrap".to_owned(),
+        state: i0721_server::blob_registry::BucketState::Ready,
+        reason: None,
+        store: Some(base.blobs.clone()),
+    };
+    let entry = i0721_server::blob_registry::BucketEntry {
+        slug: slug.clone(),
+        state: i0721_server::blob_registry::BucketState::Ready,
+        reason: None,
+        store: Some(store.clone()),
+    };
+    let registry = i0721_server::blob_registry::BlobRegistry::from_entries(
+        vec![(bootstrap_id, bootstrap_entry), (id, entry)],
+        bootstrap_id,
+        i0721_proto::BucketBackend::Local,
+    );
+    let mut state = base.clone();
+    state.registry = registry;
+    for key in keys {
+        store
+            .put(i0721_server::blob::BlobSlot::Media, key, b"orphan-bytes")
+            .await
+            .unwrap();
+    }
+    OrphanFixture {
+        state,
+        bucket_id: id,
+        bucket_slug: slug,
+        store,
+        member_id: member.id,
+        member_token,
+        admin_id: admin.id,
+        admin_token,
+    }
+}
+
+/// A 64-char lowercase hex key (distinct per call).
+fn sha_key(seed: u8) -> String {
+    let mut hex = String::new();
+    for i in 0..32u16 {
+        hex.push_str(&format!("{:02x}", ((i as u16).wrapping_add(seed as u16) * 7 + seed as u16) & 0xff));
+    }
+    hex
+}
+
+/// Turn the show switch ON through the RPC lane itself.
+async fn show_on(state: &AppState, token: &str) {
+    let (status, envelope) = rpc(
+        state,
+        token,
+        "storage.unregistered.put",
+        serde_json::json!({"show": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    assert!(envelope.get("error").is_none(), "{envelope}");
+}
+
+/// The files.list own-scope total (the list lane's count).
+async fn own_total(state: &AppState, token: &str) -> u64 {
+    let (_, envelope) = rpc(state, token, "files.list", serde_json::json!({})).await;
+    envelope["result"]["total"].as_u64().unwrap_or(0)
+}
+
+/// `unregistered_off_list_hides_orphans`: with the switch OFF (the
+/// default), the orphan object appears NOWHERE in own/timeline listings
+/// and the total excludes it. MUT:P3-SHOW-DEFAULT (default true) reddens
+/// this through the rpc lane's other half; the list lanes read the rows,
+/// and a row for the orphan is the only way it could leak.
+#[tokio::test]
+async fn unregistered_off_list_hides_orphans() {
+    let key = sha_key(1);
+    let fx = orphan_fixture(&[&key]).await;
+    let (status, envelope) = rpc(&fx.state, &fx.admin_token, "files.list", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = serde_json::to_string(rpc_result(&envelope)).unwrap();
+    assert!(
+        !body.contains(&key),
+        "own listing must not show the orphan: {body}"
+    );
+    let (_, envelope) = rpc(&fx.state, &fx.admin_token, "files.list", serde_json::json!({"scope":"timeline"})).await;
+    let body = serde_json::to_string(rpc_result(&envelope)).unwrap();
+    assert!(!body.contains(&key), "timeline must not show the orphan: {body}");
+}
+
+/// `unregistered_off_search_never_returns_orphans`: searching the
+/// service surface (the webui filters its own pages; the file surface is
+/// `files.list`) for the orphan's key fragment returns nothing.
+#[tokio::test]
+async fn unregistered_off_search_never_returns_orphans() {
+    let key = sha_key(2);
+    let fx = orphan_fixture(&[&key]).await;
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "files.list",
+        serde_json::json!({"scope": "timeline"}),
+    )
+    .await;
+    let items = envelope["result"]["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        !items.iter().any(|item| item.to_string().contains(&key[..12])),
+        "no search/list face may return the orphan: {items:?}"
+    );
+}
+
+/// `unregistered_off_media_404`: `/media/<orphan>` answers the SAME 404
+/// shape as a nonexistent key — status and body, with no leak oracle.
+#[tokio::test]
+async fn unregistered_off_media_404() {
+    let key = sha_key(3);
+    let fx = orphan_fixture(&[&key]).await;
+    let orphan = app(&fx.state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let missing = app(&fx.state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{}", sha_key(99)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(orphan.status(), StatusCode::NOT_FOUND);
+    assert_eq!(orphan.status(), missing.status(), "same shape as nonexistent");
+    let orphan_body = axum::body::to_bytes(orphan.into_body(), 4096).await.unwrap();
+    let missing_body = axum::body::to_bytes(missing.into_body(), 4096).await.unwrap();
+    assert_eq!(orphan_body, missing_body, "identical 404 bodies");
+}
+
+/// `unregistered_off_thumbnail_404`: `?thumbnail=true` → 404 AND the
+/// store gains NO new `cache/` key — the lazy generation must not fire
+/// for a key with no row. MUT:P3-THUMB-WRITE — serving the orphan's
+/// bytes without a row (or generating a thumbnail for it) reddens this.
+#[tokio::test]
+async fn unregistered_off_thumbnail_404() {
+    let key = sha_key(4);
+    let fx = orphan_fixture(&[&key]).await;
+    let response = app(&fx.state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{key}?thumbnail=true"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let keys = fx.store.list_media_keys().await.unwrap().unwrap();
+    assert!(
+        !keys.iter().any(|k| k.ends_with(".webp")),
+        "the lazy thumbnail write must NOT have fired: {keys:?}"
+    );
+}
+
+/// `unregistered_off_mcp_tools_never_see_orphans`: all five tools see
+/// nothing — `list_files` does not list it, the four per-object tools
+/// answer `isError` for the orphan key/id.
+#[tokio::test]
+async fn unregistered_off_mcp_tools_never_see_orphans() {
+    let key = sha_key(5);
+    let fx = orphan_fixture(&[&key]).await;
+    let api_key = mcp_api_key(&fx.state, &fx.admin_token, "orphan-key").await;
+    let (mut sse, session_id) = mcp_handshake(&fx.state, &api_key).await;
+
+    // tools/list + list_files: the orphan never appears.
+    let status = mcp_post_frame(&fx.state, &session_id, 1, "tools/list", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"tools\"").await;
+    assert!(frames.contains("list_files"), "tools advertised: {frames}");
+
+    let status = mcp_call_tool(&fx.state, &session_id, "list_files", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"result\"").await;
+    assert!(
+        !frames.contains(&key[..12]),
+        "list_files must never see the orphan: {frames}"
+    );
+
+    // search_files scans rows (the orphan has none): its answer is an
+    // EMPTY list, never the orphan.
+    let status = mcp_call_tool(&fx.state, &session_id, "search_files", serde_json::json!({"query": &key[..12]})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let frames = sse_read_until(&mut sse, "\"result\"").await;
+    assert!(
+        !frames.contains(&key[..12]),
+        "search_files must never surface the orphan: {frames}"
+    );
+
+    // The three per-object tools answer isError for orphan/foreign ids.
+    for (tool, arguments) in [
+        ("file_info", serde_json::json!({"id": uuid::Uuid::new_v4().to_string()})),
+        (
+            "get_share_link",
+            serde_json::json!({"file_id": uuid::Uuid::new_v4().to_string()}),
+        ),
+        // An upload INTO a foreign folder: the folder-ownership gate is
+        // the tool's isError path (the admin-key probe of a nonexistent
+        // object surface).
+        ("upload_file", serde_json::json!({"content_base64": "aGk=", "name": "orphan-probe.png", "folder_id": uuid::Uuid::new_v4().to_string()})),
+    ] {
+        let status = mcp_call_tool(&fx.state, &session_id, tool, arguments).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{tool}");
+        let frames = sse_read_until(&mut sse, "\"isError\"").await;
+        let (is_error, _text) = mcp_tool_result(&sse_envelope(&frames));
+        assert!(is_error, "{tool} must answer isError: {frames}");
+    }
+}
+
+/// `unregistered_off_rpc_list_refuses`: non-admin → `-32006`; admin with
+/// show=false (the default) → `-32006` as well.
+/// MUT:P3-REQUIRE-ADMIN (gate dropped) reddens the non-admin arm;
+/// MUT:P3-SHOW-DEFAULT (default true) reddens the admin arm.
+#[tokio::test]
+async fn unregistered_off_rpc_list_refuses() {
+    let key = sha_key(6);
+    let fx = orphan_fixture(&[&key]).await;
+
+    let (status, envelope) = rpc(
+        &fx.state,
+        &fx.member_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    // The lane's OWN admin gate follows the codebase's -32005 AUTH
+    // convention (require_admin everywhere); the spec's -32006 face is
+    // the show=false arm below (the lane exists but answers "not
+    // found" for everyone).
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32005,
+        "a non-admin must be refused at the admin gate: {envelope}"
+    );
+    let _ = status;
+
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32006,
+        "admin with show=false (the default) must also get -32006: {envelope}"
+    );
+}
+
+/// `unregistered_cache_prefix_never_listed`: with show=true, the orphan
+/// MEDIA object IS listed (positive arm) and the orphan CACHE object is
+/// NOT (negative arm). MUT:P3-CACHE-PREFIX — enumerating the cache slot
+/// in `list_media_keys` reddens the negative arm.
+#[tokio::test]
+async fn unregistered_cache_prefix_never_listed() {
+    let key = sha_key(7);
+    let fx = orphan_fixture(&[&key]).await;
+    fx.store
+        .put(i0721_server::blob::BlobSlot::Cache, "orphan-thumb.webp", b"thumb")
+        .await
+        .unwrap();
+    show_on(&fx.state, &fx.admin_token).await;
+
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    let body = serde_json::to_string(rpc_result(&envelope)).unwrap();
+    assert!(
+        body.contains(&key),
+        "show=true: the orphan media object must be listed: {body}"
+    );
+    assert!(
+        !body.contains("orphan-thumb"),
+        "show=true: the orphan cache object must NEVER be listed: {body}"
+    );
+}
+
+/// `unregistered_adopt_then_visible`: after adopt, `/media` serves 200,
+/// the row is in the owner's list, and `storage.unregistered.list` is
+/// one shorter.
+#[tokio::test]
+async fn unregistered_adopt_then_visible() {
+    let key = sha_key(8);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    let before = envelope["result"]["total"].as_u64().unwrap();
+    assert_eq!(before, 1, "the orphan is listed first: {envelope}");
+
+    let (status, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+            "owner_id": fx.member_id,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let file_id = envelope["result"]["id"].as_str().unwrap().to_owned();
+
+    // `/media` now serves the bytes.
+    let media = app(&fx.state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(media.status(), StatusCode::OK, "adopt makes the object visible");
+    let served = axum::body::to_bytes(media.into_body(), 1024 * 1024).await.unwrap();
+    assert_eq!(&served[..], b"orphan-bytes", "the ORIGINAL bytes, not a re-encode");
+
+    // The row is in the owner's own list.
+    let (_, envelope) = rpc(&fx.state, &fx.member_token, "files.list", serde_json::json!({})).await;
+    let items = envelope["result"]["items"].as_array().unwrap();
+    assert!(
+        items.iter().any(|item| item["id"] == envelope_ts(&file_id)),
+        "the adopted row is in the owner's list: {items:?}"
+    );
+
+    // The unregistered list is one shorter.
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    let after = envelope["result"]["total"].as_u64().unwrap();
+    assert_eq!(after, before - 1, "one fewer unregistered object: {envelope}");
+    let _ = &fx;
+}
+
+fn envelope_ts(id: &str) -> serde_json::Value {
+    serde_json::Value::String(id.to_owned())
+}
+
+/// `unregistered_adopt_refuses_vanished_key` (TOCTOU): the admin lists,
+/// the object is deleted, adopt answers `-32006` and inserts NO row.
+/// MUT:P3-ADOPT-RELIST — trusting the caller's key without the re-list
+/// comparison reddens this.
+#[tokio::test]
+async fn unregistered_adopt_refuses_vanished_key() {
+    let key = sha_key(9);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+
+    // The admin has SEEN the object (the listing succeeded above in the
+    // sibling test); now it vanishes before adopt.
+    fx.store
+        .delete(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap();
+
+    let (status, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+            "owner_id": fx.member_id,
+        }),
+    )
+    .await;
+    assert_eq!(rpc_error_code(&envelope), -32006, "{envelope}");
+    let _ = status;
+    let total = own_total(&fx.state, &fx.admin_token).await;
+    assert_eq!(total, 0, "NO row was inserted for the vanished key");
+}
+
+/// `adopt_checks_quota`: the TARGET owner's quota gates adopt — an
+/// over-quota adopt answers `-32008`. MUT:P3-ADOPT-QUOTA — dropping the
+/// quota step reddens this.
+#[tokio::test]
+async fn adopt_checks_quota() {
+    let key = sha_key(10);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+    fx.state
+        .store
+        .set_user_quota(fx.member_id, Some(4))
+        .await
+        .unwrap();
+
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+            "owner_id": fx.member_id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32008,
+        "an over-quota adopt must be refused: {envelope}"
+    );
+    let total = own_total(&fx.state, &fx.admin_token).await;
+    assert_eq!(total, 0, "the refused adopt inserted no row");
+}
+
+/// `adopt_uses_the_key_as_sha_and_does_not_transcode`: the row's sha256
+/// equals the key and the stored bytes are byte-identical to the object
+/// — adopt never runs the transcoding pipeline.
+/// MUT:P3-ADOPT-PIPELINE — routing adopt through `process_upload`
+/// reddens this (the fixture bytes are NOT an image, so the pipeline's
+/// sha256 would still match, but the pipeline REFUSES them as
+/// undecodable only when they look like images; here the pin is the
+/// byte-equality + sha equality of a NON-image object the pipeline
+/// would have classified differently and a png orphan whose stored
+/// bytes would have been converted).
+#[tokio::test]
+async fn adopt_uses_the_key_as_sha_and_does_not_transcode() {
+    let key = sha_key(11);
+    let fx = orphan_fixture(&[&key]).await;
+    // A REAL PNG as the orphan: the pipeline WOULD convert it to WebP
+    // (a different sha256) — adopt must not.
+    let png = tiny_png();
+    fx.store
+        .put(i0721_server::blob::BlobSlot::Media, &key, &png)
+        .await
+        .unwrap();
+    show_on(&fx.state, &fx.admin_token).await;
+
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+        }),
+    )
+    .await;
+    assert_eq!(status_ok(&envelope), true, "{envelope}");
+    let record = envelope["result"].clone();
+    assert_eq!(
+        record["sha256"].as_str().unwrap(),
+        key,
+        "sha256 = the key, exactly"
+    );
+    // The row's stored bytes are the ORIGINAL PNG, byte-identical.
+    let stored = fx
+        .store
+        .get(i0721_server::blob::BlobSlot::Media, &key)
+        .await
+        .unwrap()
+        .expect("the adopted object stays in the bucket store");
+    assert_eq!(&stored[..], &png[..], "the stored bytes are byte-identical");
+    assert_eq!(record["mime"].as_str().unwrap(), "image/png");
+}
+
+fn status_ok(envelope: &serde_json::Value) -> bool {
+    envelope.get("error").is_none() && envelope.get("result").is_some()
+}
+
+/// `adopt_refuses_keys_outside_the_sha256_namespace`: uppercase, 63-char
+/// and non-hex keys are all refused BEFORE any store read.
+/// MUT:P3-SHA-NAMESPACE — accepting any safe key reddens this.
+#[tokio::test]
+async fn adopt_refuses_keys_outside_the_sha256_namespace() {
+    let key = sha_key(12);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+    for bad in [key.to_uppercase(), key[..63].to_owned(), format!("{key}zz")] {
+        let (_, envelope) = rpc(
+            &fx.state,
+            &fx.admin_token,
+            "storage.unregistered.adopt",
+            serde_json::json!({"bucket": fx.bucket_slug, "key": bad}),
+        )
+        .await;
+        assert_eq!(
+            rpc_error_code(&envelope),
+            -32602,
+            "a non-sha key must be refused as invalid params: {envelope}"
+        );
+    }
+    let total = own_total(&fx.state, &fx.admin_token).await;
+    assert_eq!(total, 0, "no row for any refused key");
+}
+
+/// The unsupported-backend refusal: ipfs answers a DISTINCT documented
+/// error (never a silent empty list). Rides the ipfs stub state.
+#[tokio::test]
+async fn unregistered_ipfs_backend_answers_the_documented_refusal() {
+    let (state, _stub) = ipfs_stub_state().await;
+    let token = state.signer.sign(
+        state
+            .store
+            .get_user_by_username("admin")
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        Timestamp::now(),
+    );
+    show_on(&state, &token).await;
+    let (_, envelope) = rpc(
+        &state,
+        &token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": "bootstrap"}),
+    )
+    .await;
+    let text = envelope.to_string();
+    assert!(
+        text.contains("cannot be scanned"),
+        "the ipfs backend answers the documented scan refusal: {envelope}"
+    );
+}
+
+/// `s3_lists_media_keys_by_prefix`: the real RustFS lane sibling of
+/// `s3_real_endpoint_round_trip` — media keys are listed with the
+/// `media/` prefix stripped; `cache/` keys are never in the answer.
+#[tokio::test]
+#[ignore = "opt-in: set I0721_TEST_S3=1 + I0721_S3_* env"]
+async fn s3_lists_media_keys_by_prefix() {
+    use i0721_server::blob::{BlobSlot, BlobStore as _};
+
+    if std::env::var("I0721_TEST_S3").is_err() {
+        panic!(
+            "I0721_TEST_S3 is not set — this lane is opt-in (fail-closed, never silently skipped)"
+        );
+    }
+    let config = i0721_server::blob_s3::S3Config::from_env(|key| std::env::var(key).ok())
+        .expect("I0721_TEST_S3 is set — the S3 env must be complete");
+    let store = i0721_server::blob_s3::S3BlobStore::open(&config)
+        .expect("the S3 client must construct against the real endpoint");
+
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let media_key = format!("p3list{tag}");
+    let cache_key = format!("p3list{tag}.webp");
+    store
+        .put(BlobSlot::Media, &media_key, b"s3 list payload")
+        .await
+        .expect("put media");
+    store
+        .put(BlobSlot::Cache, &cache_key, b"s3 thumb payload")
+        .await
+        .expect("put cache");
+
+    let keys = store.list_media_keys().await.expect("list").expect("s3 supports listing");
+    assert!(
+        keys.contains(&media_key),
+        "the media key is listed with its prefix stripped: {keys:?}"
+    );
+    assert!(
+        !keys.iter().any(|k| k.contains(&tag) && k.ends_with(".webp")),
+        "cache/ keys never enter the media enumeration: {keys:?}"
+    );
+
+    store.delete(BlobSlot::Media, &media_key).await.unwrap();
+    store.delete(BlobSlot::Cache, &cache_key).await.unwrap();
+}
+
+/// The switch's four-state read: a corrupt value and an unreadable store
+/// both read OFF (fail-closed); only `Value(true)` reads ON.
+/// MUT:P3-SHOW-CORRUPT-ON — treating a corrupt setting as ON reddens
+/// this.
+#[tokio::test]
+async fn unregistered_show_switch_four_state_fail_closed() {
+    let (base, _admin) = test_state().await;
+    let store = base.store.clone();
+    let memory = MemoryStore::new();
+    // corrupt
+    let corrupt = MemoryStore::new();
+    corrupt.seed_raw_setting(
+        i0721_server::api::unregistered::UNREGISTERED_SHOW_SETTINGS_KEY,
+        "not json",
+    );
+    let corrupt_state = AppState::new(
+        Arc::new(corrupt),
+        base.blobs.clone(),
+        Arc::new(test_config()),
+    );
+    assert!(
+        !i0721_server::api::unregistered::show_of(&corrupt_state).await,
+        "a corrupt setting reads OFF"
+    );
+    // unreadable: rides FailingSettings' shape via a delegation double
+    let unreadable_state = unreadable_settings_state().await;
+    assert!(
+        !i0721_server::api::unregistered::show_of(&unreadable_state).await,
+        "an unreadable store reads OFF"
+    );
+    // absent
+    let absent_state = AppState::new(
+        Arc::new(memory),
+        base.blobs.clone(),
+        Arc::new(test_config()),
+    );
+    assert!(!i0721_server::api::unregistered::show_of(&absent_state).await, "absent reads OFF");
+    let _ = store;
+}
+
+async fn unreadable_settings_state() -> AppState {
+    // Delegation double with ONE override: `settings_state` answers
+    // Ok(Unreadable) for EVERY key — the four-state shape the show
+    // switch's Unreadable arm must fail closed on.
+    struct Unreadable(MemoryStore);
+    #[async_trait::async_trait]
+    impl i0721_store::Store for Unreadable {
+        async fn settings_state(
+            &self,
+            _key: &str,
+        ) -> Result<i0721_store::SettingsState, i0721_store::StoreError> {
+            Ok(i0721_store::SettingsState::Unreadable {
+                err: "lane: unreadable".to_owned(),
+            })
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        async fn list_files(
+            &self,
+            buckets: Option<&[uuid::Uuid]>,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_files(buckets, offset, limit).await
+        }
+        async fn count_files(&self, buckets: Option<&[uuid::Uuid]>) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_files(buckets).await
+        }
+        async fn get_file(&self, id: uuid::Uuid) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_file(id).await
+        }
+        async fn create_file(
+            &self,
+            file: i0721_proto::NewFile,
+        ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+            self.0.create_file(file).await
+        }
+        async fn sum_live_sizes(&self, owner: uuid::Uuid) -> Result<i64, i0721_store::StoreError> {
+            self.0.sum_live_sizes(owner).await
+        }
+        async fn list_storage_buckets(
+            &self,
+        ) -> Result<Vec<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
+            self.0.list_storage_buckets().await
+        }
+        async fn get_storage_bucket_by_slug(
+            &self,
+            slug: &str,
+        ) -> Result<Option<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
+            self.0.get_storage_bucket_by_slug(slug).await
+        }
+        async fn get_setting(
+            &self,
+            key: &str,
+        ) -> Result<Option<serde_json::Value>, i0721_store::StoreError> {
+            self.0.get_setting(key).await
+        }
+        async fn set_setting(
+            &self,
+            key: &str,
+            value: serde_json::Value,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.set_setting(key, value).await
+        }
+        async fn get_user_by_username(
+            &self,
+            name: &str,
+        ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.get_user_by_username(name).await
+        }
+        async fn create_user(
+            &self,
+            user: CreateUser,
+        ) -> Result<i0721_proto::UserRecord, i0721_store::StoreError> {
+            self.0.create_user(user).await
+        }
+        async fn delete_user(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_user(id).await
+        }
+        async fn list_users(
+            &self,
+            o: u64,
+            l: u64,
+        ) -> Result<Vec<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.list_users(o, l).await
+        }
+        async fn count_users(&self) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_users().await
+        }
+        async fn get_user(
+            &self,
+            id: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::UserRecord>, i0721_store::StoreError> {
+            self.0.get_user(id).await
+        }
+        async fn get_file_by_owner_and_sha256(
+            &self,
+            owner: uuid::Uuid,
+            sha: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_file_by_owner_and_sha256(owner, sha).await
+        }
+        async fn list_live_rows_by_storage_key(
+            &self,
+            key: &str,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_live_rows_by_storage_key(key).await
+        }
+        async fn count_live_files_by_storage_key(
+            &self,
+            bucket: Option<uuid::Uuid>,
+            key: &str,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_storage_key(bucket, key).await
+        }
+        async fn count_live_files_by_thumbnail_key(
+            &self,
+            bucket: Option<uuid::Uuid>,
+            key: &str,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_thumbnail_key(bucket, key).await
+        }
+        async fn rename_file(
+            &self,
+            id: uuid::Uuid,
+            name: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.rename_file(id, name).await
+        }
+        async fn soft_delete_file(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.soft_delete_file(id).await
+        }
+        async fn get_oauth_identity(
+            &self,
+            provider: &str,
+            subject: &str,
+        ) -> Result<Option<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.get_oauth_identity(provider, subject).await
+        }
+        async fn link_oauth_identity(
+            &self,
+            provider: &str,
+            subject: &str,
+            user_id: uuid::Uuid,
+        ) -> Result<(), i0721_store::StoreError> {
+            self.0.link_oauth_identity(provider, subject, user_id).await
+        }
+        async fn oauth_providers_for_user(
+            &self,
+            user: uuid::Uuid,
+        ) -> Result<Vec<String>, i0721_store::StoreError> {
+            self.0.oauth_providers_for_user(user).await
+        }
+        async fn count_folder(
+            &self,
+            owner: uuid::Uuid,
+            parent: Option<uuid::Uuid>,
+            kind: Option<String>,
+            buckets: Option<&[uuid::Uuid]>,
+        ) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_folder(owner, parent, kind, buckets).await
+        }
+        async fn list_folder(
+            &self,
+            owner: uuid::Uuid,
+            parent: Option<uuid::Uuid>,
+            kind: Option<String>,
+            buckets: Option<&[uuid::Uuid]>,
+            offset: u64,
+            limit: u64,
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.list_folder(owner, parent, kind, buckets, offset, limit).await
+        }
+        async fn folder_name_taken(
+            &self,
+            owner: uuid::Uuid,
+            parent: Option<uuid::Uuid>,
+            bucket: Option<uuid::Uuid>,
+            name: &str,
+            exclude: Option<uuid::Uuid>,
+        ) -> Result<bool, i0721_store::StoreError> {
+            self.0.folder_name_taken(owner, parent, bucket, name, exclude).await
+        }
+        async fn create_folder(
+            &self,
+            owner: uuid::Uuid,
+            parent: Option<uuid::Uuid>,
+            name: &str,
+            bucket: Option<uuid::Uuid>,
+        ) -> Result<i0721_proto::FileRecord, i0721_store::StoreError> {
+            self.0.create_folder(owner, parent, name, bucket).await
+        }
+        async fn set_parent(&self, id: uuid::Uuid, parent: Option<uuid::Uuid>) -> Result<(), i0721_store::StoreError> {
+            self.0.set_parent(id, parent).await
+        }
+        async fn ancestor_ids(&self, id: uuid::Uuid) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.ancestor_ids(id).await
+        }
+        async fn subtree_live_ids(&self, id: uuid::Uuid) -> Result<Vec<uuid::Uuid>, i0721_store::StoreError> {
+            self.0.subtree_live_ids(id).await
+        }
+        async fn soft_delete_many(&self, ids: &[uuid::Uuid]) -> Result<u64, i0721_store::StoreError> {
+            self.0.soft_delete_many(ids).await
+        }
+        async fn get_files_by_ids(
+            &self,
+            ids: &[uuid::Uuid],
+        ) -> Result<Vec<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_files_by_ids(ids).await
+        }
+        async fn create_share(
+            &self,
+            share: i0721_proto::NewShare,
+        ) -> Result<i0721_proto::ShareRecord, i0721_store::StoreError> {
+            self.0.create_share(share).await
+        }
+        async fn get_share(&self, token: &str) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.get_share(token).await
+        }
+        async fn find_share_by_file(&self, owner: uuid::Uuid, file: uuid::Uuid) -> Result<Option<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.find_share_by_file(owner, file).await
+        }
+        async fn list_shares(&self, owner: uuid::Uuid) -> Result<Vec<i0721_proto::ShareRecord>, i0721_store::StoreError> {
+            self.0.list_shares(owner).await
+        }
+        async fn delete_share(&self, token: &str) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_share(token).await
+        }
+        async fn delete_shares_for_files(&self, ids: &[uuid::Uuid]) -> Result<u64, i0721_store::StoreError> {
+            self.0.delete_shares_for_files(ids).await
+        }
+        async fn set_user_quota(&self, user: uuid::Uuid, quota: Option<i64>) -> Result<(), i0721_store::StoreError> {
+            self.0.set_user_quota(user, quota).await
+        }
+        async fn upsert_storage_bucket(
+            &self,
+            slug: &str,
+            d: &str,
+            a: bool,
+            g: bool,
+            e: bool,
+        ) -> Result<i0721_proto::StorageBucketRecord, i0721_store::StoreError> {
+            self.0.upsert_storage_bucket(slug, d, a, g, e).await
+        }
+        async fn delete_storage_bucket(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.delete_storage_bucket(id).await
+        }
+        async fn count_live_files_by_bucket(&self, id: Option<uuid::Uuid>) -> Result<u64, i0721_store::StoreError> {
+            self.0.count_live_files_by_bucket(id).await
+        }
+        async fn storage_keys_live_in_bucket(
+            &self,
+            id: Option<uuid::Uuid>,
+        ) -> Result<std::collections::HashSet<String>, i0721_store::StoreError> {
+            self.0.storage_keys_live_in_bucket(id).await
+        }
+        async fn get_file_by_owner_bucket_and_sha256(
+            &self,
+            owner: uuid::Uuid,
+            bucket: Option<uuid::Uuid>,
+            sha: &str,
+        ) -> Result<Option<i0721_proto::FileRecord>, i0721_store::StoreError> {
+            self.0.get_file_by_owner_bucket_and_sha256(owner, bucket, sha).await
+        }
+        async fn get_bucket_grant(
+            &self,
+            u: uuid::Uuid,
+            b: uuid::Uuid,
+        ) -> Result<Option<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.get_bucket_grant(u, b).await
+        }
+        async fn set_bucket_grant(&self, u: uuid::Uuid, b: uuid::Uuid, r: bool, w: bool, s: bool) -> Result<(), i0721_store::StoreError> {
+            self.0.set_bucket_grant(u, b, r, w, s).await
+        }
+        async fn list_bucket_grants_for_user(&self, u: uuid::Uuid) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.list_bucket_grants_for_user(u).await
+        }
+        async fn list_bucket_grants_for_bucket(&self, b: uuid::Uuid) -> Result<Vec<i0721_proto::BucketGrantRecord>, i0721_store::StoreError> {
+            self.0.list_bucket_grants_for_bucket(b).await
+        }
+        async fn a_live_key_references_bucket_slug(&self, slug: &str) -> Result<bool, i0721_store::StoreError> {
+            self.0.a_live_key_references_bucket_slug(slug).await
+        }
+        async fn create_api_key(&self, key: &i0721_proto::ApiKeyRecord) -> Result<(), i0721_store::StoreError> {
+            self.0.create_api_key(key).await
+        }
+        async fn list_api_keys(&self, user: uuid::Uuid) -> Result<Vec<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.list_api_keys(user).await
+        }
+        async fn revoke_api_key(&self, id: uuid::Uuid) -> Result<bool, i0721_store::StoreError> {
+            self.0.revoke_api_key(id).await
+        }
+        async fn update_api_key(&self, id: uuid::Uuid, name: &str, ops: &str, expires_at: Option<&str>) -> Result<bool, i0721_store::StoreError> {
+            self.0.update_api_key(id, name, ops, expires_at).await
+        }
+        async fn find_api_key_by_hash(&self, hash: &str) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.find_api_key_by_hash(hash).await
+        }
+        async fn find_api_key_by_id(&self, id: uuid::Uuid) -> Result<Option<i0721_proto::ApiKeyRecord>, i0721_store::StoreError> {
+            self.0.find_api_key_by_id(id).await
+        }
+        async fn touch_api_key(&self, id: uuid::Uuid) -> Result<(), i0721_store::StoreError> {
+            self.0.touch_api_key(id).await
+        }
+    }
+    let memory = MemoryStore::new();
+    let _ = memory
+        .create_user(CreateUser {
+            username: "admin".to_owned(),
+            display_name: "Administrator".to_owned(),
+            role: Role::Admin,
+            password_hash: Some(hash_password("admin-password").unwrap()),
+        })
+        .await
+        .unwrap();
+    AppState::new(
+        Arc::new(Unreadable(memory)),
+        Arc::new(MemoryBlobStore::new()),
+        Arc::new(test_config()),
+    )
+}

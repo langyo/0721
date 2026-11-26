@@ -218,12 +218,27 @@ pub fn thumbnail_for_media(data: &[u8]) -> Result<Bytes, PipelineError> {
 #[must_use]
 pub fn mime_hint_for(data: &[u8], key: &str) -> String {
     if image::guess_format(data).is_ok() {
-        if let Some(hint) = mime_guess::from_path(key).first() {
-            return hint.essence_str().to_owned();
+        // Content-detected: name the IMAGE format the bytes actually
+        // are (the extension of a sha256 key carries no information).
+        if let Some(format) = image::guess_format(data).ok() {
+            return image_mime(format);
         }
         return "application/octet-stream".to_owned();
     }
     mime_of(Some(key), None)
+}
+
+/// The MIME string for a content-detected image format (the pipeline's
+/// decoded set only; anything else is octet-stream).
+fn image_mime(format: ImageFormat) -> String {
+    match format {
+        ImageFormat::Png => "image/png",
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::Gif => "image/gif",
+        ImageFormat::WebP => "image/webp",
+        _ => "application/octet-stream",
+    }
+    .to_owned()
 }
 
 fn mime_of(original_name: Option<&str>, fallback: Option<&str>) -> String {
