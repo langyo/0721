@@ -63,10 +63,18 @@ use crate::oauth::{
 };
 use crate::state::AppState;
 
-/// Extension error codes of this service (the plana standard family:
-/// -32700..-32603 reserved, -32005 = auth failure; the codes below sit
-/// in the service-assignment gap and map the REST statuses the former
-/// handlers emitted).
+/// Extension error codes of this service.
+///
+/// The JSON-RPC core codes (`-32700`, `-32600`, `-32601`, `-32602`,
+/// `-32603`) and the `-32001..-32005` block belong to the **plana family**
+/// (`plana::jsonrpc::error_codes`): every service in the fleet speaks them,
+/// so a service must not invent its own number inside that block — doing so
+/// puts two unrelated failures on one code. `AUTH` is the single deliberate
+/// share (both families mean "auth or permission failure"); everything else
+/// here sits in the service-assignment gap above the block and maps the REST
+/// statuses the former handlers emitted. The
+/// `a_service_code_never_quietly_reuses_a_plana_code` test holds that line
+/// mechanically.
 pub mod rpc_error_codes {
     /// Auth or permission failure (401/403; the plana fleet convention).
     pub const AUTH: i64 = -32005;
@@ -2136,4 +2144,705 @@ pub fn build_server(state: AppState) -> RpcServer {
             }
         })
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    /// `text` with every `#[cfg(test)] mod … { … }` blanked to spaces.
+    ///
+    /// Blanked, not cut: a file can hold more than one test module with
+    /// production items between them (`config.rs` has three), and an earlier
+    /// version cut from the first `#[cfg(test)]` to the end of the file —
+    /// which skipped everything after it, test or not.
+    ///
+    /// A test module ends at the next `}` in column zero: a top-level `mod`
+    /// always does, whatever is nested inside it. That is the whole rule — no
+    /// brace counting, so a `}` in a string or a nested item cannot end it
+    /// early. Only an attribute that STARTS a line begins a module; the same
+    /// text in a comment or a string does not (this function's own doc used to
+    /// be matched first, which ended the strip before it began — measured by
+    /// the scan flagging its own fixtures).
+    fn strip_test_modules(text: &str) -> String {
+        let mut out = Vec::new();
+        // `Some(indent)` while inside a test module — the indentation of the
+        // attribute, whose close is a `}` at that same indentation. A `fn`
+        // under `#[cfg(test)]` has no module to end, so it is blanked only to
+        // the end of its own item: the next line at the same indentation that
+        // does not continue it. (A first version blanked to ANY `}` in column
+        // zero, which for a `#[cfg(test)] fn` at column zero meant "to the end
+        // of the file" — and a production literal below it was invisible.
+        // Measured by the review.)
+        let mut inside: Option<usize> = None;
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            let indent = line.len() - trimmed.len();
+            if inside.is_none() && trimmed.starts_with("#[cfg(test)]") {
+                inside = Some(indent);
+                out.push(String::new());
+                continue;
+            }
+            match inside {
+                Some(open) => {
+                    out.push(String::new());
+                    // Two ways an item ends, both checked on the line being
+                    // blanked: a `}` at the item's own indentation (a `mod`
+                    // written across lines, whose close carries its own
+                    // trailing whitespace), or a line that opens and closes
+                    // its braces itself (`fn h() { … }` on one line, or a
+                    // `mod t { … }` written that way) — there is nothing left
+                    // to wait for after it.
+                    let closes_at_own_indent = trimmed.starts_with('}') && indent == open;
+                    let self_contained = trimmed.ends_with('}')
+                        && trimmed.matches('{').count() == trimmed.matches('}').count();
+                    if closes_at_own_indent || self_contained {
+                        inside = None;
+                    }
+                }
+                None => out.push(line.to_owned()),
+            }
+        }
+        out.join("\n")
+    }
+
+    /// `text` with every `/* … */` replaced by spaces (newlines kept), so what
+    /// is left has the same shape and line numbers and no comment in it.
+    ///
+    /// Not a full lexer: it tracks `"…"` (with escapes) and line comments, so
+    /// a `/*` inside a string is text. It does not track raw strings
+    /// (`r#"…"#`) or byte/char literals; a `/*` inside one of those still
+    /// starts a comment, which can only remove text and never add a code, so
+    /// the failure direction is "a code below it is missed", not "a code is
+    /// invented". The tree has no such literal today.
+    fn strip_block_comments(text: &str) -> String {
+        // Walk the text once, tracking whether we are inside a string literal
+        // or a char literal, so a `/*` that is part of a string is text and
+        // not a comment opener. (A first version did not, and a `/*` in a
+        // string blanked the rest of the file — measured by this function's
+        // own test.) Escapes are honoured inside a literal; a lifetime `'a`
+        // looks like the start of a char literal and is ended by the next
+        // `'` or by a non-char character, which is harmless here because a
+        // lifetime is never followed by `/*` in a way that matters.
+        let chars: Vec<char> = text.chars().collect();
+        let mut out = String::with_capacity(text.len());
+        let mut index = 0usize;
+        while index < chars.len() {
+            let ch = chars[index];
+            let next = chars.get(index + 1).copied();
+            // A string literal: copied verbatim until its unescaped quote.
+            if ch == '"' {
+                out.push(ch);
+                index += 1;
+                while index < chars.len() {
+                    let c = chars[index];
+                    out.push(c);
+                    index += 1;
+                    if c == '\\' {
+                        if let Some(escaped) = chars.get(index) {
+                            out.push(*escaped);
+                            index += 1;
+                        }
+                    } else if c == '"' {
+                        break;
+                    }
+                }
+                continue;
+            }
+            // A line comment: verbatim to the end of the line (the scan strips
+            // it later, and a `/*` inside one is not an opener either).
+            if ch == '/' && next == Some('/') {
+                while index < chars.len() && chars[index] != '\n' {
+                    out.push(chars[index]);
+                    index += 1;
+                }
+                continue;
+            }
+            if ch == '/' && next == Some('*') {
+                // A block comment: blank to its close, newlines kept.
+                let start = index;
+                index += 2;
+                while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+                    index += 1;
+                }
+                let end = if index + 1 < chars.len() {
+                    index + 2
+                } else {
+                    chars.len()
+                };
+                for c in &chars[start..end] {
+                    out.push(if *c == '\n' { '\n' } else { ' ' });
+                }
+                index = end;
+                continue;
+            }
+            out.push(ch);
+            index += 1;
+        }
+        out
+    }
+
+    /// The declarations in a `rpc_error_codes` body, by name.
+    ///
+    /// The loop lives here once; [`our_codes`] hands it this module's own
+    /// body and [`the_parser_reads_what_rust_accepts`] hands it crafted ones,
+    /// so a parser change is seen by both. (It used to be a copy in the test,
+    /// with a comment claiming the two were "kept in step by construction" —
+    /// they were not, and nothing went red when they drifted.)
+    ///
+    /// What counts as a declaration is deliberately loose, because the first
+    /// parser was strict in exactly the ways a real edit gets past it (all
+    /// measured, all green at the time). `pub(crate) const` and bare `const`
+    /// are declarations too, not just `pub const`, and spacing is whatever
+    /// `rustfmt` did not normalise. The module ends at a `}` **in column
+    /// zero**, not at any `}`: a helper fn or a block-valued const inside the
+    /// module has indented closing braces of its own, and stopping at the
+    /// first of those hid every code after it.
+    ///
+    /// A value that is neither a number nor an earlier name in the same body
+    /// is refused by name, not skipped: a code this cannot read is exactly the
+    /// one that must not slip past.
+    fn parse_codes(body: &str) -> BTreeMap<String, i64> {
+        let mut codes = BTreeMap::new();
+        for line in body.lines() {
+            if line == "}" {
+                break; // the module's closing brace, and only in column zero
+            }
+            let trimmed = line.trim_start();
+            // A declaration line: optional visibility, `const`, a name, `:`, a
+            // type, `=`, a value, `;`. Matched on the words, not on spacing.
+            let Some((head, value)) = trimmed.split_once('=') else {
+                continue;
+            };
+            let words: Vec<&str> = head.split_whitespace().collect();
+            let Some(name_index) = words.iter().position(|word| *word == "const") else {
+                continue;
+            };
+            let Some(name) = words.get(name_index + 1) else {
+                continue;
+            };
+            // The name carries the `: i64` on its shoulder when spacing is tight.
+            let name = name.split(':').next().unwrap_or(name);
+            let value = value.trim().trim_end_matches(';').trim();
+            let number = value.parse::<i64>().unwrap_or_else(|_| {
+                codes.get(value).copied().unwrap_or_else(|| {
+                    panic!("`{name}` holds `{value}`, which this guard cannot read")
+                })
+            });
+            codes.insert(name.to_owned(), number);
+        }
+        codes
+    }
+
+    /// Every code this service publishes, **parsed out of this module's own
+    /// source** rather than listed here by hand.
+    ///
+    /// The hand-written list this test started as could not fail: the mutation
+    /// that adds a new constant squatting on a plana number simply was not in
+    /// the list, so the guard passed (measured — it did). Reading the source
+    /// means a constant added tomorrow is covered without anyone remembering
+    /// this file.
+    fn our_codes() -> BTreeMap<String, i64> {
+        const HEADER: &str = "pub mod rpc_error_codes {";
+        let source = include_str!("rpc.rs");
+        let start = source.find(HEADER).expect("the module this test is about");
+        parse_codes(&source[start + HEADER.len()..])
+    }
+
+    /// Every code the plana crates this service links assign, by the name they
+    /// publish it under — read from the crates, not copied as literals, so a
+    /// family reassignment is a compile error here instead of a stale number.
+    ///
+    /// Two modules, not one. The first version of this list covered only
+    /// `plana::jsonrpc::error_codes` and called itself "the plana family"; but
+    /// this service also links `plana-rpc-server`, whose
+    /// `ext_error_codes::SERVICE_BUSY` (`-32050`) is emitted on this service's
+    /// own `/api/rpc` mount. A squat on `-32050` passed the one-module guard
+    /// (measured). Every `-3xxxx` constant in every plana crate in the tree
+    /// belongs here; if a third module appears, it is a line in this function.
+    fn plana_codes() -> BTreeMap<&'static str, i64> {
+        use plana::jsonrpc::error_codes as family;
+        use plana_rpc_server::ext_error_codes as server;
+        BTreeMap::from([
+            ("PARSE_ERROR", family::PARSE_ERROR),
+            ("INVALID_REQUEST", family::INVALID_REQUEST),
+            ("METHOD_NOT_FOUND", family::METHOD_NOT_FOUND),
+            ("INVALID_PARAMS", family::INVALID_PARAMS),
+            ("INTERNAL_ERROR", family::INTERNAL_ERROR),
+            ("SNAPSHOT_FAILED", family::SNAPSHOT_FAILED),
+            ("AGENT_UNAVAILABLE", family::AGENT_UNAVAILABLE),
+            ("CONTAINER_ERROR", family::CONTAINER_ERROR),
+            ("REPL_ERROR", family::REPL_ERROR),
+            ("AUTH_ERROR", family::AUTH_ERROR),
+            ("OPS_UNKNOWN", family::OPS_UNKNOWN),
+            ("OPS_EXPIRED", family::OPS_EXPIRED),
+            ("OPS_CAPACITY", family::OPS_CAPACITY),
+            ("OPS_CANCELLED", family::OPS_CANCELLED),
+            ("SERVICE_BUSY", server::SERVICE_BUSY),
+            ("DISPATCH_STALLED", server::DISPATCH_STALLED),
+        ])
+    }
+
+    /// The one name pair both sides define, on purpose, with one meaning.
+    const SHARED_ON_PURPOSE: (&str, &str) = ("AUTH", "AUTH_ERROR");
+
+    /// The source parser has to actually find the table, or the guard below
+    /// passes by finding nothing — and it has to keep finding the last code
+    /// after someone adds a helper or a block-valued const above it.
+    #[test]
+    fn the_guard_reads_the_whole_error_code_table() {
+        let codes = our_codes();
+        for expected in [
+            "AUTH",
+            "NOT_FOUND",
+            "CONFLICT",
+            "TOO_LARGE",
+            "OPS_DISABLED",
+            "STORAGE_UNAVAILABLE",
+        ] {
+            assert!(
+                codes.contains_key(expected),
+                "the parser missed `{expected}`: {codes:?}"
+            );
+        }
+        // The parsed numbers have to be the numbers the crate compiles with.
+        assert_eq!(codes["AUTH"], super::rpc_error_codes::AUTH);
+        assert_eq!(
+            codes["STORAGE_UNAVAILABLE"],
+            super::rpc_error_codes::STORAGE_UNAVAILABLE
+        );
+    }
+
+    /// The parser is not fooled by the edit shapes that got past its first
+    /// version. Each case is a real declaration or a real distractor; the
+    /// expectations say which, so a parser that starts skipping real ones or
+    /// inventing false ones goes red here rather than silently in the guard.
+    #[test]
+    fn the_parser_reads_what_rust_accepts() {
+        let parse = |body: &str| Some(parse_codes(body));
+
+        // Tight spacing is a declaration.
+        assert_eq!(
+            parse("    pub const A:i64=-32001;\n}").unwrap()["A"],
+            -32001
+        );
+        // `pub(crate)` and bare `const` are declarations.
+        assert_eq!(
+            parse("    pub(crate) const A: i64 = -32002;\n}").unwrap()["A"],
+            -32002
+        );
+        assert_eq!(parse("    const A: i64 = -32003;\n}").unwrap()["A"], -32003);
+        // An alias of an earlier name in the same module resolves.
+        let alias =
+            parse("    pub const BASE: i64 = -32010;\n    pub const SAME = BASE;\n}").unwrap();
+        assert_eq!(alias["SAME"], -32010);
+        // A doc comment, a blank line and an attribute are not declarations.
+        assert!(
+            parse("    /// not one\n\n    #[allow(dead_code)]\n    pub const A: i64 = -1;\n}")
+                .unwrap()["A"]
+                == -1
+        );
+        // A helper fn inside the module has indented closing braces: the scan
+        // must continue past them and still find what comes after.
+        let with_helper = "    pub const A: i64 = -32006;\n    pub fn name_of(code: i64) -> &'static str {\n        match code {\n            -32006 => \"not found\",\n            _ => \"?\",\n        }\n    }\n    pub const B: i64 = -32001;\n}";
+        let parsed = parse(with_helper).unwrap();
+        assert_eq!(
+            parsed["B"], -32001,
+            "the code after the helper is read: {parsed:?}"
+        );
+        // A block-valued const is refused, loudly. The guard cannot read the
+        // number out of an expression, and a code it cannot read is exactly
+        // the one that must not slip past: the scan stops with a message that
+        // names the constant, rather than counting it as something or moving
+        // on. (An `fn` is fine — see the helper case above — because a `fn`
+        // line has no `=`.)
+        let block = "    pub const A: i64 = {\n        let base = -32011;\n        base\n    };\n    pub const B: i64 = -32001;\n}";
+        let result = std::panic::catch_unwind(|| parse(block));
+        let message = result
+            .err()
+            .and_then(|payload| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        assert!(
+            message.contains("`A` holds") && message.contains("cannot read"),
+            "a block-valued const names itself: {message:?}"
+        );
+    }
+
+    /// A service code must never quietly reuse a number the plana crates have
+    /// already assigned.
+    ///
+    /// The MCP lane used to answer its scope refusal with a private `-32001`,
+    /// which plana assigns to `SNAPSHOT_FAILED` — so "your snapshot could not
+    /// be taken" and "your key may not upload" arrived as the same code, and
+    /// a client had no way to tell them apart. The fix moved that lane onto
+    /// `AUTH`; this test is what keeps the next invented number out of the
+    /// family's block. (The MCP lane's refusal rides `rpc_error_codes::AUTH`
+    /// through its own alias; the wire is pinned by `tests/routes.rs`'s
+    /// `mcp_tool_calls_require_the_mapped_permission`, which compares against
+    /// that constant and not a copy of the number.)
+    ///
+    /// Two of this service's own codes never share a number.
+    ///
+    /// The plana comparison is about the family's block; this is about the
+    /// table itself. Two names on one number is the collision this PR exists
+    /// to remove, and a `pub(super) const` added inside the module (a form the
+    /// review found the first parser's word match reads perfectly well) sailed
+    /// through every test because nothing compared the service's codes with
+    /// each other — only with plana's.
+    #[test]
+    fn no_two_service_codes_share_a_number() {
+        let ours = our_codes();
+        let mut by_number: BTreeMap<i64, Vec<&str>> = BTreeMap::new();
+        for (name, number) in &ours {
+            by_number.entry(*number).or_default().push(name);
+        }
+        let clashes: Vec<String> = by_number
+            .iter()
+            .filter(|(_, names)| names.len() > 1)
+            .map(|(number, names)| format!("{number}: {names:?}"))
+            .collect();
+        assert!(
+            clashes.is_empty(),
+            "two service codes answer with one number: {}",
+            clashes.join("; ")
+        );
+    }
+
+    #[test]
+    fn a_service_code_never_quietly_reuses_a_plana_code() {
+        let ours = our_codes();
+        let theirs = plana_codes();
+        for (our_name, our) in &ours {
+            for (their_name, their) in &theirs {
+                if (our_name.as_str(), *their_name) == SHARED_ON_PURPOSE {
+                    continue;
+                }
+                assert_ne!(
+                    our, their,
+                    "our {our_name} ({our}) reuses plana's {their_name} ({their}): \
+                     two different failures would answer with one code"
+                );
+            }
+        }
+    }
+
+    /// The deliberate share is deliberate, and still shares the *meaning*:
+    /// `AUTH` may equal `AUTH_ERROR` only because both mean "auth or
+    /// permission failure". If the family moves its permission code, this
+    /// fails and the share has to be re-decided rather than drift onto a
+    /// number that means something else.
+    #[test]
+    fn the_one_shared_code_is_the_one_we_mean() {
+        assert_eq!(
+            super::rpc_error_codes::AUTH,
+            plana::jsonrpc::error_codes::AUTH_ERROR,
+            "AUTH is the fleet's permission code; the share is by meaning, not by number"
+        );
+    }
+
+    /// No error code in the extension range is written as a bare literal.
+    ///
+    /// The guards above read `rpc_error_codes`, and that is all they read: a
+    /// constant declared *outside* the module — at file scope in `mcp.rs`,
+    /// say — was invisible to them (measured: `pub const LOOSE_CODE: i64 =
+    /// -32001;` right after the module passed every test). That is exactly the
+    /// shape the collision had: the MCP lane's `SCOPE_DENIED` was a file-scope
+    /// `const` in another file. So the scan is the whole crate's `src/`, for
+    /// any integer literal in the plana range or this service's, wherever it
+    /// is written — a declaration, a call argument, a match arm.
+    ///
+    /// What is allowed: the numbers inside `rpc_error_codes` itself (the table
+    /// is the one place they belong), and the spec's own `-3260x`/`-32700`
+    /// codes, which are JSON-RPC's and not anybody's extension.
+    #[test]
+    fn no_extension_error_code_is_written_outside_the_table() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        let mut queue = vec![root];
+        while let Some(dir) = queue.pop() {
+            for entry in std::fs::read_dir(&dir).expect("src is readable").flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    queue.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+        let table = our_codes();
+        let mut offenders = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("source is UTF-8");
+            // Strip comments: a doc comment may quote a code to explain it.
+            // Comments first, and block comments before line ones: a `/* … */`
+            // can run over lines and hold a `}` in column zero, and the table
+            // strip below ends at the first of those — so a block comment
+            // sitting above the table hid every code after it (measured by the
+            // review: a `-32001` in the comment was flagged, a real one after
+            // it was not). Stripped to spaces, not removed, so line numbers
+            // still name where an offender is.
+            let stripped: String = strip_block_comments(&text);
+            let code: String = stripped
+                .lines()
+                .map(|line| line.split("//").next().unwrap_or("").to_owned())
+                .collect::<Vec<_>>()
+                .join("\n");
+            // Test-only code is not the wire: a `#[cfg(test)]` module's
+            // fixtures are free to write a code as a literal (this file's own
+            // parser tests do). Each module is blanked to its closing `}` in
+            // column zero — not to the end of the file, which would skip any
+            // production item after it (`config.rs` has three test modules
+            // with production above and between them).
+            let code = strip_test_modules(&code);
+            // Skip the table itself, wherever it sits in its file: from its
+            // header to the column-zero `}` that `parse_codes` would stop at.
+            // (The table's numbers are the one place they belong, and the
+            // guards above have already read them.)
+            let body = match code.find("pub mod rpc_error_codes {") {
+                Some(start) => {
+                    let after = &code[start..];
+                    let end = after
+                        .lines()
+                        .enumerate()
+                        .find(|(index, line)| *index > 0 && *line == "}")
+                        .map(|(index, _)| {
+                            start
+                                + after
+                                    .lines()
+                                    .take(index)
+                                    .map(|l| l.len() + 1)
+                                    .sum::<usize>()
+                        })
+                        .unwrap_or(code.len());
+                    format!("{}{}", &code[..start], &code[end..])
+                }
+                None => code.clone(),
+            };
+            for (index, line) in body.lines().enumerate() {
+                for token in line.split(|c: char| !(c.is_ascii_digit() || c == '-')) {
+                    // The sign is part of the number: parse the whole token.
+                    // (A first version stripped the `-` and parsed what was
+                    // left, so `-32001` read as `32001`, which is in nobody's
+                    // range — the scan was green on everything, including its
+                    // own fixtures. Found by instrumenting the gate: it never
+                    // ran for a code it was visibly handed.)
+                    let Ok(number) = token.parse::<i64>() else {
+                        continue;
+                    };
+                    let in_plana_range = (-32099..=-32000).contains(&number);
+                    let ours = table.values().any(|known| *known == number);
+                    if in_plana_range && !ours {
+                        offenders.push(format!(
+                            "{}:{}: `{number}` is written as a literal and is not in the table",
+                            file.display(),
+                            index + 1
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "an error code belongs in `rpc_error_codes`, once:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    /// The two strippers survive their own shapes.
+    ///
+    /// Neither had a test, and the first version of each was bricked by a
+    /// shape that was in the file: the comment stripper by a `/*` inside a
+    /// string (it searched for `/*` without knowing strings), and the
+    /// test-module stripper by a `#[cfg(test)]` mentioned in prose — it
+    /// searched for the text anywhere in a line and bailed out when the item
+    /// it found was not a module, leaving the rest of the file unstripped and
+    /// the scan flagging its own fixtures. (An earlier version of this
+    /// comment said the mention was in the stripper's own doc comment and was
+    /// matched first; a doc line starts with `///`, so that was never how it
+    /// happened. The shapes below are the ones that were real.)
+    #[test]
+    fn the_strippers_survive_their_own_shapes() {
+        // A test module between two production items: only the module goes.
+        let text = "pub const A: i64 = 1;\n#[cfg(test)]\nmod tests {\n    const FIXTURE: i64 = -32001;\n    fn f() {}\n}\n pub const B: i64 = 2;\n";
+        let stripped = strip_test_modules(text);
+        assert!(stripped.contains("pub const A"), "{stripped:?}");
+        assert!(
+            stripped.contains("pub const B"),
+            "the item after the module is kept: {stripped:?}"
+        );
+        assert!(
+            !stripped.contains("FIXTURE"),
+            "the module's body is gone: {stripped:?}"
+        );
+        // The attribute mentioned in a doc comment is not a module start.
+        let doc = "/// says `#[cfg(test)]` in prose\npub const C: i64 = 3;\n";
+        let stripped = strip_test_modules(doc);
+        assert!(stripped.contains("pub const C"), "{stripped:?}");
+        // An item that opens and closes on its own line leaves nothing
+        // behind: a `#[cfg(test)] fn h() { … }` and a one-line `mod` both
+        // used to swallow every line after them (the stripper waited for a
+        // close that had already gone by).
+        for shape in [
+            "#[cfg(test)]\nfn h() { let _ = 1; }\nconst K: i64 = -1;\n",
+            "#[cfg(test)]\nmod t { const F: i64 = 1; }\nconst K: i64 = -1;\n",
+        ] {
+            let stripped = strip_test_modules(shape);
+            assert!(
+                stripped.contains("const K"),
+                "the item after a self-contained one is kept: {stripped:?}"
+            );
+            assert!(!stripped.contains("#[cfg(test)]"), "{stripped:?}");
+        }
+        // A `/*` inside a string literal is not a comment opener.
+        let literal = "pub const S: &str = \"a /* in a string\";\npub const D: i64 = 4;\n";
+        let stripped = strip_block_comments(literal);
+        assert!(stripped.contains("pub const D"), "{stripped:?}");
+        // And a real block comment is removed, newlines and count intact.
+        let commented = "pub const E: i64 = 5;\n/* a comment\n}\n*/\npub const F: i64 = 6;\n";
+        let stripped = strip_block_comments(commented);
+        assert!(!stripped.contains("a comment"), "{stripped:?}");
+        assert!(stripped.contains("pub const F"), "{stripped:?}");
+        assert_eq!(
+            stripped.lines().count(),
+            commented.lines().count(),
+            "line count holds"
+        );
+    }
+
+    /// Every `-32xxx` constant in the plana crates this service links is in
+    /// the table above — counted from the crates' own sources.
+    ///
+    /// The tests above only know the constants they name, so a plana crate
+    /// growing a new error-code module would be a silent gap. This pins the
+    /// *number* of extension codes the linked crates publish: a new one makes
+    /// this red, and adding it to `plana_codes` is then a deliberate act.
+    ///
+    /// It reads the sources through `cargo metadata`, not by guessing a path:
+    /// the manifest_dirs are the files cargo compiled. If cargo cannot be run
+    /// (no toolchain in the test environment) the test says so and fails —
+    /// a guard that quietly skips is worse than one that is red.
+    #[test]
+    fn every_plana_error_code_is_in_the_table() {
+        let metadata =
+            std::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+                .args(["metadata", "--format-version", "1", "--locked"])
+                .current_dir(env!("CARGO_MANIFEST_DIR"))
+                .output()
+                .expect("cargo metadata runs");
+        assert!(
+            metadata.status.success(),
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&metadata.stderr)
+        );
+        let json: serde_json::Value =
+            serde_json::from_slice(&metadata.stdout).expect("cargo metadata is JSON");
+        let packages = json["packages"].as_array().expect("packages");
+        // What the crates DECLARE, by name and value — not just how many.
+        // Counting alone let a wrong VALUE through: `OPS_EXPIRED + 3` kept the
+        // count and passed (measured by the review). So each declaration is
+        // looked up by name and compared by number.
+        // Keyed by (crate, name): two crates declaring the same NAME with
+        // different numbers must both be seen, not collapsed into one.
+        let mut declared: BTreeMap<(String, String), i64> = BTreeMap::new();
+        for package in packages {
+            let name = package["name"].as_str().unwrap_or_default();
+            // The plana crates that define codes: the family, and the server profile.
+            // By prefix, not an allow-list: a new `plana-*` crate with error
+            // codes is counted without anyone remembering to add its name.
+            // (A plana crate that publishes no `-32xxx` const adds zero and
+            // changes nothing, so this over-includes safely.)
+            if !name.starts_with("plana") {
+                continue;
+            }
+            let crate_name = name.to_owned();
+            let manifest = Path::new(package["manifest_path"].as_str().expect("manifest_path"));
+            let root = manifest.parent().expect("a manifest has a parent");
+            let mut stack = vec![root.join("src")];
+            while let Some(dir) = stack.pop() {
+                let Ok(entries) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if path.extension().is_some_and(|ext| ext == "rs") {
+                        let text = std::fs::read_to_string(&path).expect("source is UTF-8");
+                        // A `const NAME: i64 = -32000..=-32999;` line, spacing aside.
+                        for line in text.lines() {
+                            let t = line.trim_start();
+                            let is_const = t.starts_with("pub const ")
+                                || t.starts_with("pub(crate) const ")
+                                || t.starts_with("const ");
+                            if !is_const {
+                                continue;
+                            }
+                            let Some((_, value)) = t.split_once('=') else {
+                                continue;
+                            };
+                            let value = value.trim().trim_end_matches(';').trim();
+                            if let Ok(number) = value.parse::<i64>() {
+                                if (-32999..=-32000).contains(&number) {
+                                    let name = t
+                                        .split_once("const ")
+                                        .and_then(|(_, rest)| rest.split_once(':'))
+                                        .map(|(name, _)| name.trim().to_owned())
+                                        .unwrap_or_default();
+                                    declared.insert((crate_name.clone(), name), number);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let listed = plana_codes();
+        // Every declaration, by its crate and name, with the number the crate
+        // gives it — and the table is asked for the same name, so a NAME that
+        // exists in one plana crate and not another cannot be quietly matched
+        // to whichever table entry happens to share it.
+        let mut wrong: Vec<String> = Vec::new();
+        for ((crate_name, name), number) in &declared {
+            match listed.get(name.as_str()) {
+                None => wrong.push(format!(
+                    "{crate_name}::{name} ({number}) is not in `plana_codes`"
+                )),
+                Some(&in_table) if in_table != *number => wrong.push(format!(
+                    "{crate_name}::{name}: the crate says {number}, the table says {in_table}"
+                )),
+                Some(_) => {}
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "`plana_codes` must say of each code what its crate says:\n{}",
+            wrong.join("\n")
+        );
+        // And nothing in the table that no crate declares — a stale entry
+        // after a code is removed upstream. Declared names, flattened: the
+        // same NAME in two crates is allowed (different codespaces), and any
+        // of them satisfying the table's name is enough for this check.
+        let declared_names: std::collections::HashSet<&str> =
+            declared.keys().map(|(_, name)| name.as_str()).collect();
+        let stale: Vec<&str> = listed
+            .keys()
+            .copied()
+            .filter(|name| !declared_names.contains(name))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "`plana_codes` lists codes no linked plana crate declares: {stale:?}"
+        );
+        assert_eq!(
+            declared.len(),
+            listed.len(),
+            "the plana crates declare {} extension codes; `plana_codes` lists {}",
+            declared.len(),
+            listed.len()
+        );
+    }
 }

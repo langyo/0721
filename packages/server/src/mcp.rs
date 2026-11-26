@@ -20,13 +20,18 @@
 //! Permissions: every key carries a per-key operation set (the
 //! [`crate::key_scopes`] vocabulary — `read`, `upload`, `share`).
 //! `tools/list` advertises only the tools the key is allowed to call, and
-//! `tools/call` refuses a tool outside that set with the JSON-RPC
-//! server-error `-32001` (a PROTOCOL-level refusal, not an `isError`
-//! result: the call never ran). `initialize` is never permission-gated.
+//! `tools/call` refuses a tool outside that set with the plana family's
+//! JSON-RPC permission code `-32005` (a PROTOCOL-level refusal, not an
+//! `isError` result: the call never ran). `initialize` is never
+//! permission-gated.
 //!
 //! The tool surface (five tools) rides the STORE's existing per-user
-//! permission face: no admin elevation, the key's owner is the acting
-//! user for every call. `upload_file` runs the SAME chain as the REST
+//! permission face: the key's owner is the acting user for every call, and a
+//! key is never given more than its owner has (it is given less, by its own
+//! ops and `buckets`). Within those it acts as its owner, so an admin's key
+//! does what that admin would (`upload_file` targets any user's folder, and
+//! `get_share_link` reaches any user's file — the share BIT is not asked of
+//! an admin, on this lane or on RPC). `upload_file` runs the SAME chain as the REST
 //! multipart lane ([`crate::api::upload_core::run_upload`]) — quota,
 //! folder ownership, the upload semaphore, the configured pipeline
 //! parameters and the configured storage tag included.
@@ -51,7 +56,7 @@ use sha2::Digest;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use i0721_proto::{FileDto, FileKind, KeyOp, NewShare};
+use i0721_proto::{FileDto, FileKind, KeyOp, NewShare, Role};
 
 use crate::api::upload_core::{run_upload, UploadInput};
 use crate::error::ApiError;
@@ -372,9 +377,15 @@ pub async fn sse(State(state): State<AppState>, headers: HeaderMap) -> Response 
 /// TOP-LEVEL `error` object — the spec's `-32600` / `-32601` / `-32602` /
 /// `-32700` family is about the REQUEST, never a `result` payload that
 /// merely happens to contain an error shape.
+///
+/// `data` is the spec's optional third member. It exists here because one
+/// code now covers two different refusals (see [`permission_denied`]): the
+/// number says "permission", and `data` says which permission, so a client
+/// that wants to tell "fix your key" from "ask the bucket owner" still can.
 struct RpcFault {
     code: i64,
     message: String,
+    data: Option<Value>,
 }
 
 impl RpcFault {
@@ -382,6 +393,16 @@ impl RpcFault {
         Self {
             code,
             message: message.into(),
+            data: None,
+        }
+    }
+
+    /// The same fault, with the spec's `error.data` member attached.
+    fn with_data(code: i64, message: impl Into<String>, data: Value) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: Some(data),
         }
     }
 }
@@ -392,11 +413,19 @@ impl RpcFault {
 fn response_frame(id: &Value, outcome: Result<Value, RpcFault>) -> String {
     match outcome {
         Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-        Err(fault) => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": {"code": fault.code, "message": fault.message},
-        }),
+        Err(fault) => {
+            let mut error = json!({"code": fault.code, "message": fault.message});
+            // The spec's optional `data` member: present only when the fault
+            // has something structured to say beyond the code.
+            if let Some(data) = fault.data {
+                error["data"] = data;
+            }
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": error,
+            })
+        }
     }
     .to_string()
 }
@@ -694,7 +723,8 @@ pub fn tool_specs() -> Value {
 /// The outcome of the §7 three-state bucket pre-check: the call may
 /// proceed (with the resolved bucket loaded for the tool body), or the
 /// call fails as a TOOL error (`isError` result), or the frame itself
-/// fails with a JSON-RPC error (the `-32001` permission refusals).
+/// fails with a JSON-RPC error (the `-32005` permission refusals, each
+/// naming which permission in `error.data.denial`).
 enum Precheck {
     /// Run the tool; the resolved bucket context rides along (the tool
     /// body re-fetches NOTHING — §4: one decision, one row set).
@@ -758,15 +788,17 @@ async fn precheck_tool(
                 return Precheck::Allow(None);
             };
             // ① ops (K's gate, already run) ② the bucket must be IN the
-            // key's `buckets` → `-32001` naming the bucket; ③ the USER
-            // must hold access → `-32005` naming the bucket.
+            // key's `buckets` → a permission frame naming the bucket
+            // (`data.denial = "key_scope"`); ③ the USER must hold access →
+            // a permission frame too, but `data.denial = "user_access"`.
             if !key_buckets.contains(slug) {
-                return Precheck::Frame(RpcFault::new(
-                    SCOPE_DENIED,
+                return Precheck::Frame(permission_denied(
+                    "key_scope",
                     format!(
                         "the API key is not authorized for bucket {slug:?} — \
                          edit the key's bucket permissions"
                     ),
+                    slug,
                 ));
             }
             let bucket = match state.store.get_storage_bucket_by_slug(slug).await {
@@ -806,12 +838,31 @@ async fn precheck_tool(
                 // its own text; the pre-check lets it through.
                 return Precheck::Allow(None);
             };
+            // `get_file` is by id alone. A row the caller may not act on is
+            // "not found" — before anything about it is read, including
+            // whether it is a folder: the folder rule's text would otherwise
+            // tell a caller that an id exists and what kind it is. (A caller
+            // who owns the folder still gets the folder rule.)
+            //
+            // Who may act on it is the RPC lane's own rule — the owner, or an
+            // admin — applied HERE, before the bucket steps, rather than an
+            // owner-only rule of this lane's own. The leak this guards is
+            // closed by *checking before reading*, not by who is checked
+            // against: with owner-or-admin at this point a row the caller may
+            // not act on is still "not found" before its bucket is resolved.
+            // (A first version made this owner-only and justified it with "an
+            // admin's key would re-open the leak", which was wrong — and
+            // contradicted the same lane's `upload_file`, which lets an
+            // admin's key target any user's folder.)
+            let may_act =
+                |row: &i0721_proto::FileRecord| row.owner_id == user.id || user.role == Role::Admin;
             let file = match state.store.get_file(file_id).await {
+                Ok(Some(row)) if !may_act(&row) => {
+                    return Precheck::ToolError("file not found".to_owned());
+                }
                 Ok(Some(row)) if row.deleted_at.is_none() && row.kind != FileKind::Folder => row,
-                // A FOLDER (or a soft-deleted row) keeps the tool body's
-                // historical answer — the folder rule's text names the
-                // folder restriction. Signal it distinctly from a real
-                // miss.
+                // The caller's OWN folder (or a soft-deleted row of theirs):
+                // the folder rule's text, which is about the kind, not the id.
                 Ok(Some(_)) => return Precheck::ToolError(FOLDER_REFUSAL.to_owned()),
                 Ok(None) => return Precheck::ToolError("file not found".to_owned()),
                 Err(err) => {
@@ -840,12 +891,13 @@ async fn precheck_tool(
             };
             let slug = bucket.slug.clone();
             if !key_buckets.contains(&slug) {
-                return Precheck::Frame(RpcFault::new(
-                    SCOPE_DENIED,
+                return Precheck::Frame(permission_denied(
+                    "key_scope",
                     format!(
                         "the API key is not authorized for bucket {slug:?} — \
                          edit the key's bucket permissions"
                     ),
+                    &slug,
                 ));
             }
             let access = match resolve_access(state.store.as_ref(), user, &bucket).await {
@@ -854,12 +906,22 @@ async fn precheck_tool(
                     return Precheck::ToolError(format!("storage backend unavailable: {err}"));
                 }
             };
+            // The share bit. An admin is never asked it, on either lane:
+            // `resolve_access` returns `BucketAccess::SIGNUP` for an admin
+            // before it looks at any grant, so `access.share` is true for one
+            // and the frame below cannot fire. (The `Role::Admin` shortcut is
+            // there because a `bucket_grants` row for an admin is never
+            // written — `grants.cannot_be_set_for_an_admin` — so a lookup
+            // would find nothing and deny.)
             if !access.share {
-                // Visible (the user owns the file) but no share bit:
-                // `-32005` naming the bucket (§7's third arm).
-                return Precheck::Frame(RpcFault::new(
-                    crate::rpc::rpc_error_codes::AUTH,
+                // Visible (the user owns the file) but no share bit: a
+                // permission frame naming the bucket, distinguished from the
+                // key-scope refusal by `data.denial = "user_access"` (§7's
+                // third arm).
+                return Precheck::Frame(permission_denied(
+                    "user_access",
                     format!("you do not have share access to bucket {slug:?}"),
+                    &slug,
                 ));
             }
             Precheck::Allow(Some(ResolvedBucket {
@@ -907,9 +969,9 @@ async fn dispatch_tool(
             // An unknown tool is a PROTOCOL error (-32602: the request's
             // params name something the server does not have); a tool the
             // key lacks the permission for is a different PROTOCOL error
-            // (-32001, see [`SCOPE_DENIED`]); a tool that runs and fails
-            // is a RESULT with `isError` — three different layers that
-            // must not share the `result` slot.
+            // (-32005, see [`PERMISSION_DENIED`]); a tool that runs and
+            // fails is a RESULT with `isError` — three different layers
+            // that must not share the `result` slot.
             //
             // The decision itself is NOT taken here: the caller already
             // proved the key live for this frame, so [`authorize`] on that
@@ -923,7 +985,7 @@ async fn dispatch_tool(
                     // re-check above; reaching them here would mean the
                     // record changed mid-frame, and a refusal is still the
                     // right answer.
-                    Denial::Revoked | Denial::Expired | Denial::Scope { .. } => SCOPE_DENIED,
+                    Denial::Revoked | Denial::Expired | Denial::Scope { .. } => PERMISSION_DENIED,
                 };
                 return Err(RpcFault::new(code, denial.message(tool)));
             }
@@ -983,7 +1045,7 @@ async fn dispatch_tool(
             };
             match call_tool(
                 state,
-                user_id,
+                &user,
                 origin.as_deref(),
                 tool,
                 &args,
@@ -1007,13 +1069,38 @@ async fn dispatch_tool(
 
 /// The JSON-RPC code for "this key lacks the permission the tool needs".
 ///
-/// `-32000..=-32099` is the JSON-RPC 2.0 implementation-defined
-/// server-error range; the plana family claims `-32001..-32009` in
-/// [`crate::rpc::rpc_error_codes`], so the MCP lane takes the other end
-/// of the range. It is an error CODE, not a status change: the message
-/// lane still answers 202 and the refusal rides the envelope's
-/// TOP-LEVEL `error` object, exactly like `-32602`.
-const SCOPE_DENIED: i64 = -32001;
+/// It is **the plana family's** permission code (`error_codes::AUTH_ERROR`,
+/// `-32005`) — the same one a 401/403 gets on the `/api/rpc` lane — and not a
+/// number of this lane's own. It used to be a private `-32001`, which plana
+/// already assigns to `SNAPSHOT_FAILED`: two unrelated failures answering with
+/// the same number on the same wire, so a client could not tell "your snapshot
+/// could not be taken" from "your key may not upload".
+///
+/// The two refusals that shared that old number stay distinguishable, by the
+/// spec's `error.data.denial` member instead: `key_scope` (the key's own
+/// `buckets` list — fixable on the keys page) and `user_access` (the acting
+/// user's grant on the bucket — fixable by its owner). The ops refusal below
+/// carries no `data`: the thing to fix is the key's op set, and its message
+/// already names the op and the tool.
+///
+/// `rpc_error_codes` is the one place a plana code may be reused, and only
+/// where the meaning is the same; [`crate::rpc`]'s
+/// `a_service_code_never_quietly_reuses_a_plana_code` test holds that line.
+const PERMISSION_DENIED: i64 = crate::rpc::rpc_error_codes::AUTH;
+
+/// One permission refusal: the family's code, the caller's own text, and
+/// which permission was missing.
+///
+/// An error CODE, not a status change: the message lane still answers 202 and
+/// the refusal rides the envelope's TOP-LEVEL `error` object, exactly like
+/// `-32602`.
+fn permission_denied(denial: &'static str, message: String, bucket: &str) -> RpcFault {
+    RpcFault::with_data(
+        PERMISSION_DENIED,
+        message,
+        json!({"denial": denial, "bucket": bucket}),
+    )
+}
 
 /// The tool specifications this key is allowed to call (canonical
 /// `tool_specs()` order preserved).
@@ -1037,13 +1124,17 @@ fn visible_tools(scopes: &BTreeSet<KeyOp>) -> Vec<Value> {
 
 async fn call_tool(
     state: &AppState,
-    user_id: Uuid,
+    user: &i0721_proto::UserRecord,
     origin: Option<&str>,
     tool: &str,
     args: &Value,
     resolved: &Option<ResolvedBucket>,
     key_bucket_ids: &[Uuid],
 ) -> Result<Value, String> {
+    // The acting user, whole: an API key runs as its owner, and the owner's
+    // role is part of who that is (the share rule below is owner-or-admin).
+    let user_id = user.id;
+    let role = user.role;
     match tool {
         "list_files" => {
             let folder_id = args
@@ -1160,19 +1251,35 @@ async fn call_tool(
                 .map_err(|e| e.to_string())?
                 .filter(|r| r.deleted_at.is_none())
                 .ok_or("file not found")?;
-            // Owner-scoped, exactly like the REST share lane: no admin
-            // elevation through an API key.
-            if file.owner_id != user_id {
+            // The owner, or an admin — the same rule as the RPC lane's
+            // `files.share_create`, and the same rule the pre-check applied
+            // before this body ran. (This comment has said three things: that
+            // the rule was "exactly like the REST share lane" when RPC
+            // elevated admins and this did not; that this lane was
+            // deliberately owner-only; and now this. An API key acts as its
+            // owner, admin included — `upload_file` in this same lane already
+            // let an admin's key target any user's folder.)
+            if file.owner_id != user_id && role != Role::Admin {
                 return Err("not your file".to_owned());
             }
+            // The share bit is the pre-check's (`user.role != Role::Admin &&
+            // !access.share` there); an admin never reaches this line without
+            // it having passed, and a non-admin's has.
             // `files.share_create` refuses folders for the same reason: a
             // share token resolves to ONE file's bytes.
             if file.kind == FileKind::Folder {
                 return Err("a folder cannot be shared — only files get a public link".to_owned());
             }
+            // A share belongs to the FILE, not to whoever asked for the link:
+            // the RPC lane records `record.owner_id`, and so does this. (It
+            // recorded the acting user, which was the same thing while only
+            // the owner could get here — and the moment an admin's key could,
+            // an admin's call minted a SECOND token on the member's file
+            // instead of answering with the member's. Measured by the review:
+            // two share rows, two tokens, for one file.)
             let wanted = NewShare {
                 file_id: file.id,
-                owner_id: user_id,
+                owner_id: file.owner_id,
                 expires_at: args
                     .get("expires_at")
                     .and_then(Value::as_str)
@@ -1184,7 +1291,7 @@ async fn call_tool(
             };
             let share = match state
                 .store
-                .find_share_by_file(user_id, file.id)
+                .find_share_by_file(file.owner_id, file.id)
                 .await
                 .map_err(|e| e.to_string())?
             {

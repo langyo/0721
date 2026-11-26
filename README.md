@@ -354,7 +354,11 @@ same four-channel order.)
 
 Error codes: the JSON-RPC family plus `-32005` auth/permission,
 `-32006` not found, `-32007` conflict, `-32008` too large, `-32009`
-deferred-ops disabled (this instance serves no `ops.*`).
+deferred-ops disabled (this instance serves no `ops.*`). A service may
+only reuse a plana code where the meaning is the same — that is why the
+MCP lane's permission refusal is `-32005` and not a number of its own
+(`-32001` belongs to plana's `SNAPSHOT_FAILED`); a mechanical test keeps
+the table from drifting back into the family's block.
 
 **REST whitelist**:
 
@@ -381,7 +385,7 @@ session.
 
 JSON-RPC 2.0 conventions on this surface: protocol failures (`-32600`
 invalid request, `-32601` unknown method, `-32602` unknown tool /
-invalid params, `-32001` permission denied, `-32700` parse error) answer the
+invalid params, `-32005` permission denied, `-32700` parse error) answer the
 envelope's top-level `error` object, while a tool that RUNS and fails is a
 `result` with `isError: true`; a request without `id` is a notification
 (`notifications/initialized`) — 202 and no frame; a body the server
@@ -403,10 +407,32 @@ tools the presenting key's permissions cover. The permissions are per
 key and enforced per tool: `read` covers `list_files` / `file_info` /
 `search_files`, `upload` covers `upload_file`, `share` covers
 `get_share_link`. Calling a tool outside the key's set answers the
-JSON-RPC `-32001` error frame (`scope denied: this API key lacks the
+JSON-RPC `-32005` error frame (`scope denied: this API key lacks the
 "upload" permission required by tool "upload_file"`) without running
-the tool. Every call runs with the key owner as the acting user — an
-API key never elevates. The share
+the tool. Every permission refusal is `-32005`; what tells them apart is
+the frame's `error.data`, which names the permission that was missing:
+
+| Refusal | `error.data` | Who can fix it |
+| --- | --- | --- |
+| the key lacks the op | *(absent)* | the key's owner — edit its permissions |
+| the op is held, but the bucket is not in the key's `buckets` | `{"denial":"key_scope","bucket":…}` | the key's owner — add the bucket to the key |
+| the bucket is in the key's `buckets`, but the user has no grant for the action | `{"denial":"user_access","bucket":…}` | the bucket's owner — grant the user |
+
+A client that branches on the code alone sees one refusal; one that reads
+`data.denial` can say which page to send the user to. The ops refusal
+carries no `data` on purpose — no bucket has been looked at yet, so there
+is none to name.
+
+A file the caller may not act on is refused as `file not found` — the same
+answer as a file that is not there — and never names its bucket. Who may
+act on it is the RPC lane's rule: the owner, or an admin. An API key runs
+as its owner, admin included — the same lane's `upload_file` already lets
+an admin's key target any user's folder. Every call runs with the key owner as the acting user, and a key is
+never given more than its owner has — it is given less, by its own ops and
+`buckets`. Within those, it acts as its owner: an admin's key reaches any
+user's file, and is never asked the bucket's share bit (an admin is not asked
+it on the RPC lane either; a `bucket_grants` row for an admin is never
+written). The share
 URL's origin is `I0721_PUBLIC_ORIGIN` (else the request's `Host`); with
 neither configured `get_share_link` answers an explicit error instead of
 minting a `localhost` link nobody can open.
@@ -437,7 +463,8 @@ guessing a grant. Such a key is listed on the "API keys" page with a "no
 permissions" tag and cannot call any MCP tool until you edit it there and
 grant what it needs. Review every key once after deploying this release —
 an agent holding an ungranted key sees `tools/list` answer an empty array
-and `-32001` on every call.
+and `-32005` on every call (without `data`: no op, so no bucket is ever
+reached).
 
 A copy-pasteable `mcpServers` entry for an SSE-speaking client (Claude
 Code, Cursor and friends) — replace the origin and the key:
