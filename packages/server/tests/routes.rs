@@ -13792,7 +13792,7 @@ async fn unregistered_adopt_then_visible() {
 /// AGAIN and must be listed. MUT:P3-DIFF-SOFTDELETED — dropping the
 /// `deleted_at IS NULL` filter from `storage_keys_live_in_bucket` makes
 /// the dead row hide the object, so this list goes empty and the test
-/// reddens.
+/// reddens (verified: the mutation leaves `[]`).
 #[tokio::test]
 async fn a_soft_deleted_rows_object_reappears_as_unregistered() {
     let key = sha_key(11);
