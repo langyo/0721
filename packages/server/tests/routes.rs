@@ -12479,7 +12479,7 @@ async fn shared_storage_key_resolves_identically_on_every_request() {
 /// MUT:P2B-A-ENABLED — letting A consult `enabled` turns this red.
 #[tokio::test]
 async fn a_member_sees_503_not_404_on_a_disabled_public_bucket() {
-    let (state, admin) = test_state().await;
+    let (state, _admin) = test_state().await;
     let token = login(&state, "admin", "admin-password").await;
     let (_, dto) = upload(&state, &token, tiny_png(), "dim.png").await;
     let key = dto["sha256"].as_str().unwrap().to_owned();
