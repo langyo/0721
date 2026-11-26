@@ -213,6 +213,15 @@ impl BlobStore for IpfsBlobStore {
         }
     }
 
+    async fn list_media_keys(&self) -> Result<Option<Vec<String>>, std::io::Error> {
+        // Documented refusal (draft §7.1): MFS `files/ls` pagination and
+        // directory typing are unverified on this lane — the backend
+        // reports UNSUPPORTED rather than pretending to an empty scan.
+        // The RPC surface turns this into "this backend cannot be
+        // scanned", never into an empty diff.
+        Ok(None)
+    }
+
     async fn delete(&self, slot: BlobSlot, key: &str) -> Result<(), std::io::Error> {
         // 1. Resolve the MFS entry to a CID (for the pin removal).
         let path = mfs_path(slot, key);
