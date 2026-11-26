@@ -1,11 +1,11 @@
 import vueSfc from "@vitejs/plugin-vue";
 import vueJsx from "@vitejs/plugin-vue-jsx";
-import { execFileSync } from "child_process";
 import { readdirSync, rmSync } from "fs";
 import { resolve } from "path";
 import { defineConfig, type Plugin } from "vitest/config";
 
 import { bareSpecifierGatePlugin } from "./src/build/bareSpecifierGate";
+import { resolveBuildIdentity } from "./src/lib/buildIdentity";
 
 const pkgDir = import.meta.dirname;
 
@@ -35,95 +35,15 @@ function cleanOutDirContents(outDir: string): Plugin {
   };
 }
 
-/**
- * Family build identity (`<branch>:<hash7>`, e.g. `master:a440d4d`).
- *
- * The family rule (celestia-erp's `vite.config.ts` is the twin this mirrors,
- * itself the plana twin): the branch and the exact commit ARE the identity,
- * so a footer that prints only a semver cannot tell two builds of the same
- * version apart. Ladder: direct branch first, then `name-rev` over local
- * heads / origin remotes (stripping any `~N` depth and the remote prefix),
- * with the default-tip guard so a parallel same-tip branch cannot steal the
- * name; `undefined` when the tree has no git metadata (a tarball or Docker
- * build), which keeps such builds deterministic instead of inventing a name.
- */
-function buildIdentity(root: string): string | undefined {
-  try {
-    const run = (args: string[]) =>
-      execFileSync("git", args, { cwd: root }).toString().trim();
-    const short = run(["rev-parse", "--short=7", "HEAD"]);
-    if (!/^[0-9a-f]{7,40}$/.test(short)) return undefined;
-    const commit = short.toLowerCase();
-    let branch = run(["rev-parse", "--abbrev-ref", "HEAD"]);
-    if (!branch || branch === "HEAD") {
-      // Detached: prefer the default branch's name when HEAD is exactly its
-      // tip, then name-rev over local/remote refs.
-      try {
-        const sym = run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
-        const name = sym.split("/").slice(1).join("/");
-        if (name && name !== "HEAD") {
-          const head = run(["rev-parse", "HEAD"]);
-          for (const ref of [`refs/heads/${name}`, `refs/remotes/origin/${name}`]) {
-            if (run(["rev-parse", "--verify", ref]) === head) {
-              return `${name}:${commit}`;
-            }
-          }
-        }
-      } catch {
-        /* no symbolic remote HEAD recorded */
-      }
-      try {
-        branch = run(["name-rev", "--name-only", "--exclude=refs/tags/*", "HEAD"]);
-      } catch {
-        branch = "";
-      }
-      branch = branch
-        .replace(/~\d+$/, "")
-        .replace(/\^\d+$/, "")
-        .replace(/^remotes\/origin\//, "");
-    } else {
-      branch = branch.replace(/^remotes\/origin\//, "");
-    }
-    if (!branch || branch === "undefined") branch = "detached";
-    return `${branch}:${commit}`;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Shape-check a `PANEL_BUILD_IDENTITY` token: `<branch>:<hash7+>`, single
- *  colon, lowercase hex. Returns the normalized `<branch>:<hash>` or
- *  `undefined` for anything malformed — a container build must never bake a
- *  nonsense identity just because the variable was set wrong. */
-function parseIdentityToken(raw: string): string | undefined {
-  const token = raw.trim();
-  const splitAt = token.lastIndexOf(":");
-  if (splitAt <= 0) return undefined;
-  const branch = token.slice(0, splitAt).replace(/:+$/, "");
-  const hash = token.slice(splitAt + 1);
-  if (branch === "" || !/^[0-9a-f]{7,40}$/.test(hash) || hash !== hash.toLowerCase()) {
-    return undefined;
-  }
-  return `${branch}:${hash}`;
-}
-
-/** The container hand-off (celestia-erp's pattern, `deploy/Dockerfile`'s
- *  `ARG PANEL_BUILD_IDENTITY`): a Docker build has no `.git`, so the CI job
- *  that owns the checkout resolves the identity and passes it in. Checked
- *  BEFORE the git ladder so a container build reports the real branch/hash
- *  instead of degrading to the bare version. */
-function identityFromEnv(): string | undefined {
-  const raw = process.env.PANEL_BUILD_IDENTITY?.trim();
-  return raw ? parseIdentityToken(raw) : undefined;
-}
-
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify("0.4.0"),
     // Absent git metadata leaves this as `null` on purpose: the view then
     // prints the bare version rather than a fabricated identity.
+    // `resolveBuildIdentity` owns the ladder (env hand-off → git → undefined);
+    // it lives in src/lib so the parse rules carry unit tests.
     __APP_BUILD_IDENTITY__: JSON.stringify(
-      identityFromEnv() ?? buildIdentity(resolve(pkgDir, "../..")) ?? null,
+      resolveBuildIdentity(resolve(pkgDir, "../..")) ?? null,
     ),
   },
   plugins: [
