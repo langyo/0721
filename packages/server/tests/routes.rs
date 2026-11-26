@@ -13572,8 +13572,12 @@ async fn unregistered_off_rpc_list_refuses() {
 async fn unregistered_cache_prefix_never_listed() {
     let key = sha_key(7);
     let fx = orphan_fixture(&[&key]).await;
+    // The cache object's key COLLIDES with the media key: only the
+    // slot distinguishes them, so the enumeration's slot discipline is
+    // what keeps the cache copy out of the diff (a prefix-only story
+    // would not survive this shape).
     fx.store
-        .put(i0721_server::blob::BlobSlot::Cache, "orphan-thumb.webp", b"thumb")
+        .put(i0721_server::blob::BlobSlot::Cache, &key, b"thumb")
         .await
         .unwrap();
     show_on(&fx.state, &fx.admin_token).await;
