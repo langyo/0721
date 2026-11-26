@@ -46,7 +46,7 @@ function bootstrapSource(): string {
 describe("bootstrap installs the error reporting hook", () => {
   // The island is consumed on the first read and hikari keeps install
   // state at module scope, so a leftover document from an earlier test
-  // (or from this one, on a re-run) must never carry into the next.
+  // (or from this one, on a re-run) stays out of the next.
   afterEach(() => {
     document.body.innerHTML = "";
   });
@@ -70,7 +70,7 @@ describe("bootstrap installs the error reporting hook", () => {
     // island on the document, install must TAKE it (read once, then
     // removed — hikari's contract, so a reinstall cannot re-raise a
     // landing the visitor already saw). If hikari ever drops the island
-    // read, this reddens and the source pin above becomes a false sense
+    // read, this reddens and the source pin above turns into a false sense
     // of safety.
     //
     // What is asserted is the CONSUMPTION, not the overlay: whether a

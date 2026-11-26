@@ -15889,7 +15889,7 @@ async fn a_dev_lane_without_a_shell_passes_errors_through() {
     // The dev lane (`--no-default-features`) reads `index.html` from
     // `I0721_STATIC_DIR` instead of the compiled-in tree. A dist that is
     // missing or does not carry a shell must degrade to the INERT layer:
-    // the error answer stays the handler's JSON, never a landing painted
+    // the error answer stays the handler's JSON rather than a landing painted
     // from a document the service cannot serve.
     let mut config = test_config();
     config.static_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/no-such-dist");
@@ -15916,7 +15916,7 @@ async fn a_navigated_missing_media_key_keeps_its_json_404() {
     // R-J: `/media/{key}` answers 200 or 404 and nothing else — a direct
     // link must not become an oracle. A browser NAVIGATION to a missing
     // key is exactly how that link gets opened (a tab, a nested iframe, a
-    // link-preview crawler), so the landing deliberately does NOT cover
+    // link-preview crawler), so the landing deliberately stays out of
     // the media lane: if it did, one status would wear two shapes
     // depending on who asked, and the README's "existing image links keep
     // working" would only hold for `<img>` loads.
