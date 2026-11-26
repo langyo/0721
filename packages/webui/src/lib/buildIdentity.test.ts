@@ -59,6 +59,8 @@ describe("identityFromEnv", () => {
 
 describe("resolveBuildIdentity ladder", () => {
   it("prefers the env hand-off over git", () => {
+    // MUT:identity-env-precedes-git — swapping the ladder (git first) would
+    // make this root answer undefined instead of the env identity.
     // A bogus root proves git was never consulted: the env arm won.
     const prev = process.env.PANEL_BUILD_IDENTITY;
     process.env.PANEL_BUILD_IDENTITY = "master:deadbee";
