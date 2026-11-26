@@ -316,6 +316,61 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
     cleanup_user(&store, other.id).await;
 }
 
+/// `set_user_role` reaches the `users.role` column through the typed
+/// UPDATE (the value goes through `Role::as_str`, which the column's
+/// CHECK constraint accepts), both directions, and re-reads through the
+/// entity layer.
+#[tokio::test]
+async fn pg_set_user_role_writes_the_column_both_ways() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("create");
+    assert_eq!(user.role, Role::Member, "a scratch user starts as member");
+
+    store
+        .set_user_role(user.id, Role::Admin)
+        .await
+        .expect("promote");
+    let promoted = store
+        .get_user(user.id)
+        .await
+        .expect("get")
+        .expect("row exists");
+    assert_eq!(
+        promoted.role,
+        Role::Admin,
+        "the UPDATE wrote the `admin` tag to users.role"
+    );
+
+    store
+        .set_user_role(user.id, Role::Member)
+        .await
+        .expect("demote");
+    let demoted = store
+        .get_user(user.id)
+        .await
+        .expect("get again")
+        .expect("row exists");
+    assert_eq!(
+        demoted.role,
+        Role::Member,
+        "the role sync can demote as well as promote"
+    );
+
+    // The trait contract: a MISSING id is a Conflict, the same shape the
+    // memory store reports — `Affected(0)` must not pass silently.
+    let missing = uuid::Uuid::new_v4();
+    let err = store
+        .set_user_role(missing, Role::Admin)
+        .await
+        .expect_err("a missing id is a conflict");
+    assert!(
+        matches!(err, i0721_store::StoreError::Conflict(_)),
+        "got {err:?}"
+    );
+
+    cleanup_user(&store, user.id).await;
+}
+
 #[tokio::test]
 async fn pg_settings_upsert_round_trip() {
     let Some(store) = db().await else { return };

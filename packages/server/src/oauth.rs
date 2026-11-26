@@ -1119,8 +1119,12 @@ async fn mint_session(
     let subject = subject_from_identity(&relay.profile)
         .ok_or_else(|| ApiError::bad_gateway("userinfo carried no subject"))?;
     let display_name = display_name_from_identity(&relay.profile);
+    // The provider's RBAC statement about this very login; `None` = it did
+    // not speak about roles (see `role_from_claims`).
+    let role = role_from_claims(&relay.profile.claims);
 
-    let user = find_or_create_user(state, provider, &subject, display_name.as_deref()).await?;
+    let user =
+        find_or_create_user(state, provider, &subject, display_name.as_deref(), role).await?;
 
     // The ordinary session cookie (same shape as the password login).
     let now = jiff::Timestamp::now();
@@ -1174,6 +1178,46 @@ pub fn subject_from_userinfo(userinfo: &serde_json::Value) -> Option<String> {
     })
 }
 
+/// The role the identity provider states for this login, if it states one.
+///
+/// The upstream ERP's UserInfo answers `roles` — a JSON array of strings,
+/// e.g. `["member", "admin"]`; only a member of its Administrators group
+/// carries `"admin"`. kirino hands that very UserInfo document to this
+/// module as [`ProviderIdentity::claims`](kirino::auth::passport::oauth::ProviderIdentity)
+/// (the UserInfo leg's body IS `claims`), so `claims["roles"]` is exactly
+/// what the provider sent.
+///
+/// The three answers are deliberately distinct:
+///
+/// * `Some(Admin)` — a string array that contains `"admin"`;
+/// * `Some(Member)` — a string array that does not;
+/// * `None` — no statement at all (`roles` absent, or not an array of
+///   strings). A provider that says nothing never moves a local role: a
+///   GitHub or feishu login, whose identity carries no `roles`, must not
+///   demote anybody.
+///
+/// The tag is matched EXACTLY (`"admin"`), case-sensitively: that is the
+/// spelling the ERP's RBAC emits, and accepting variants would widen a
+/// privilege boundary on a guess.
+#[must_use]
+pub fn role_from_claims(claims: &serde_json::Value) -> Option<Role> {
+    let roles = claims.get("roles")?.as_array()?;
+    // A non-string member means the field is not the shape we understand:
+    // refuse the statement rather than half-read it.
+    let mut saw_string = true;
+    let mut is_admin = false;
+    for entry in roles {
+        match entry.as_str() {
+            Some(tag) => is_admin |= tag == "admin",
+            None => saw_string = false,
+        }
+    }
+    if !saw_string {
+        return None;
+    }
+    Some(if is_admin { Role::Admin } else { Role::Member })
+}
+
 /// The subject of a resolved identity: the raw claims first (the vendor
 /// ladder above), then the core's own reading of them.
 fn subject_from_identity(profile: &ProviderIdentity) -> Option<String> {
@@ -1205,11 +1249,26 @@ fn display_name_from_identity(profile: &ProviderIdentity) -> Option<String> {
 /// (provider, subject) binding loads its user; a first login mints a
 /// local account (`{provider}_{subject[0..8]}`, no password) and links
 /// the identity. Idempotent: a second login never mints again.
+///
+/// `role` is the provider's statement about this login (see
+/// [`role_from_claims`]) and is applied BOTH ways:
+///
+/// * a first login mints the account with `role.unwrap_or(Role::Member)`;
+/// * a returning login with `Some(r)` whose stored role differs is
+///   rewritten to `r` — promotion and demotion alike, because the
+///   administrator identity is the provider RBAC's to grant and to take
+///   away;
+/// * `None` (the provider said nothing) leaves the stored role alone.
+///
+/// Only accounts REACHED THROUGH an `oauth_identities` binding are ever
+/// touched: a local password account (the seeded admin among them) has no
+/// binding, so this function can neither mint over it nor rewrite it.
 pub async fn find_or_create_user(
     state: &AppState,
     provider: &str,
     subject: &str,
     display_name: Option<&str>,
+    role: Option<Role>,
 ) -> Result<i0721_proto::UserRecord, ApiError> {
     if let Some(user_id) = state
         .store
@@ -1217,9 +1276,29 @@ pub async fn find_or_create_user(
         .await
         .map_err(ApiError::from)?
     {
-        return state
+        let existing = state
             .store
             .get_user(user_id)
+            .await
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::internal("OAuth-linked user vanished"))?;
+        // The provider said nothing → the stored role stands.
+        let Some(stated) = role else {
+            return Ok(existing);
+        };
+        if existing.role == stated {
+            return Ok(existing);
+        }
+        state
+            .store
+            .set_user_role(existing.id, stated)
+            .await
+            .map_err(ApiError::from)?;
+        // Re-read: the session must carry what the store now holds, not a
+        // locally assumed copy of it.
+        return state
+            .store
+            .get_user(existing.id)
             .await
             .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::internal("OAuth-linked user vanished"));
@@ -1238,11 +1317,12 @@ pub async fn find_or_create_user(
         .unwrap_or_else(|| username.clone());
 
     // The prefixed name the first login would take; a collision falls back
-    // to a unique suffix (see the Conflict arm).
+    // to a unique suffix (see the Conflict arm). The role a first login
+    // mints with is the provider's statement, else the ordinary member.
     let candidate = i0721_store::CreateUser {
         username: username.clone(),
         display_name: display,
-        role: Role::Member,
+        role: role.unwrap_or(Role::Member),
         password_hash: None,
     };
     let user = match state.store.create_user(candidate.clone()).await {
@@ -1257,9 +1337,28 @@ pub async fn find_or_create_user(
                 .await
                 .map_err(ApiError::from)?
             {
-                return state
+                let existing = state
                     .store
                     .get_user(user_id)
+                    .await
+                    .map_err(ApiError::from)?
+                    .ok_or_else(|| ApiError::internal("OAuth-linked user vanished"))?;
+                // The concurrent round may have minted with a different
+                // statement than ours; the CURRENT login's statement wins.
+                let Some(stated) = role else {
+                    return Ok(existing);
+                };
+                if existing.role == stated {
+                    return Ok(existing);
+                }
+                state
+                    .store
+                    .set_user_role(existing.id, stated)
+                    .await
+                    .map_err(ApiError::from)?;
+                return state
+                    .store
+                    .get_user(existing.id)
                     .await
                     .map_err(ApiError::from)?
                     .ok_or_else(|| ApiError::internal("OAuth-linked user vanished"));
@@ -1637,6 +1736,78 @@ mod tests {
             assert!(valid_provider_type(good));
         }
         assert!(!valid_provider_type("twitter"));
+    }
+
+    /// The truth table of [`role_from_claims`]. Every arm is pinned
+    /// separately, because the three answers mean three different things:
+    /// `Admin` promotes, `Member` demotes, `None` leaves the local role
+    /// untouched (a demotion bug in the `None` arm would silently strip
+    /// every admin whose provider does not speak about roles).
+    #[test]
+    fn role_from_claims_truth_table() {
+        // The ERP's real shape: a member of Administrators carries both tags.
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": ["member", "admin"]})),
+            Some(Role::Admin),
+            "the ERP's Administrators group emits \"admin\" beside \"member\""
+        );
+        // `admin` alone is just as authoritative.
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": ["admin"]})),
+            Some(Role::Admin),
+            "a lone \"admin\" is still admin — the tag is what counts, not its index"
+        );
+        // A stated non-admin set is a STATEMENT: it demotes.
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": ["member"]})),
+            Some(Role::Member),
+            "a string array without \"admin\" states member — this arm is the demotion"
+        );
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": []})),
+            Some(Role::Member),
+            "an empty array is still a statement: the provider says \"no roles\""
+        );
+        // Absent / wrong-typed: the provider said nothing.
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"sub": "abc"})),
+            None,
+            "no `roles` key means the provider spoke no role — never demote"
+        );
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": "admin"})),
+            None,
+            "a bare string is not the array shape"
+        );
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": {"admin": true}})),
+            None,
+            "an object is not the array shape"
+        );
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": ["member", 7]})),
+            None,
+            "a non-string member means the field is not the shape we read"
+        );
+        assert_eq!(role_from_claims(&serde_json::Value::Null), None);
+        // Case and spelling are exact — only the tag the ERP actually
+        // emits grants admin.
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": ["Admin"]})),
+            Some(Role::Member),
+            "\"Admin\" is NOT the ERP tag: the match is case-sensitive"
+        );
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": ["admin "]}))
+                .expect("still a string array"),
+            Role::Member,
+            "trailing whitespace is not the tag either"
+        );
+        assert_eq!(
+            role_from_claims(&serde_json::json!({"roles": ["administrator"]})),
+            Some(Role::Member),
+            "`administrator` is a different string from `admin`"
+        );
     }
 
     #[test]

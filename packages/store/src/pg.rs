@@ -1670,4 +1670,30 @@ impl Store for PgStore {
         self.executor.execute(&cmd).await?;
         Ok(())
     }
+
+    async fn set_user_role(
+        &self,
+        user_id: Uuid,
+        role: i0721_proto::Role,
+    ) -> Result<(), StoreError> {
+        // The column is TEXT under a CHECK constraint (`admin` | `member`):
+        // `Role::as_str` is the ONE tag table, so an unrepresentable value
+        // cannot be written by construction.
+        let cmd = update_command::<UserModel>(
+            vec![("role", Value::Text(role.as_str().to_owned()))],
+            UserColumn::Id.eq(user_id).into_inner(),
+            false,
+        )?;
+        // A missing id is the trait's Conflict, the SAME shape the memory
+        // store reports — `Affected(0)` is exactly that row-less update.
+        let Reply::Affected(n) = self.executor.execute(&cmd).await? else {
+            return Err(StoreError::Db(
+                "unexpected reply for a users UPDATE".to_owned(),
+            ));
+        };
+        if n == 0 {
+            return Err(StoreError::Conflict("user not found".to_owned()));
+        }
+        Ok(())
+    }
 }
