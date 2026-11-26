@@ -91,13 +91,39 @@ function buildIdentity(root: string): string | undefined {
   }
 }
 
+/** Shape-check a `PANEL_BUILD_IDENTITY` token: `<branch>:<hash7+>`, single
+ *  colon, lowercase hex. Returns the normalized `<branch>:<hash>` or
+ *  `undefined` for anything malformed — a container build must never bake a
+ *  nonsense identity just because the variable was set wrong. */
+function parseIdentityToken(raw: string): string | undefined {
+  const token = raw.trim();
+  const splitAt = token.lastIndexOf(":");
+  if (splitAt <= 0) return undefined;
+  const branch = token.slice(0, splitAt).replace(/:+$/, "");
+  const hash = token.slice(splitAt + 1);
+  if (branch === "" || !/^[0-9a-f]{7,40}$/.test(hash) || hash !== hash.toLowerCase()) {
+    return undefined;
+  }
+  return `${branch}:${hash}`;
+}
+
+/** The container hand-off (celestia-erp's pattern, `deploy/Dockerfile`'s
+ *  `ARG PANEL_BUILD_IDENTITY`): a Docker build has no `.git`, so the CI job
+ *  that owns the checkout resolves the identity and passes it in. Checked
+ *  BEFORE the git ladder so a container build reports the real branch/hash
+ *  instead of degrading to the bare version. */
+function identityFromEnv(): string | undefined {
+  const raw = process.env.PANEL_BUILD_IDENTITY?.trim();
+  return raw ? parseIdentityToken(raw) : undefined;
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify("0.4.0"),
     // Absent git metadata leaves this as `null` on purpose: the view then
     // prints the bare version rather than a fabricated identity.
     __APP_BUILD_IDENTITY__: JSON.stringify(
-      buildIdentity(resolve(pkgDir, "../..")) ?? null,
+      identityFromEnv() ?? buildIdentity(resolve(pkgDir, "../..")) ?? null,
     ),
   },
   plugins: [
