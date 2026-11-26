@@ -13712,8 +13712,7 @@ async fn unregistered_adopt_then_visible() {
     // follow-up (the memory store exposes none; the wire type stays a
     // plain string, so a real stamp later is wire-safe).
     assert_eq!(
-        envelope["result"]["items"][0]["modified_at"],
-        "unknown",
+        envelope["result"]["items"][0]["modified_at"], "unknown",
         "the sentinel survives the wire unchanged"
     );
 
@@ -14223,11 +14222,7 @@ async fn two_owners_may_adopt_the_same_orphan_key() {
         .list_live_rows_by_storage_key(&key)
         .await
         .unwrap();
-    assert_eq!(
-        rows.len(),
-        2,
-        "both rows exist and are live: {rows:?}"
-    );
+    assert_eq!(rows.len(), 2, "both rows exist and are live: {rows:?}");
 
     // The key is now live: the unregistered listing is empty.
     let (_, envelope) = rpc(
