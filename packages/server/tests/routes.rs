@@ -9384,7 +9384,8 @@ async fn a_lazily_regenerated_thumbnail_lands_in_the_serving_rows_bucket() {
         .await
         .unwrap()
         .expect("the lazy write lands in the serving row's bucket");
-    // ...and NEVER in the bootstrap store (the mutated write target).
+    // ...and not in the bootstrap store (MUT:P2B-LAZY-WRITE's write target —
+    // routing the lazy write there turns this red).
     assert!(
         state
             .blobs
@@ -12070,9 +12071,10 @@ async fn plant_bucket_with_id(
 }
 
 /// Flip a bucket's mutable fields through the STORE's own upsert path
-/// (the production face). The fixture registry's own copy does not
-/// refresh (it is static) — the media lane reads the STORE's rows for
-/// visibility/A, so a store-only flip exercises exactly the
+/// (the production face). The fixture registry's copy is static — the
+/// media lane reads the STORE's rows for visibility/A (MUT:P2B-A-SET and
+/// MUT:P2B-A-DEFAULT both go red through store-only flips), so a
+/// store-only flip exercises exactly the
 /// A-vs-availability split the P2b faces test.
 async fn patch_bucket(
     state: &AppState,
@@ -12336,7 +12338,8 @@ async fn an_admin_reads_a_private_buckets_media_without_any_grant_row() {
 
 /// `private_bucket_thumbnail_follows_the_same_check` — the
 /// `?thumbnail=true` variant runs the SAME R-J judgment (the same
-/// private-bucket 404/200 faces), never a laxer thumbnail path.
+/// private-bucket 404/200 faces), not a laxer thumbnail path
+/// (MUT:P2B-A-DEFAULT reddens it through the same A arm).
 #[tokio::test]
 async fn private_bucket_thumbnail_follows_the_same_check() {
     let (state, _admin) = test_state().await;
@@ -12480,8 +12483,9 @@ async fn private_media_grant_does_not_leak_through_a_shared_storage_key() {
     let key = public_key.expect("fixture: a vault row must sort before its public twin");
     let public_bytes = public_bytes.expect("the matched attempt's bytes");
 
-    // Anonymous: 200 — but from the PUBLIC row's bucket, never the
-    // private store's bytes.
+    // Anonymous: 200 — but from the PUBLIC row's bucket, not the private
+    // store's bytes (MUT:P2B-LEAK — widening the authorized set past the
+    // per-row check serves the wrong bytes and reddens this).
     let response = app(&state)
         .oneshot(
             Request::builder()
@@ -12726,6 +12730,9 @@ async fn a_visible_bucket_without_read_answers_403_not_404() {
 /// I3: `anonymous_never_distinguishes_an_unavailable_bucket_from_absence`
 /// — a private DISABLED bucket and a nonexistent key answer the SAME
 /// 404 to anonymous requests (no 403, no 503, no oracle).
+/// MUT:P2B-I3-BODY — an anonymous early-return 404 with a different body
+/// reddens the header-set/body equality; MUT:P2B-503-FACE reddens the
+/// status half.
 #[tokio::test]
 async fn anonymous_never_distinguishes_an_unavailable_bucket_from_absence() {
     let (state, admin_token) = test_state_with_token().await;
@@ -12805,15 +12812,17 @@ fn header_map_of(response: &axum::response::Response) -> Vec<(String, String)> {
 /// — a live key whose `buckets` omits the file's bucket answers 404
 /// even though its OWNER could read the media with a session (I6: the
 /// key's authority = ops ∩ buckets ∩ the user's current grants). The
-/// file sits in a PRIVATE bucket, so the A witness arm never rescues
-/// the key (the intersection decides alone).
+/// file sits in a PRIVATE bucket, so the A witness arm does not rescue
+/// the key (the intersection decides alone). MUT:P2B-LEAK's
+/// intersection-dropped variant (I6) reddens this.
 #[tokio::test]
 async fn api_key_with_a_narrowed_bucket_set_never_serves_from_a_bucket_outside_it() {
     let (state, admin_token) = test_state_with_token().await;
     let (_, up) = upload(&state, &admin_token, tiny_png(), "keyed.png").await;
     let key = up["sha256"].as_str().unwrap().to_owned();
     // Private bucket: A does not hold, so the key's `buckets` set is
-    // the ONLY door (the intersection decides alone).
+    // the ONLY door (the intersection decides alone — MUT:P2B-LEAK's
+    // intersection-dropped variant reddens this).
     set_bucket_anonymous(&state, "bootstrap", false).await;
     // A read-op key whose buckets array EXCLUDES the bootstrap bucket.
     let (_, key_plain) = mcp_api_key_with_at(&state, &admin_token, "narrow", all_ops(), None).await;
@@ -12881,7 +12890,8 @@ async fn api_key_with_a_narrowed_bucket_set_never_serves_from_a_bucket_outside_i
 }
 
 /// I5: `private_media_never_carries_a_public_cache_directive` — the
-/// ¬A 200 answer's directive is `private, no-store`, byte for byte.
+/// ¬A 200 answer's directive is `private, no-store`, byte for byte
+/// (MUT:I5-DIRECTIVE-IGNORES-A reddens it).
 #[tokio::test]
 async fn private_media_never_carries_a_public_cache_directive() {
     let (state, _admin) = test_state().await;
@@ -12909,7 +12919,8 @@ async fn private_media_never_carries_a_public_cache_directive() {
 }
 
 /// I5: `an_unavailable_or_forbidden_media_response_is_never_cacheable`
-/// — the 503 and the 403 faces both carry `no-store`.
+/// — the 503 and the 403 faces both carry `no-store`
+/// (MUT:P2B-APIERR-NOSTORE / MUT:I5-NOSTORE-ON-404 reddens the family).
 #[tokio::test]
 async fn an_unavailable_or_forbidden_media_response_is_never_cacheable() {
     let (base_state, admin_token) = test_state_with_token().await;
@@ -13099,7 +13110,8 @@ async fn privatising_a_bucket_keeps_existing_shares_valid() {
 
 /// R-D: `revoking_the_owners_access_keeps_existing_shares_valid` — the
 /// spec's other R-D test: revoking the OWNER's grant row on the bucket
-/// (all-false deny row) does NOT kill an already-issued share.
+/// (an all-false deny row) leaves an already-issued share serving
+/// (MUT:P2B-RD reddens it).
 #[tokio::test]
 async fn revoking_the_owners_access_keeps_existing_shares_valid() {
     let (base_state, admin_token) = test_state_with_token().await;
