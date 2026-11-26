@@ -38,9 +38,7 @@
     "accountChannel": "Account",
     "submit": "Sign in",
     "celestiaChannel": "Celestia ID",
-    "ssoChannel": "Single sign-on",
-    "orContinue": "or continue with",
-    "orProvider": "or continue with"
+    "ssoChannel": "Single sign-on"
   },
   "portal": {
     "title": "Portal",

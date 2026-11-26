@@ -38,9 +38,7 @@
     "accountChannel": "Аккаунт",
     "submit": "Войти",
     "celestiaChannel": "Celestia ID",
-    "ssoChannel": "Единый вход",
-    "orContinue": "или продолжить через",
-    "orProvider": "или продолжить привязанным способом"
+    "ssoChannel": "Единый вход"
   },
   "portal": {
     "title": "Изображения",

@@ -38,9 +38,7 @@
     "accountChannel": "الحساب",
     "submit": "تسجيل الدخول",
     "celestiaChannel": "Celestia ID",
-    "ssoChannel": "الدخول الموحّد",
-    "orContinue": "أو تابع باستخدام",
-    "orProvider": "أو تابع بطريقة مرتبطة"
+    "ssoChannel": "الدخول الموحّد"
   },
   "portal": {
     "title": "الصور",

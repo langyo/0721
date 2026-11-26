@@ -38,9 +38,7 @@
     "accountChannel": "账号",
     "submit": "登录",
     "celestiaChannel": "Celestia ID",
-    "ssoChannel": "单点登录",
-    "orContinue": "或使用以下方式继续",
-    "orProvider": "或使用已绑定的方式继续"
+    "ssoChannel": "单点登录"
   },
   "portal": {
     "title": "图片",

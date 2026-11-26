@@ -38,9 +38,7 @@
     "accountChannel": "Conta",
     "submit": "Entrar",
     "celestiaChannel": "Celestia ID",
-    "ssoChannel": "Login único",
-    "orContinue": "ou continuar com",
-    "orProvider": "ou continuar com um método vinculado"
+    "ssoChannel": "Login único"
   },
   "portal": {
     "title": "Imagens",
