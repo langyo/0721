@@ -516,9 +516,18 @@ fn build_store(
             // Per-bucket variables: I0721_BUCKET_<SLUG>_{ENDPOINT,REGION,
             // ACCESS_KEY,SECRET_KEY}; the legacy prefix maps onto the
             // shared I0721_S3_* names.
-            let get = |suffix: &str| {
+            // `S3Config::from_env` hands its lookup the FULL variable
+            // name (`I0721_S3_<SUFFIX>`) — it prefixes internally. This
+            // closure must therefore take the name as given on the legacy
+            // path and only translate the SUFFIX for a per-bucket row.
+            // MUT:P-BUCKET-ENV-DOUBLE-PREFIX — prefixing again here makes
+            // every S3 bucket unreadable at startup (the production
+            // symptom: `Unavailable { slug: "bootstrap-s3", reason: "S3
+            // backend selected but bucket name is not set" }`).
+            let get = |name: &str| {
+                let suffix = name.strip_prefix("I0721_S3_").unwrap_or(name);
                 if row.endpoint_ref.starts_with("legacy_") {
-                    lookup(&format!("I0721_S3_{suffix}"))
+                    lookup(name)
                 } else {
                     lookup(&format!("I0721_BUCKET_{prefix}_{suffix}"))
                 }
@@ -621,6 +630,50 @@ mod tests {
             is_bootstrap,
             created_at: Timestamp::now(),
         }
+    }
+
+    /// The registry's S3 arm must hand `S3Config::from_env` a lookup that
+    /// resolves the FULL `I0721_S3_<SUFFIX>` names — `from_env` prefixes
+    /// internally, so a second prefix here silently makes every S3 bucket
+    /// unreadable (`Unavailable { reason: "S3 backend selected but bucket
+    /// name is not set" }`), which is exactly what a first production
+    /// start surfaced. MUT:P-BUCKET-ENV-DOUBLE-PREFIX — prefixing again in
+    /// the closure reddens this.
+    #[test]
+    fn s3_bucket_environment_reaches_from_env_under_its_real_names() {
+        // `lookup` is an `Fn`, so the observation rides a RefCell.
+        let seen: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+        let env = |key: &str| {
+            seen.borrow_mut().push(key.to_owned());
+            match key {
+                "I0721_S3_BUCKET" => Some("i0721-media".to_owned()),
+                "I0721_S3_REGION" => Some("us-east-1".to_owned()),
+                "I0721_S3_ACCESS_KEY" => Some("svc-probe".to_owned()),
+                "I0721_S3_SECRET_KEY" => Some("secret-probe".to_owned()),
+                _ => None,
+            }
+        };
+        // The legacy prefix maps onto the shared names; the row must come
+        // back READY (a double prefix would leave it Unavailable with the
+        // "bucket name is not set" reason).
+        let mut row = bucket("bootstrap-s3", BucketBackend::S3, "legacy_s3_env", true);
+        row.is_bootstrap = true;
+        let registry = BlobRegistry::build(vec![row], env).expect("the probe row builds");
+        let health = registry.health();
+        assert_eq!(
+            health[0].state, "ready",
+            "the S3 bucket reads its env under the real names: {:?}",
+            health[0].reason
+        );
+        let seen = seen.into_inner();
+        assert!(
+            seen.iter().any(|k| k == "I0721_S3_BUCKET"),
+            "the lookup is asked for the full name, never a doubled one: {seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|k| k.contains("I0721_S3_I0721_S3_")),
+            "no doubled prefix: {seen:?}"
+        );
     }
 
     fn row_of(bucket_id: Option<uuid::Uuid>) -> FileRecord {
