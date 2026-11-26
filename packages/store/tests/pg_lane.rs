@@ -356,6 +356,18 @@ async fn pg_set_user_role_writes_the_column_both_ways() {
         "the role sync can demote as well as promote"
     );
 
+    // The trait contract: a MISSING id is a Conflict, the same shape the
+    // memory store reports — `Affected(0)` must not pass silently.
+    let missing = uuid::Uuid::new_v4();
+    let err = store
+        .set_user_role(missing, Role::Admin)
+        .await
+        .expect_err("a missing id is a conflict");
+    assert!(
+        matches!(err, i0721_store::StoreError::Conflict(_)),
+        "got {err:?}"
+    );
+
     cleanup_user(&store, user.id).await;
 }
 

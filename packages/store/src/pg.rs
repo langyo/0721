@@ -1684,7 +1684,16 @@ impl Store for PgStore {
             UserColumn::Id.eq(user_id).into_inner(),
             false,
         )?;
-        self.executor.execute(&cmd).await?;
+        // A missing id is the trait's Conflict, the SAME shape the memory
+        // store reports — `Affected(0)` is exactly that row-less update.
+        let Reply::Affected(n) = self.executor.execute(&cmd).await? else {
+            return Err(StoreError::Db(
+                "unexpected reply for a users UPDATE".to_owned(),
+            ));
+        };
+        if n == 0 {
+            return Err(StoreError::Conflict("user not found".to_owned()));
+        }
         Ok(())
     }
 }
