@@ -14111,6 +14111,145 @@ async fn adopt_validates_the_requested_name() {
     assert!(rows.is_empty(), "no row for any refused name: {rows:?}");
 }
 
+/// `two_owners_may_adopt_the_same_orphan_key`: the judged-legal shape —
+/// two different target owners adopt the same orphan key in the same
+/// bucket (no (bucket, key) uniqueness by design); both rows exist and
+/// are live, the blob is listed ZERO times afterwards, and `/media`
+/// serves it for a session with Read. The reclaim half is pinned too:
+/// deleting ONE of the two rows must NOT delete the blob (the other row
+/// still serves 200). MUT:P3-REFCOUNT — dropping the bucket dimension
+/// from the reclaim count reddens the reclaim half.
+#[tokio::test]
+async fn two_owners_may_adopt_the_same_orphan_key() {
+    let key = sha_key(18);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+    // A second owner in the same bucket.
+    let second = fx
+        .state
+        .store
+        .create_user(CreateUser {
+            username: "second-adopter".to_owned(),
+            display_name: "Second".to_owned(),
+            role: Role::Member,
+            password_hash: None,
+        })
+        .await
+        .unwrap();
+    let second_token = fx.state.signer.sign(second.id, Timestamp::now());
+
+    // The first owner rides the adopt lane. The second row rides the
+    // same store insert the lane's TOCTOU window allows: the diff gate
+    // re-lists per call, so SEQUENTIAL adopts of one key cannot both
+    // pass (the second sees the key already live) — the judged-legal
+    // shape is the concurrent window, which the store accepts (the
+    // uniqueness is (owner, sha), never (bucket, key)).
+    let (status, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+            "owner_id": fx.member_id,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the first adopt passes: {envelope}");
+    let first = rpc_result(&envelope)["id"].as_str().unwrap().to_owned();
+    fx.state
+        .store
+        .create_file(i0721_proto::NewFile {
+            owner_id: second.id,
+            parent_id: None,
+            name: key.clone(),
+            kind: i0721_proto::FileKind::Other,
+            mime: "application/octet-stream".to_owned(),
+            size: 12,
+            sha256: key.clone(),
+            bucket_id: Some(fx.bucket_id),
+            storage_backend: "local".to_owned(),
+            storage_key: key.clone(),
+            thumbnail_key: None,
+            original_name: String::new(),
+        })
+        .await
+        .expect("the store accepts a second owner's row for the same (bucket, key)");
+    let _ = first;
+    let rows = fx
+        .state
+        .store
+        .list_live_rows_by_storage_key(&key)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        2,
+        "both rows exist and are live: {rows:?}"
+    );
+
+    // The key is now live: the unregistered listing is empty.
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    assert_eq!(
+        envelope["result"]["total"].as_u64().unwrap(),
+        0,
+        "the adopted key is listed ZERO times: {envelope}"
+    );
+
+    // `/media` serves it (the bucket is anonymous_read — an anonymous
+    // request stands in for a session with Read).
+    let media = app(&fx.state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        media.status(),
+        StatusCode::OK,
+        "the shared blob serves for a reader: {}",
+        media.status()
+    );
+
+    // The reclaim half: deleting ONE of the two rows keeps the blob —
+    // the refcount is per (bucket, key) and the other row still serves.
+    let (status, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "files.delete",
+        serde_json::json!({"id": rows[0].id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{envelope}");
+    let media = app(&fx.state)
+        .oneshot(
+            Request::builder()
+                .uri(format!("/media/{key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        media.status(),
+        StatusCode::OK,
+        "deleting ONE of two rows must NOT delete the blob: {}",
+        media.status()
+    );
+    let served = axum::body::to_bytes(media.into_body(), 1024).await.unwrap();
+    assert_eq!(&served[..], b"orphan-bytes");
+    let _ = second_token;
+}
+
 /// The unsupported-backend refusal: ipfs answers a DISTINCT documented
 /// error (never a silent empty list). Rides the ipfs stub state.
 #[tokio::test]
