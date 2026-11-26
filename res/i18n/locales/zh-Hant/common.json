@@ -38,9 +38,7 @@
     "accountChannel": "帳號",
     "submit": "登入",
     "celestiaChannel": "Celestia ID",
-    "ssoChannel": "單一登入",
-    "orContinue": "或使用以下方式繼續",
-    "orProvider": "或使用已綁定的方式繼續"
+    "ssoChannel": "單一登入"
   },
   "portal": {
     "title": "圖片",

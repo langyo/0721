@@ -38,9 +38,7 @@
     "accountChannel": "アカウント",
     "submit": "サインイン",
     "celestiaChannel": "Celestia ID",
-    "ssoChannel": "シングルサインオン",
-    "orContinue": "または次で続行",
-    "orProvider": "または連携済みの方法で続行"
+    "ssoChannel": "シングルサインオン"
   },
   "portal": {
     "title": "画像",

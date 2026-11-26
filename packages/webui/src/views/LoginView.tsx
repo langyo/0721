@@ -35,16 +35,13 @@ const PEER_PROVIDER_TYPE = "builtin:erp";
 /**
  * The sign-in face: the family's ACCOUNT-FIRST ladder, in two steps.
  *
- * Step 1 (`account`) collects a user name only. Step 2 (`verify`) shows
- * how THAT account can sign in, and any one of those paths finishes the
- * login — "pick one or two, pass either":
- *
- *  - `/auth/account-methods` answers with the account's factors;
- *  - a password factor becomes hikari's verify card (the single factor a
- *    page can PROVE without navigating away);
- *  - a linked-provider factor becomes a row that starts that provider's
- *    OAuth flow (a full-page navigation — the flow plants its state cookie
- *    and redirects, which a fetch cannot carry through).
+ * Step 1 (`account`) collects a user name only; step 2 (`verify`) proves
+ * the account in place — the password, when the account carries one. A
+ * linked provider is NOT a step-2 path: taking a provider starts its
+ * OAuth flow straight from step 1 (a full-page navigation — the flow
+ * plants its state cookie and redirects, which a fetch cannot carry
+ * through), so a visitor bound to a provider signs in from the segment
+ * group without typing a name.
  *
  * Everything visual is hikari's `HkLoginFlow`; this file owns only the
  * ladder state and the wiring.
@@ -58,14 +55,15 @@ const PEER_PROVIDER_TYPE = "builtin:erp";
  * answers unknown names exactly like password accounts (see
  * `auth::account_factors`), so this costs no enumeration privacy.
  *
- * ## The two lanes are PEERS, not a form with alternatives under it
+ * ## The lanes are PEERS, not a form with alternatives under it
  *
  *  - the account funnel (always present — it is the ladder itself);
- *  - one SSO lane per enabled provider when the password switch is OFF,
- *    because then there is no account funnel to hang the rows under;
- *  - the Celestia ID peer lane when exactly one `builtin:erp` provider is
- *    configured — the family's stand-alone central sign-in for someone who
- *    has not typed an account name yet.
+ *  - one SSO segment per enabled provider, on BOTH switch states: hikari
+ *    dropped the rows-under-the-card syntax, so the segment group is the
+ *    only provider surface left;
+ *  - the Celestia ID peer segment when exactly one `builtin:erp` provider
+ *    is configured — the family's stand-alone central sign-in for someone
+ *    who has not typed an account name yet.
  *
  * The segment group renders only for two or more channels (hikari's own
  * rule: a lone dead segment reads as a broken switch).
@@ -106,7 +104,8 @@ export default defineComponent({
     const peerProvider = computed(() => {
       const candidates = providers.value.filter((provider) => provider.type === PEER_PROVIDER_TYPE);
       // Singular by construction: with TWO erp providers neither owns the
-      // "Celestia ID" tab (the rows name them, the ordinal disambiguates).
+      // "Celestia ID" tab (the tabs fall back to the generic copy, the
+      // ordinal disambiguates).
       return candidates.length === 1 ? candidates[0] : undefined;
     });
 
@@ -116,11 +115,10 @@ export default defineComponent({
 
     const channels = computed<HkLoginChannel[]>(() => {
       const offered = providers.value;
-      const password = methods.value?.password ?? false;
       const peer = peerProvider.value;
       // By KEY, never by object identity: `offered` holds fresh copies,
-      // so `provider !== peer` would be true for every row and the peer
-      // would appear twice (a stand-alone lane AND a row under the card).
+      // so `provider !== peer` would be true for every entry and the peer
+      // would appear twice.
       const others = offered.filter((provider) => provider.id !== peer?.id);
       const list: HkLoginChannel[] = [];
 
@@ -134,44 +132,32 @@ export default defineComponent({
         usernameAutocomplete: "username",
         // Account-first: the opening card must NOT ask for a password
         // (hikari's own default since the MFA redesign). The password is
-        // proven on the verify step as one factor among the announced ones.
+        // proven on the verify step as the factor the card can prove.
         passwordField: false,
         submitLabel: t("common.auth.submit"),
-        // A password-off deployment's account funnel has no password to
-        // prove, so the providers ride the card as rows (the family home
-        // for provider names) instead of becoming stand-alone lanes.
-        methods: password || others.length === 0
-          ? []
-          : others.map((provider) => ({
-              key: provider.id,
-              label: provider.display_name,
-              icon: providerIcon(),
-            })),
-        methodsDivider: password || others.length === 0 ? undefined : t("common.auth.orContinue"),
       });
 
-      if (!password) {
-        // No password lane at all: every provider must stay reachable
-        // without a password proof, so each is a whole-flow channel.
-        // Their tabs stay panel copy — never the server's display_name —
-        // but a tab that repeats is a dead switch, so when the same type
-        // appears more than once the panel disambiguates with its own
-        // ordinal ("Single sign-on · 1"), not with remote text.
-        const repeated = others.length > 1;
-        others.forEach((provider, index) => {
-          list.push({
-            key: provider.id,
-            mode: "sso" as const,
-            label: repeated
-              ? `${t("common.auth.ssoChannel")} · ${index + 1}`
-              : t("common.auth.ssoChannel"),
-            title: t("common.auth.title"),
-            subtitle: t("common.auth.subtitle"),
-            icon: providerIcon(),
-            buttonLabel: provider.display_name,
-          });
+      // Every enabled provider is its own segment, on BOTH switch states:
+      // there is no rows-under-the-card lane any more, so the segment
+      // group is the only provider surface. Their tabs stay panel copy —
+      // never the server's display_name — but a tab that repeats is a
+      // dead switch, so when the same panel copy would appear more than
+      // once the panel disambiguates with its own ordinal ("Single
+      // sign-on · 1"), not with remote text.
+      const repeated = others.length > 1;
+      others.forEach((provider, index) => {
+        list.push({
+          key: provider.id,
+          mode: "sso" as const,
+          label: repeated
+            ? `${t("common.auth.ssoChannel")} · ${index + 1}`
+            : t("common.auth.ssoChannel"),
+          title: t("common.auth.title"),
+          subtitle: t("common.auth.subtitle"),
+          icon: providerIcon(),
+          buttonLabel: provider.display_name,
         });
-      }
+      });
 
       if (peer) {
         list.push({
@@ -209,28 +195,6 @@ export default defineComponent({
     const verifyFactors = computed<string[]>(() =>
       ladder.value.provePassword ? ["password"] : [],
     );
-
-    /** The verify step's alternative rows, labelling each linked provider
-     *  the way the server named it. A provider the deployment no longer
-     *  offers still gets a row (the account really has the binding), but
-     *  it is disabled: its OAuth entry would refuse, and a live-looking
-     *  row that 404s is worse than an obviously unavailable one. */
-    const verifyMethods = computed(() => {
-      const labels = new Map<string, string>();
-      for (const provider of methods.value?.providers ?? []) {
-        labels.set(provider.id, provider.display_name);
-      }
-      for (const factor of account.value?.factors ?? []) {
-        if (factor.kind === "oauth") labels.set(factor.provider, factor.label);
-      }
-      const offered = new Set((methods.value?.providers ?? []).map((provider) => provider.id));
-      return ladder.value.methods.map((provider) => ({
-        key: provider,
-        label: labels.get(provider) || provider,
-        icon: providerIcon(),
-        disabled: !offered.has(provider),
-      }));
-    });
 
     /** What the page is verifying — the verify card's subtitle input. */
     const accountName = ref("");
@@ -279,7 +243,7 @@ export default defineComponent({
       password: string,
     ): Promise<void> {
       // A stand-alone provider lane submitted nothing to prove; its own
-      // events (sso-click / method-select) carry the navigation.
+      // sso-click event carries the navigation.
       if (submitted !== ACCOUNT_CHANNEL) return;
       // Step 2 of the SAME card (a host-side re-entry of the account form
       // while the ladder is open): treat it as a fresh probe.
@@ -321,7 +285,8 @@ export default defineComponent({
 
     /** Step 2 → step 1 (hikari's "back" affordance). The typed name is
      *  kept: `accountName` seeds the credentials card so the round trip
-     *  costs no retyping. */
+     *  costs no retyping. A provider-bound visitor takes the round trip
+     *  on purpose: back is how they reach the provider's own segment. */
     function onVerifyBack(): void {
       const keep = accountName.value;
       reset();
@@ -332,19 +297,13 @@ export default defineComponent({
       signInWith(channelKey);
     }
 
-    /** An alternative-method row under the account card: the same
-     *  full-page redirect as a peer channel. */
-    function onMethodSelect(_channel: string, providerId: string): void {
-      signInWith(providerId);
-    }
-
     onMounted(() => {
       api
         .loginMethods()
         .then((payload) => {
           methods.value = payload;
-          // The account funnel always opens: with the switch off it still
-          // lists the providers' rows, so it stays the sane default.
+          // The account funnel always opens: it is the ladder every
+          // account starts from, so it stays the sane default.
           channel.value = ACCOUNT_CHANNEL;
         })
         .catch(() => {
@@ -366,16 +325,6 @@ export default defineComponent({
         });
     });
 
-
-    /** The verify step's alternative rows, as hikari's `verifyMethods`
-     *  prop takes them. A row is NOT a factor (it never enters the factor
-     *  picker and never emits `verify`): picking one hands the whole
-     *  sign-in to the provider, which is the "or continue with…" half of
-     *  the any-one-path rule. */
-    function onVerifyMethodSelect(providerId: string): void {
-      signInWith(providerId);
-    }
-
     return () => (
       <div class="login-face">
         <div class="login-stage">
@@ -392,18 +341,12 @@ export default defineComponent({
                 subtitle={t("common.auth.subtitle")}
                 initialUsername={accountName.value}
                 verifyFactors={verifyFactors.value}
-                verifyMethods={verifyMethods.value}
-                verifyMethodsDivider={
-                  verifyMethods.value.length > 0 ? t("common.auth.orProvider") : undefined
-                }
                 verifyAccountName={accountName.value}
                 verifyLoading={loading.value}
                 onAccount-submit={onAccountSubmit}
                 onSso-click={onSsoClick}
-                onMethod-select={onMethodSelect}
                 onVerify={onVerify}
                 onVerify-back={onVerifyBack}
-                onVerify-method-select={onVerifyMethodSelect}
               />
             ) : methods.value ? (
               // No channels at all: an honest dead state. The account

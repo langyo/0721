@@ -38,9 +38,7 @@
     "accountChannel": "계정",
     "submit": "로그인",
     "celestiaChannel": "Celestia ID",
-    "ssoChannel": "싱글 사인온",
-    "orContinue": "또는 다음으로 계속",
-    "orProvider": "또는 연결된 방법으로 계속"
+    "ssoChannel": "싱글 사인온"
   },
   "portal": {
     "title": "이미지",
