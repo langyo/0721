@@ -15882,3 +15882,138 @@ async fn a_successful_route_is_untouched_even_for_a_navigation() {
         "the layer only answers errors"
     );
 }
+
+#[cfg(not(feature = "embedded-frontend"))]
+#[tokio::test]
+async fn a_dev_lane_without_a_shell_passes_errors_through() {
+    // The dev lane (`--no-default-features`) reads `index.html` from
+    // `I0721_STATIC_DIR` instead of the compiled-in tree. A dist that is
+    // missing or does not carry a shell must degrade to the INERT layer:
+    // the error answer stays the handler's JSON, never a landing painted
+    // from a document the service cannot serve.
+    let mut config = test_config();
+    config.static_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/no-such-dist");
+    let store = Arc::new(MemoryStore::new());
+    let state = AppState::new(store, Arc::new(MemoryBlobStore::new()), Arc::new(config));
+    let response = routes::router(state)
+        .oneshot(navigation("/api/v1/definitely-not-a-route"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/json",
+        "no shell on disk -> the landing is disabled, the JSON survives"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    assert_eq!(body.as_ref(), br#"{"error":"route not found"}"#);
+}
+
+#[tokio::test]
+async fn a_navigated_missing_media_key_keeps_its_json_404() {
+    // R-J: `/media/{key}` answers 200 or 404 and nothing else — a direct
+    // link must not become an oracle. A browser NAVIGATION to a missing
+    // key is exactly how that link gets opened (a tab, a nested iframe, a
+    // link-preview crawler), so the landing deliberately does NOT cover
+    // the media lane: if it did, one status would wear two shapes
+    // depending on who asked, and the README's "existing image links keep
+    // working" would only hold for `<img>` loads.
+    let (state, _) = test_state().await;
+    let router = routes::router(state);
+
+    let navigated = router
+        .clone()
+        .oneshot(navigation("/media/definitely-not-a-real-key"))
+        .await
+        .unwrap();
+    let fetched = router
+        .oneshot(fetch_like("/media/definitely-not-a-real-key"))
+        .await
+        .unwrap();
+
+    assert_eq!(navigated.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        navigated.status(),
+        fetched.status(),
+        "a navigation and a fetch must see the same status"
+    );
+    assert_ne!(
+        navigated.headers().get(header::CONTENT_TYPE),
+        Some(&header::HeaderValue::from_static(
+            "text/html; charset=utf-8"
+        )),
+        "the media lane must never answer text/html — the landing does not cover it"
+    );
+    let navigated_body = axum::body::to_bytes(navigated.into_body(), 65536)
+        .await
+        .unwrap();
+    let fetched_body = axum::body::to_bytes(fetched.into_body(), 65536)
+        .await
+        .unwrap();
+    assert_eq!(
+        navigated_body, fetched_body,
+        "the same key must answer the same bytes whatever asked"
+    );
+    assert!(
+        !String::from_utf8_lossy(&navigated_body).contains("hk-server-error"),
+        "no landing island on the media lane"
+    );
+}
+
+#[tokio::test]
+async fn the_landing_covers_the_rpc_subtree() {
+    // The layer is applied to the tree BEFORE `merge(rpc::router(...))`,
+    // so the RPC subtree is inside it — a fact nothing else pins: move
+    // the `.layer()` above the merge and every other landing test stays
+    // green while `/api/rpc` silently loses its landing.
+    //
+    // Driven through a POST with `Sec-Fetch-Dest: document`: the WS
+    // upgrade lane is not what this pins (that request carries `Upgrade`
+    // and passes through), the JSON-RPC HTTP fallback is.
+    let (state, _) = test_state().await;
+    let router = routes::router(state);
+
+    let frame = || {
+        Request::post("/api/rpc")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("sec-fetch-dest", "document")
+            .header(header::ACCEPT, "text/html")
+            .body(Body::from(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "auth.verify",
+                    "params": serde_json::Value::Null,
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+
+    let navigated = router.clone().oneshot(frame()).await.unwrap();
+    assert!(
+        navigated.status().is_client_error(),
+        "the frameless RPC frame is refused: {}",
+        navigated.status()
+    );
+    assert_eq!(
+        navigated
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .expect("the landing is an HTML document")
+            .to_str()
+            .unwrap(),
+        "text/html; charset=utf-8",
+        "the RPC subtree sits INSIDE the landing layer"
+    );
+    let body = axum::body::to_bytes(navigated.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let html = String::from_utf8_lossy(&body);
+    assert!(
+        html.contains(r#"id="hk-server-error""#),
+        "the RPC refusal carries the island too"
+    );
+}

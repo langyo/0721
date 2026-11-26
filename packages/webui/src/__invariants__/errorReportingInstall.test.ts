@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { createErrorReporting, SERVER_ERROR_LANDING_ID } from "@celestia-island/hikari";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "vue";
 
 /**
@@ -44,6 +44,14 @@ function bootstrapSource(): string {
 }
 
 describe("bootstrap installs the error reporting hook", () => {
+  // The island is consumed on the first read and hikari keeps install
+  // state at module scope, so a leftover document from an earlier test
+  // (or from this one, on a re-run) must never carry into the next.
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+
   it("calls app.use(createErrorReporting())", () => {
     expect(bootstrapSource()).toMatch(/app\.use\(\s*createErrorReporting\(/);
   });
@@ -59,17 +67,20 @@ describe("bootstrap installs the error reporting hook", () => {
 
   it("the installed hook really consumes the server island", () => {
     // A live install of the very plugin `main.ts` names: with a handoff
-    // island on the document, install must raise the overlay before any
-    // host component exists. If hikari ever drops the island read, this
-    // reddens and the source pin above becomes a false sense of safety.
+    // island on the document, install must TAKE it (read once, then
+    // removed — hikari's contract, so a reinstall cannot re-raise a
+    // landing the visitor already saw). If hikari ever drops the island
+    // read, this reddens and the source pin above becomes a false sense
+    // of safety.
+    //
+    // What is asserted is the CONSUMPTION, not the overlay: whether a
+    // losing second error still paints depends on hikari's module-scope
+    // "first error wins" state, which other suites in the same run may
+    // already have set. Overlay rendering is hikari's own test's job.
     document.body.innerHTML = `<script type="application/json" id="${SERVER_ERROR_LANDING_ID}">{"v":1,"status":502,"code":"upstream_down","message":"upstream down","raw":{"error":"upstream down"}}</script>`;
+    expect(document.getElementById(SERVER_ERROR_LANDING_ID)).not.toBeNull();
     const app = createApp({ render: () => null });
-    // `use` is what runs the plugin; the spy also pins that install went
-    // through the host app the bootstrap would have used.
-    const use = vi.spyOn(app, "use");
     app.use(createErrorReporting());
-    expect(use).toHaveBeenCalledWith(expect.anything());
-    // Install consumed the island (read once, then removed).
     expect(document.getElementById(SERVER_ERROR_LANDING_ID)).toBeNull();
   });
 });
