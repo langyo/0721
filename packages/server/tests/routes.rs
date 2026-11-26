@@ -12263,8 +12263,12 @@ async fn private_bucket_media_200_with_session_read() {
 /// admin arm (admin → every bucket) must hold through the `/media` lane
 /// for an admin who is NOT the owner and holds NO grant row: a private
 /// bucket's bytes answer 200 to the admin session. MUT:P2B-ADMIN-MEDIA —
-/// removing the admin short-circuit from `actor_reads_row` turns this
-/// red (the owner-path tests survive that mutant; this one cannot).
+/// collapsing `actor_reads_row`'s resolution chain to owner-only (dropping
+/// BOTH the admin short-circuit and the `resolve_access` call) turns this
+/// red (404 instead of 200); the owner-path tests survive that mutant,
+/// this one cannot. Note: the `media.rs` admin short-circuit alone is
+/// redundant with `resolve_access`'s own admin arm — removing only it is
+/// behaviorally unobservable by design (one resolution place, two guards).
 #[tokio::test]
 async fn an_admin_reads_a_private_buckets_media_without_any_grant_row() {
     let (state, _seeded) = test_state().await;
