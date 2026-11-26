@@ -14197,6 +14197,74 @@ async fn unregistered_show_switch_four_state_fail_closed() {
     let _ = store;
 }
 
+/// `the_show_switch_takes_effect_on_the_next_call`: the switch is read
+/// PER CALL — flip it and the very next RPC sees the new state, in the
+/// same process over the same state. MUT:P3-SHOW-CACHED — caching the
+/// first read (e.g. in a `OnceLock`) reddens the second half: the flip
+/// to OFF would not answer `-32006`, or the flip back ON would not
+/// relist the orphan.
+#[tokio::test]
+async fn the_show_switch_takes_effect_on_the_next_call() {
+    let key = sha_key(16);
+    let fx = orphan_fixture(&[&key]).await;
+
+    // ON: the admin's list shows the orphan.
+    show_on(&fx.state, &fx.admin_token).await;
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    let body = serde_json::to_string(rpc_result(&envelope)).unwrap();
+    assert!(body.contains(&key), "show=true lists the orphan: {body}");
+
+    // Flip OFF → the VERY NEXT call answers -32006.
+    let (status, _) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.put",
+        serde_json::json!({"show": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32006,
+        "show=false answers -32006 on the next call: {envelope}"
+    );
+
+    // Flip ON again → the next call lists the orphan once more.
+    let (status, _) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.put",
+        serde_json::json!({"show": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.list",
+        serde_json::json!({"bucket": fx.bucket_slug}),
+    )
+    .await;
+    let body = serde_json::to_string(rpc_result(&envelope)).unwrap();
+    assert!(
+        body.contains(&key),
+        "flipping back ON relists the orphan on the next call: {body}"
+    );
+}
+
 async fn unreadable_settings_state() -> AppState {
     // Delegation double with ONE override: `settings_state` answers
     // Ok(Unreadable) for EVERY key — the four-state shape the show
