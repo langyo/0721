@@ -211,6 +211,21 @@ pub fn thumbnail_for_media(data: &[u8]) -> Result<Bytes, PipelineError> {
     make_thumbnail(data)
 }
 
+/// The unregistered lane's MIME guess (draft §7.4 step 2): content
+/// sniffing first (the image formats the pipeline decodes), then the
+/// extension hint, then octet-stream. Never authoritative — adopt
+/// records it as the row's best-effort mime.
+#[must_use]
+pub fn mime_hint_for(data: &[u8], key: &str) -> String {
+    if image::guess_format(data).is_ok() {
+        if let Some(hint) = mime_guess::from_path(key).first() {
+            return hint.essence_str().to_owned();
+        }
+        return "application/octet-stream".to_owned();
+    }
+    mime_of(Some(key), None)
+}
+
 fn mime_of(original_name: Option<&str>, fallback: Option<&str>) -> String {
     if let Some(hint) = original_name.and_then(|name| mime_guess::from_path(name).first()) {
         return hint.essence_str().to_owned();

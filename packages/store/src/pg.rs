@@ -611,6 +611,32 @@ impl Store for PgStore {
         Ok(n as u64)
     }
 
+    async fn storage_keys_live_in_bucket(
+        &self,
+        bucket_id: Option<Uuid>,
+    ) -> Result<std::collections::HashSet<String>, StoreError> {
+        let cmd = Command::Sql {
+            dialect: lacrymira::Dialect::Postgres,
+            text: "SELECT DISTINCT storage_key FROM files WHERE deleted_at IS NULL \
+                   AND bucket_id IS NOT DISTINCT FROM $1"
+                .to_owned(),
+            params: vec![bucket_id
+                .map(|id| Value::Uuid(id.to_string()))
+                .unwrap_or(Value::Null)],
+        };
+        let reply = self.executor.execute(&cmd).await?;
+        let Reply::Rows { rows, .. } = reply else {
+            return Err(StoreError::Db("expected rows from a key scan".to_owned()));
+        };
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| match row.iter().next() {
+                Some(Value::Text(key)) => Some(key.clone()),
+                _ => None,
+            })
+            .collect())
+    }
+
     async fn get_file_by_owner_bucket_and_sha256(
         &self,
         owner_id: Uuid,

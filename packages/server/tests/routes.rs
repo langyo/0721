@@ -8270,6 +8270,12 @@ async fn failing_settings_state() -> AppState {
         ) -> Result<Vec<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
             Ok(Vec::new())
         }
+        async fn storage_keys_live_in_bucket(
+            &self,
+            _bucket_id: Option<uuid::Uuid>,
+        ) -> Result<std::collections::HashSet<String>, i0721_store::StoreError> {
+            Ok(std::collections::HashSet::new())
+        }
         // Everything else delegates to the inner memory store.
         async fn list_users(
             &self,
@@ -11647,6 +11653,12 @@ async fn mcp_get_share_link_on_a_store_failure_answers_the_iserror_tool_error() 
             &self,
         ) -> Result<Vec<i0721_proto::StorageBucketRecord>, i0721_store::StoreError> {
             Ok(Vec::new())
+        }
+        async fn storage_keys_live_in_bucket(
+            &self,
+            _bucket_id: Option<uuid::Uuid>,
+        ) -> Result<std::collections::HashSet<String>, i0721_store::StoreError> {
+            Ok(std::collections::HashSet::new())
         }
         // Everything else delegates to the inner memory store.
         async fn list_users(
