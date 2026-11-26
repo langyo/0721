@@ -13594,9 +13594,18 @@ async fn unregistered_cache_prefix_never_listed() {
         body.contains(&key),
         "show=true: the orphan media object must be listed: {body}"
     );
+    // The negative arm: the CACHE copy of the same key appears at most
+    // ONCE (dedup by key) — a slot-blind enumeration would list the key
+    // twice.
     assert!(
-        !body.contains("orphan-thumb"),
-        "show=true: the orphan cache object must NEVER be listed: {body}"
+        body.matches(&key).count() == 1,
+        "show=true: the orphan cache object must NEVER be listed (the media key appears exactly once): {body}"
+    );
+    let items = envelope["result"]["items"].as_array().unwrap();
+    assert_eq!(
+        items.len(),
+        1,
+        "exactly one entry: the cache slot never enters the diff"
     );
 }
 
