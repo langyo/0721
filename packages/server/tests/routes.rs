@@ -14029,6 +14029,51 @@ async fn adopt_under_a_parent_in_another_bucket_is_refused() {
     assert!(rows.is_empty(), "no row was inserted: {rows:?}");
 }
 
+/// `adopt_under_another_owners_parent_is_refused`: the parent folder
+/// must belong to the adopt's TARGET owner (`owner_id`, or the caller
+/// when omitted) — a folder owned by a different user is refused as
+/// invalid params. MUT:P3-ADOPT-PARENT-OWNER — dropping the ownership
+/// check reddens this.
+#[tokio::test]
+async fn adopt_under_another_owners_parent_is_refused() {
+    let key = sha_key(15);
+    let fx = orphan_fixture(&[&key]).await;
+    show_on(&fx.state, &fx.admin_token).await;
+    // A folder in the TARGET bucket, owned by the ADMIN — not by the
+    // target owner (the member).
+    let folder = fx
+        .state
+        .store
+        .create_folder(fx.admin_id, None, "not-yours", Some(fx.bucket_id))
+        .await
+        .unwrap();
+
+    let (_, envelope) = rpc(
+        &fx.state,
+        &fx.admin_token,
+        "storage.unregistered.adopt",
+        serde_json::json!({
+            "bucket": fx.bucket_slug,
+            "key": key,
+            "owner_id": fx.member_id,
+            "parent_id": folder.id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        rpc_error_code(&envelope),
+        -32602,
+        "a folder owned by another user is invalid params: {envelope}"
+    );
+    let rows = fx
+        .state
+        .store
+        .list_live_rows_by_storage_key(&key)
+        .await
+        .unwrap();
+    assert!(rows.is_empty(), "no row was inserted: {rows:?}");
+}
+
 /// The unsupported-backend refusal: ipfs answers a DISTINCT documented
 /// error (never a silent empty list). Rides the ipfs stub state.
 #[tokio::test]
