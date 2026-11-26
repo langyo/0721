@@ -25,6 +25,7 @@ import {
   Unplug,
   Users as UsersIcon,
 } from "lucide-vue-next";
+import { appVersionLabel } from "@/lib/versionLabel";
 import { computed, defineComponent, h, ref, type Component, type VNode } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterView, useRoute, useRouter } from "vue-router";
@@ -174,7 +175,9 @@ export default defineComponent({
 
     // ── Footer: the family status bar over the transport probe ───────────
 
-    const appVersion: string = __APP_VERSION__;
+    // Family rule: the status bar shows `<version> <branch>:<hash7>` so two
+    // builds of the same semver are distinguishable (see lib/versionLabel).
+    const versionLabel: string = appVersionLabel();
 
     const statusBarState = computed<"connected" | "reconnecting" | "disconnected" | "connecting">(
       () => {
@@ -288,7 +291,7 @@ export default defineComponent({
 
             footer: () => (
               <HkStatusBar
-                version={appVersion}
+                version={versionLabel}
                 engineVersion={health.value?.engineVersion ?? null}
                 engineBuildHash={health.value?.engineBuildHash ?? undefined}
                 connectionStatus={statusBarState.value}

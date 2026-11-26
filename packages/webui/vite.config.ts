@@ -1,5 +1,6 @@
 import vueSfc from "@vitejs/plugin-vue";
 import vueJsx from "@vitejs/plugin-vue-jsx";
+import { execFileSync } from "child_process";
 import { readdirSync, rmSync } from "fs";
 import { resolve } from "path";
 import { defineConfig, type Plugin } from "vitest/config";
@@ -34,9 +35,70 @@ function cleanOutDirContents(outDir: string): Plugin {
   };
 }
 
+/**
+ * Family build identity (`<branch>:<hash7>`, e.g. `master:a440d4d`).
+ *
+ * The family rule (celestia-erp's `vite.config.ts` is the twin this mirrors,
+ * itself the plana twin): the branch and the exact commit ARE the identity,
+ * so a footer that prints only a semver cannot tell two builds of the same
+ * version apart. Ladder: direct branch first, then `name-rev` over local
+ * heads / origin remotes (stripping any `~N` depth and the remote prefix),
+ * with the default-tip guard so a parallel same-tip branch cannot steal the
+ * name; `undefined` when the tree has no git metadata (a tarball or Docker
+ * build), which keeps such builds deterministic instead of inventing a name.
+ */
+function buildIdentity(root: string): string | undefined {
+  try {
+    const run = (args: string[]) =>
+      execFileSync("git", args, { cwd: root }).toString().trim();
+    const short = run(["rev-parse", "--short=7", "HEAD"]);
+    if (!/^[0-9a-f]{7,40}$/.test(short)) return undefined;
+    const commit = short.toLowerCase();
+    let branch = run(["rev-parse", "--abbrev-ref", "HEAD"]);
+    if (!branch || branch === "HEAD") {
+      // Detached: prefer the default branch's name when HEAD is exactly its
+      // tip, then name-rev over local/remote refs.
+      try {
+        const sym = run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+        const name = sym.split("/").slice(1).join("/");
+        if (name && name !== "HEAD") {
+          const head = run(["rev-parse", "HEAD"]);
+          for (const ref of [`refs/heads/${name}`, `refs/remotes/origin/${name}`]) {
+            if (run(["rev-parse", "--verify", ref]) === head) {
+              return `${name}:${commit}`;
+            }
+          }
+        }
+      } catch {
+        /* no symbolic remote HEAD recorded */
+      }
+      try {
+        branch = run(["name-rev", "--name-only", "--exclude=refs/tags/*", "HEAD"]);
+      } catch {
+        branch = "";
+      }
+      branch = branch
+        .replace(/~\d+$/, "")
+        .replace(/\^\d+$/, "")
+        .replace(/^remotes\/origin\//, "");
+    } else {
+      branch = branch.replace(/^remotes\/origin\//, "");
+    }
+    if (!branch || branch === "undefined") branch = "detached";
+    return `${branch}:${commit}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify("0.4.0"),
+    // Absent git metadata leaves this as `null` on purpose: the view then
+    // prints the bare version rather than a fabricated identity.
+    __APP_BUILD_IDENTITY__: JSON.stringify(
+      buildIdentity(resolve(pkgDir, "../..")) ?? null,
+    ),
   },
   plugins: [
     cleanOutDirContents(resolve(pkgDir, "../../dist/webui")),
