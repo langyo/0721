@@ -18,7 +18,7 @@ minimumReleaseAgeExclude:
   # Landing-handoff upgrade 0.55.494 -> 0.55.498 (same-day pick): the exact
   # pin is what exempts the lock from the 24h window during the surgical
   # upgrade. Prune once 0.55.498 is past the window.
-  - '@celestia-island/hikari@0.55.498' # prune after 2026-11-29
+  - '@celestia-island/hikari@0.55.500' # prune after 2026-11-29
   # The RPC client's own first-party transport dep (release-age would
   # otherwise resolve its previous version after each publish).
   - '@celestia-island/tairitsu-transport'
