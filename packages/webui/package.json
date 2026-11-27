@@ -14,7 +14,7 @@
     "clean": "rm -rf ../../dist/webui"
   },
   "dependencies": {
-    "@celestia-island/hikari": "^0.55",
+    "@celestia-island/hikari": "^0.55.502",
     "@vueuse/core": "^15",
     "lucide-vue-next": "^1",
     "pinia": "^4",

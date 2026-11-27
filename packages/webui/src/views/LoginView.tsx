@@ -2,6 +2,9 @@ import {
   HkEmptyState,
   HkLoginFlow,
   HkStatusBar,
+  hkCentralAuthMarkSrc,
+  hkCentralAuthName,
+  hkProviderLabelIsId,
   useToast,
   type HkLoginChannel,
 } from "@celestia-island/hikari";
@@ -58,7 +61,10 @@ const PEER_PROVIDER_TYPE = "builtin:erp";
  *
  * ## The lanes are PEERS, not a form with alternatives under it
  *
- *  - the account funnel (always present — it is the ladder itself);
+ *  - the account funnel, present while the login policy keeps the
+ *    password lane on (`policy.password`, missing policy fails open) —
+ *    a `password:false` deployment renders ONLY its provider segments,
+ *    because the funnel's password arm is a guaranteed 403 there;
  *  - one SSO segment per enabled provider, on BOTH switch states: hikari
  *    dropped the rows-under-the-card syntax, so the segment group is the
  *    only provider surface left;
@@ -97,9 +103,30 @@ export default defineComponent({
 
     /** Provider marks are loose-typed by the family (a brand SVG or <img>);
      * 0721 ships no brand assets, so every SSO row rides the same neutral
-     * key mark and the LABEL names the destination. */
+     * key mark and the LABEL names the destination. The central identity
+     * peer is the exception: it carries the family's own built-in mark. */
     function providerIcon() {
       return h(KeyRound, { size: 16 });
+    }
+
+    /** The central identity peer's mark: the built-in 16×16 data-URI
+     *  image, not the neutral key glyph. */
+    function peerIcon() {
+      return h("img", { src: hkCentralAuthMarkSrc, width: 16, height: 16, alt: "" });
+    }
+
+    /** The peer's button label: the operator's own display_name wins, but
+     *  when it has degenerated to the registry id (the server-side
+     *  convention for "unnamed" — and `renderable_rows` drops truly empty
+     *  names, so id-as-name is the degenerate form that reaches us), the
+     *  family's built-in name fills in. The built-in name belongs to the
+     *  central identity platform ONLY: a non-peer provider that degenerates
+     *  keeps its (server-guaranteed non-empty) display_name. */
+    function peerButtonLabel(): string {
+      const peer = peerProvider.value;
+      return peer && hkProviderLabelIsId(peer.id, peer.display_name)
+        ? hkCentralAuthName()
+        : peer?.display_name ?? "";
     }
 
     const peerProvider = computed(() => {
@@ -114,6 +141,15 @@ export default defineComponent({
      *  cached computed) so `channels` always sees the current array. */
     const providers = computed(() => methods.value?.providers ?? []);
 
+    /** Whether the deployment still offers the local password card. The
+     *  policy field is the server's own word; a MISSING policy fails open
+     *  to `true` so an older payload keeps today's shape. When it is
+     *  `false`, the account funnel is not rendered at all: every
+     *  password-less deployment (`res.celestia.world` ships
+     *  `password:false, mode:federated`, and the server 403s the password
+     *  arm anyway) must not be handed a tab whose only exit is a 403. */
+    const passwordOffered = computed(() => methods.value?.policy?.password ?? true);
+
     const channels = computed<HkLoginChannel[]>(() => {
       const offered = providers.value;
       const peer = peerProvider.value;
@@ -123,20 +159,27 @@ export default defineComponent({
       const others = offered.filter((provider) => provider.id !== peer?.id);
       const list: HkLoginChannel[] = [];
 
-      list.push({
-        key: ACCOUNT_CHANNEL,
-        mode: "credentials" as const,
-        label: t("common.auth.accountChannel"),
-        title: t("common.auth.title"),
-        subtitle: t("common.auth.subtitle"),
-        usernameType: "text",
-        usernameAutocomplete: "username",
-        // Account-first: the opening card must NOT ask for a password
-        // (hikari's own default since the MFA redesign). The password is
-        // proven on the verify step as the factor the card can prove.
-        passwordField: false,
-        submitLabel: t("common.auth.submit"),
-      });
+      // The account funnel is conditional on the policy switch: with the
+      // password lane off, the channels are the provider segments (and the
+      // peer) alone, and the funnel's probe/verify ladder is unreachable
+      // (its code stays below — the descriptors still drive it if the
+      // policy ever flips mid-session).
+      if (passwordOffered.value) {
+        list.push({
+          key: ACCOUNT_CHANNEL,
+          mode: "credentials" as const,
+          label: t("common.auth.accountChannel"),
+          title: t("common.auth.title"),
+          subtitle: t("common.auth.subtitle"),
+          usernameType: "text",
+          usernameAutocomplete: "username",
+          // Account-first: the opening card must NOT ask for a password
+          // (hikari's own default since the MFA redesign). The password is
+          // proven on the verify step as the factor the card can prove.
+          passwordField: false,
+          submitLabel: t("common.auth.submit"),
+        });
+      }
 
       // Every enabled provider is its own segment, on BOTH switch states:
       // there is no rows-under-the-card lane any more, so the segment
@@ -168,18 +211,24 @@ export default defineComponent({
           label: t("common.auth.celestiaChannel"),
           title: t("common.auth.title"),
           subtitle: t("common.auth.subtitle"),
-          icon: providerIcon(),
-          buttonLabel: peer.display_name,
+          icon: peerIcon(),
+          buttonLabel: peerButtonLabel(),
         });
       }
 
       return list;
     });
 
+    /** The empty-state guard: with the funnel off, an SSO-only deployment
+     *  that has lost its providers (and its peer) has literally nothing
+     *  to render — the honest dead state replaces the card. */
     const hasChannels = computed(() => channels.value.length > 0);
 
     /** Step 2 is the ladder's answer, not a host-side guess: the card
-     *  moves to the verify step only once an account's factors are known. */
+     *  moves to the verify step only once an account's factors are known.
+     *  Unreachable while the policy keeps the password lane off (no
+     *  account channel is rendered to probe from), but kept: the policy
+     *  can flip mid-session and the ladder code is stateless of it. */
     const step = computed<"account" | "verify">(() =>
       probed.value && channel.value === ACCOUNT_CHANNEL ? "verify" : "account",
     );
@@ -303,9 +352,10 @@ export default defineComponent({
         .loginMethods()
         .then((payload) => {
           methods.value = payload;
-          // The account funnel always opens: it is the ladder every
-          // account starts from, so it stays the sane default.
-          channel.value = ACCOUNT_CHANNEL;
+          // Seed the first OFFERED channel: the account funnel when the
+          // policy keeps it, otherwise the first sso segment (there is no
+          // account tab to default to when the password lane is off).
+          channel.value = channels.value[0]?.key ?? "";
         })
         .catch(() => {
           // The descriptor is unreachable: render the ladder with the
@@ -322,7 +372,7 @@ export default defineComponent({
               methods: [],
             },
           };
-          channel.value = ACCOUNT_CHANNEL;
+          channel.value = channels.value[0]?.key ?? "";
         });
     });
 
@@ -350,9 +400,10 @@ export default defineComponent({
                 onVerify-back={onVerifyBack}
               />
             ) : methods.value ? (
-              // No channels at all: an honest dead state. The account
-              // funnel is unconditional, so this needs the catch lane to
-              // have failed too.
+              // No channels at all: an honest dead state. With the
+              // funnel conditional on the policy switch, this now also
+              // catches a password-less deployment whose providers (and
+              // peer) are all gone — literally nothing left to offer.
               <HkEmptyState
                 boxed
                 icon={Unplug}
