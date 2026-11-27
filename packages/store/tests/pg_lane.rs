@@ -10,6 +10,9 @@
 //!   of `38 passed`. That count is the whole point — a skip printed by
 //!   `eprintln!` is captured by libtest and is indistinguishable from an
 //!   assertion that held.
+//!   MUT:lint947-drop-ignore — revert the `#[ignore]` attributes (the shape at
+//!   `5df0695`) and the same gate-off command reads `38 passed; 0 ignored`,
+//!   which is exactly the silent-green this lane now refuses to produce.
 //! - `I0721_TEST_PG` on (`1` / `true`) → the URL must resolve, the server
 //!   must be reachable and the migrations must apply; anything else
 //!   **panics**. `db()` has no `None` arm: a closed gate inside a case
