@@ -371,6 +371,55 @@ async fn pg_set_user_role_writes_the_column_both_ways() {
     cleanup_user(&store, user.id).await;
 }
 
+/// `set_user_quota` reaches the `users.quota_bytes` column in both
+/// directions (a byte cap and the None that falls back to the global
+/// default), and a MISSING id is the trait's Conflict — the admin-facing
+/// `quota.put` must not lose a write silently.
+#[tokio::test]
+async fn pg_set_user_quota_writes_both_ways_and_conflicts_on_a_missing_id() {
+    let Some(store) = db().await else { return };
+    let user = store.create_user(scratch_user()).await.expect("create");
+    assert_eq!(user.quota_bytes, None, "a scratch user has no quota");
+
+    let cap = 1024i64 * 1024 * 1024;
+    store
+        .set_user_quota(user.id, Some(cap))
+        .await
+        .expect("set a cap");
+    let capped = store
+        .get_user(user.id)
+        .await
+        .expect("get")
+        .expect("row exists");
+    assert_eq!(capped.quota_bytes, Some(cap), "the UPDATE wrote the cap");
+
+    store
+        .set_user_quota(user.id, None)
+        .await
+        .expect("clear back to the default");
+    let cleared = store
+        .get_user(user.id)
+        .await
+        .expect("get again")
+        .expect("row exists");
+    assert_eq!(
+        cleared.quota_bytes, None,
+        "None falls back to the global default"
+    );
+
+    let missing = uuid::Uuid::new_v4();
+    let err = store
+        .set_user_quota(missing, Some(cap))
+        .await
+        .expect_err("a missing id is a conflict");
+    assert!(
+        matches!(err, i0721_store::StoreError::Conflict(_)),
+        "got {err:?}"
+    );
+
+    cleanup_user(&store, user.id).await;
+}
+
 #[tokio::test]
 async fn pg_settings_upsert_round_trip() {
     let Some(store) = db().await else { return };
