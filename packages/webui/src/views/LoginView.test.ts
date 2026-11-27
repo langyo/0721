@@ -27,7 +27,7 @@ vi.mock("@/api/client", () => ({
 }));
 
 
-import { HkLoginFlow, HkStatusBar, HkToast, useToast } from "@celestia-island/hikari";
+import { HkEmptyState, HkLoginFlow, HkStatusBar, HkToast, useToast } from "@celestia-island/hikari";
 
 import LoginView from "./LoginView";
 import { ApiError } from "@/api/client";
@@ -870,5 +870,149 @@ describe("LoginView password kill-switch (W4 closing)", () => {
     wrapper.getComponent(HkLoginFlow).vm.$emit("verify", "password", "secret");
     await flushPromises();
     expect(loginMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("LoginView federated mode (password:false)", () => {
+  /** A policy payload with the password lane switched off. */
+  function federated(providers: Array<{ id: string; display_name: string; type: string; icon: string | null }>) {
+    return {
+      password: false,
+      providers,
+      policy: { version: 1, mode: "federated", password: false, methods: [] },
+    };
+  }
+
+  it("renders no account channel and seeds the first sso segment", async () => {
+    // MUT:federated-funnel-gone — with `policy.password === false` the
+    // account funnel must not render at all: the server 403s its password
+    // arm, so a tab whose only exit is a 403 is a dead switch (this is
+    // the res.celestia.world shape). The policy's own flag is what the
+    // legacy top-level `password` boolean is NOT consulted for here —
+    // dropping the `policy` read or flipping the fail-open default
+    // reddens this case.
+    loginMethodsMock.mockResolvedValue(
+      federated([
+        { id: "gh", display_name: "GitHub", type: "builtin:github", icon: null },
+        { id: "erp", display_name: "erp", type: "builtin:erp", icon: null },
+      ]),
+    );
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const flow = wrapper.getComponent(HkLoginFlow);
+    const channels = flow.props("channels") as Array<{
+      key: string;
+      mode: string;
+      passwordField?: boolean;
+    }>;
+    expect(channels.map((c) => c.key)).toEqual(["gh", "erp"]);
+    expect(channels.some((c) => c.mode === "credentials")).toBe(false);
+    // No name field anywhere: the funnel is not merely hidden, it is gone.
+    expect(wrapper.findAll("input").length).toBe(0);
+    // The seeded channel is the FIRST sso segment, not the account key —
+    // a stale "account" seed would leave the flow on a channel that
+    // no longer exists.
+    expect(flow.props("modelValue")).toBe("gh");
+    // The peer segment still lands last.
+    expect(channels[1]).toMatchObject({ key: "erp", mode: "sso" });
+  });
+
+  it("uses the built-in name and mark when the peer's display_name degenerated to its id", async () => {
+    // The res.celestia.world form: the operator never named the provider,
+    // so `renderable_rows` either dropped the empty name or the operator
+    // set it to the literal id — both read as "unnamed" through
+    // `hkProviderLabelIsId`, and the family's built-in name fills in.
+    loginMethodsMock.mockResolvedValue(
+      federated([{ id: "erp", display_name: "erp", type: "builtin:erp", icon: null }]),
+    );
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    // MUT:central-auth-name — the built-in name belongs to the central
+    // identity peer ONLY (en baseline wording pinned verbatim); a generic
+    // provider degenerating to its id must NEVER take it.
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      key: string;
+      buttonLabel?: string;
+    }>;
+    expect(channels[0]!.buttonLabel).toBe("Celestia Unified Authentication Platform");
+
+    // MUT:central-auth-mark — the peer's icon is the built-in 16×16 data
+    // URI <img>, not the neutral key glyph; a KeyRound resurrection or a
+    // dropped width/height reddens here.
+    const peerIconNode = (
+      wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+        icon?: { props?: { src?: string; width?: number; height?: number } };
+      }>
+    )[0]!.icon;
+    expect(peerIconNode?.props?.src).toMatch(/^data:image\/webp;base64,/);
+    expect(peerIconNode?.props?.width).toBe(16);
+    expect(peerIconNode?.props?.height).toBe(16);
+  });
+
+  it("keeps an operator-set peer display_name verbatim", async () => {
+    // Precedence rule 1: nothing an operator configures is overridden —
+    // a portal named "门户" keeps its own name on the button (and the
+    // built-in name must not displace it).
+    loginMethodsMock.mockResolvedValue(
+      federated([{ id: "erp", display_name: "门户", type: "builtin:erp", icon: null }]),
+    );
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const channels = wrapper.getComponent(HkLoginFlow).props("channels") as Array<{
+      buttonLabel?: string;
+      icon?: unknown;
+    }>;
+    expect(channels[0]!.buttonLabel).toBe("门户");
+    // The icon rule still applies regardless of the name: no operator
+    // icon was configured, so the built-in mark fills the gap.
+    const icon = (channels[0]!.icon as { props?: { src?: string } }) ?? undefined;
+    expect(icon?.props?.src).toMatch(/^data:image\/webp;base64,/);
+  });
+
+  it("falls to the honest dead state when the password lane is off and nothing else is offered", async () => {
+    // A federated deployment whose providers are all gone has literally
+    // no entrance left: the empty funnel no longer papers over it, and
+    // the HkEmptyState dead state is the honest render.
+    loginMethodsMock.mockResolvedValue(federated([]));
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    expect(wrapper.findComponent(HkLoginFlow).exists()).toBe(false);
+    expect(wrapper.findComponent(HkEmptyState).exists()).toBe(true);
+    expect(wrapper.text()).toContain(
+      "No login method is available — an administrator must enable a provider or password login.",
+    );
+  });
+
+  it("keeps the master shape when the password lane is on (regression)", async () => {
+    // MUT:funnel-default — the fail-open default and the password-on path
+    // must stay byte-identical to master: funnel first, peer last, and
+    // the seeded channel is the account key. A `password:false` refactor
+    // that leaked into the funnel-on shape reddens here.
+    loginMethodsMock.mockResolvedValue({
+      password: true,
+      providers: [{ id: "erp", display_name: "Acme ERP", type: "builtin:erp", icon: null }],
+      policy: { version: 1, mode: "local", password: true, methods: [] },
+    });
+    const { wrapper } = await mountView();
+    await flushPromises();
+
+    const flow = wrapper.getComponent(HkLoginFlow);
+    const channels = flow.props("channels") as Array<{ key: string; mode: string; buttonLabel?: string; icon?: unknown }>;
+    expect(channels.map((c) => c.key)).toEqual(["account", "erp"]);
+    expect(channels[0]).toMatchObject({ mode: "credentials", passwordField: false });
+    expect(flow.props("modelValue")).toBe("account");
+    // A named operator peer keeps its name, and the peer still carries the
+    // built-in mark: the mark rides the PEER lane on both switch states,
+    // it is not a password-off-only swap.
+    expect(channels[1]!.buttonLabel).toBe("Acme ERP");
+    expect(
+      ((channels[1]!.icon as { props?: { src?: string } }).props?.src ?? "").startsWith(
+        "data:image/webp;base64,",
+      ),
+    ).toBe(true);
   });
 });
