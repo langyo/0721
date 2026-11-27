@@ -483,4 +483,7 @@ enforced by `just i18n-check`.
 The opt-in PostgreSQL lane (`just pg-test`) runs the `pg_*` store tests
 against a scratch database — fail-closed when
 `I0721_TEST_PG=1 I0721_DATABASE_URL=…` is set (connection or migration
-failures panic instead of skipping).
+failures panic instead of skipping). Without the gate the same cases are
+compiled `#[ignore]`d, so `cargo test --workspace` reports them as
+`ignored` rather than as a `passed` that ran no SQL; setting
+`I0721_TEST_PG` without `--ignored` is itself a failure (L947).

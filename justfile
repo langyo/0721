@@ -67,20 +67,26 @@ check: webui
 lint: webui
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Run all tests (no external services: the PostgreSQL lane self-skips).
+# Run all tests (no external services). The PostgreSQL lane is compiled
+# `#[ignore]`d, so it shows up as `N ignored` here — never as `passed`.
 test: webui
     cargo test --workspace
 
-# Opt-in PostgreSQL lane (`pg_*` tests in i0721-store). Fail-closed:
-# with I0721_TEST_PG set, an unreachable database or failed migration
-# panics instead of skipping. Point I0721_DATABASE_URL at a SCRATCH
-# database (e.g. createdb i0721_dev_$(date +%Y%m%d)); tests leave a few
-# lane_* rows behind, so never aim it at production.
+# Opt-in PostgreSQL lane (`pg_*` tests in i0721-store). The cases are
+# `#[ignore]`d (L947): a gate-off run reports them as `ignored` instead of
+# a `passed` that executed zero SQL, and this recipe is what asks for the
+# ignored set. Fail-closed both ways — with I0721_TEST_PG set, an
+# unreachable database or failed migration panics instead of skipping, and
+# setting the gate without `--ignored` fails
+# `setting_the_gate_without_asking_for_the_ignored_set_is_an_error`.
+# Point I0721_DATABASE_URL at a SCRATCH database (e.g. createdb
+# i0721_dev_$(date +%Y%m%d)); tests leave a few lane_* rows behind, so
+# never aim it at production.
 # Serialised on purpose: the migration tests drop/recreate the global
 # unique index on a shared scratch database, so parallel index tests race
 # each other's hand-planted rows (11 failures / 26 parallel runs measured).
 pg-test:
-    I0721_TEST_PG=1 cargo test --workspace pg_ -- --nocapture --test-threads=1
+    I0721_TEST_PG=1 cargo test --workspace pg_ -- --ignored --nocapture --test-threads=1
 
 # Format check.
 fmt:

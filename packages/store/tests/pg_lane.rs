@@ -1,15 +1,25 @@
 //! The opt-in PostgreSQL lane — the only tests in the workspace that
 //! need a real database.
 //!
-//! Gate contract (fail-closed, the arona `test_db_lane` shape):
+//! Gate contract (fail-closed **and visible while it is closed**; L947):
 //!
-//! - `I0721_TEST_PG` unset → every test below skips cleanly (printed
-//!   once per process) and `cargo test --workspace` stays green without
-//!   external services.
+//! - `I0721_TEST_PG` unset → every case below is compiled `#[ignore]`d, so
+//!   `cargo test --workspace` stays green without external services *and*
+//!   libtest counts them as `ignored`, never as `passed`: a gate-off run
+//!   reads `38 ignored` instead of `38 passed`. That count is the whole
+//!   point — a skip printed by `eprintln!` is captured by libtest and is
+//!   indistinguishable from an assertion that held.
 //! - `I0721_TEST_PG` set → the URL must resolve, the server must be
 //!   reachable and the migrations must apply; anything else **panics**.
-//!   A red gate, never a silent skip that would read green with zero
-//!   assertions.
+//!   `db()` has no `None` arm: a closed gate inside a case libtest was
+//!   told to run panics instead of skipping, so the lane cannot be
+//!   reconfigured into silence from the other side either.
+//! - `I0721_TEST_PG` set but the run did not ask for the ignored set (a
+//!   bare `cargo test`, no `--ignored`) → all 38 cases stay in the
+//!   `ignored` bucket, so the run would read green with zero SQL. That
+//!   state is an error by construction:
+//!   `setting_the_gate_without_asking_for_the_ignored_set_is_an_error`
+//!   (the file's only ungated case) fails the run and names the command.
 //!
 //! Run with:
 //!
@@ -27,12 +37,8 @@
 //! the tokio runtime that created it and each `#[tokio::test]` has its
 //! own runtime.
 
-use std::sync::OnceLock;
-
 use i0721_proto::{FileKind, NewFile, Role};
 use i0721_store::{CreateUser, PgStore, Store, StoreError};
-
-static SKIP_NOTICE: OnceLock<()> = OnceLock::new();
 
 fn gate_set() -> bool {
     std::env::var("I0721_TEST_PG").is_ok()
@@ -73,19 +79,38 @@ async fn bootstrap() {
 }
 
 /// A fresh store against the shared, already-migrated database.
-async fn db() -> Option<PgStore> {
-    if !gate_set() {
-        SKIP_NOTICE.get_or_init(|| {
-            eprintln!("SKIP: set I0721_TEST_PG=1 (and I0721_DATABASE_URL) to run the pg_ lane");
-        });
-        return None;
-    }
+///
+/// There is deliberately no `None` arm: the cases above are `#[ignore]`d,
+/// so reaching this line means libtest was asked for the ignored set
+/// (`--ignored`, i.e. `just pg-test`). A closed gate at that point is a
+/// misconfigured operator env, and turning it back into a quiet `return`
+/// would restore exactly the false green L947 is about.
+async fn db() -> PgStore {
+    assert!(
+        gate_set(),
+        "the pg_ lane was asked to run (--ignored / just pg-test) but I0721_TEST_PG is unset — \
+         set I0721_TEST_PG=1 and I0721_DATABASE_URL, or drop --ignored"
+    );
     bootstrap().await;
-    Some(
-        PgStore::connect(&database_url())
-            .await
-            .expect("per-test connect must succeed (fail-closed)"),
-    )
+    PgStore::connect(&database_url())
+        .await
+        .expect("per-test connect must succeed (fail-closed)")
+}
+
+/// The other direction of the same gate, and the only case here that runs
+/// on a bare `cargo test`: with `I0721_TEST_PG` set but no `--ignored`,
+/// all 38 cases stay in the `ignored` bucket, so a green run would again
+/// mean "zero SQL executed". Refusing that state keeps both halves of the
+/// contract visible — gate off → `38 ignored`, gate on → the lane must
+/// actually be requested.
+#[test]
+fn setting_the_gate_without_asking_for_the_ignored_set_is_an_error() {
+    assert!(
+        !gate_set(),
+        "I0721_TEST_PG is set but this run did not ask for the #[ignore]d pg_ lane, so zero \
+         database cases executed: run `just pg-test` (or \
+         `cargo test --test pg_lane -- --ignored`) instead of a bare `cargo test`"
+    );
 }
 
 fn scratch_user() -> CreateUser {
@@ -104,8 +129,9 @@ fn scratch_user() -> CreateUser {
 /// Once migration 0007 exists the ALTER here is redundant (IF NOT
 /// EXISTS), so the check stays valid on every lane database.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_entity_layer_carries_a_new_nullable_uuid_column() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let alter = lacrymira::Command::Sql {
         dialect: lacrymira::Dialect::Postgres,
         text: "ALTER TABLE files ADD COLUMN IF NOT EXISTS bucket_id UUID \
@@ -155,8 +181,9 @@ async fn cleanup_user(store: &PgStore, id: uuid::Uuid) {
 }
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_migration_runner_is_idempotent() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     // The bootstrap already applied everything; a second `migrate()` must
     // skip cleanly — the seaql_migrations bookkeeping holds.
     let result = store.migrate().await.expect("second run must succeed");
@@ -165,8 +192,9 @@ async fn pg_migration_runner_is_idempotent() {
 }
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_user_crud_and_uniqueness() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let params = scratch_user();
     let created = store
         .create_user(params.clone())
@@ -200,8 +228,9 @@ async fn pg_user_crud_and_uniqueness() {
 }
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_files_timeline_dedupe_and_soft_delete() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let owner = store.create_user(scratch_user()).await.expect("owner");
     let other = store
         .create_user(scratch_user())
@@ -321,8 +350,9 @@ async fn pg_files_timeline_dedupe_and_soft_delete() {
 /// CHECK constraint accepts), both directions, and re-reads through the
 /// entity layer.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_set_user_role_writes_the_column_both_ways() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("create");
     assert_eq!(user.role, Role::Member, "a scratch user starts as member");
 
@@ -376,8 +406,9 @@ async fn pg_set_user_role_writes_the_column_both_ways() {
 /// default), and a MISSING id is the trait's Conflict — the admin-facing
 /// `quota.put` must not lose a write silently.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_set_user_quota_writes_both_ways_and_conflicts_on_a_missing_id() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("create");
     assert_eq!(user.quota_bytes, None, "a scratch user has no quota");
 
@@ -421,8 +452,9 @@ async fn pg_set_user_quota_writes_both_ways_and_conflicts_on_a_missing_id() {
 }
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_settings_upsert_round_trip() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let key = format!("lane_{}", uuid::Uuid::new_v4().simple());
     store
         .set_setting(&key, serde_json::json!({"n": 1}))
@@ -444,8 +476,9 @@ async fn pg_settings_upsert_round_trip() {
 }
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_settings_seed_row_exists() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let site = store
         .get_setting(i0721_proto::CONFIG_SETTING_KEY)
         .await
@@ -461,8 +494,9 @@ async fn pg_settings_seed_row_exists() {
 // ── the netdisk schema on real PostgreSQL (migration 0004) ─────────────
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_folder_check_and_root_name_uniqueness() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
 
     let user = store
         .create_user(CreateUser {
@@ -522,8 +556,9 @@ async fn pg_folder_check_and_root_name_uniqueness() {
 }
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_recursive_ancestors_and_subtree() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store
         .create_user(CreateUser {
             username: format!("rc_{}", uuid::Uuid::new_v4().simple()),
@@ -586,11 +621,12 @@ async fn pg_recursive_ancestors_and_subtree() {
 }
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_migration_0004_is_idempotent() {
     // The runner records applied versions; running the full set again
     // must be a no-op (the 0003 test covers the mechanism; this pins
     // that 0004 joins the recorded set).
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let result = store.migrate().await.expect("re-migration is a no-op");
     assert!(
         result.applied.is_empty(),
@@ -602,8 +638,9 @@ async fn pg_migration_0004_is_idempotent() {
 /// Migration 0004's legacy data cleansing: pre-existing same-owner
 /// same-layer duplicate names get suffixed; the unique index then holds.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
 
     let user = store
         .create_user(CreateUser {
@@ -725,8 +762,9 @@ async fn pg_migration_0004_dedupes_legacy_names_and_enforces_index() {
 }
 
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_sum_live_sizes_returns_bigint() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store
         .create_user(CreateUser {
             username: format!("sum_{}", uuid::Uuid::new_v4().simple()),
@@ -748,8 +786,9 @@ async fn pg_sum_live_sizes_returns_bigint() {
 /// same free candidate; the rank-pairing rewrite must hand the k-th
 /// renamer the k-th free candidate.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_migration_0004_dedupe_survives_three_fold_duplicates() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
 
     let user = store
         .create_user(CreateUser {
@@ -853,8 +892,9 @@ async fn pg_migration_0004_dedupe_survives_three_fold_duplicates() {
 /// carry the requested parent (this is the defect C2 found hardwired
 /// to None on both store lanes).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_create_file_honors_parent_id() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
 
     let user = store
         .create_user(CreateUser {
@@ -916,8 +956,9 @@ async fn pg_create_file_honors_parent_id() {
 /// `find_share_by_file` is owner-scoped, answers the file's row and has
 /// no cross-owner leak (the MCP `get_share_link` reuse path reads it).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_find_share_by_file_is_owner_scoped() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let owner = store.create_user(scratch_user()).await.expect("owner");
     let other = store
         .create_user(scratch_user())
@@ -997,13 +1038,14 @@ async fn pg_find_share_by_file_is_owner_scoped() {
 /// answer through `Reply::Affected`, so a `returning: true` site would
 /// turn every call into an error.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_api_key_lifecycle_reads_affected_counts() {
     // R2 S3 finding: revoke/touch carry `returning: false` — they read the
     // affected count, which only exists on the Affected reply path. Before
     // 0.2 the driver always answered Rows, so revoke's `let Reply::Affected`
     // never matched and every call errored. Pin both the success and the
     // second-call (0 rows) verdict.
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     let record = i0721_proto::ApiKeyRecord {
         id: uuid::Uuid::new_v4(),
@@ -1060,8 +1102,9 @@ async fn pg_api_key_lifecycle_reads_affected_counts() {
 /// at the write (a permissions column may not silently become the
 /// fail-open "empty = full" set).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_api_key_scopes_round_trip_and_reject_garbage() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     for payload in [
         "[]",
@@ -1121,8 +1164,9 @@ async fn pg_api_key_scopes_round_trip_and_reject_garbage() {
 /// MUT:M8 — gutting the shared SQL's WHERE turns this test red: it is that
 /// SQL the lane exercises, not the migration runner's state.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_api_key_legacy_scopes_normalize_and_expiry_round_trips() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     let legacy_id = uuid::Uuid::new_v4();
 
@@ -1391,8 +1435,9 @@ async fn run_bootstrap(store: &PgStore) {
 /// fails the statement; this test must turn red with exactly that
 /// failure.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_backfill_sql_fills_every_row() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     plant_file(&store, user.id, "unlabelled.png", "local", None).await;
     plant_file(&store, user.id, "unknown.png", "gcs", None).await;
@@ -1412,8 +1457,9 @@ async fn pg_0007_backfill_sql_fills_every_row() {
 /// its own bucket (planted before this run) must keep it — the fixed
 /// point property.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_backfill_is_a_fixed_point() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     plant_file(&store, user.id, "re.png", "local", None).await;
     run_bootstrap(&store).await;
@@ -1452,8 +1498,9 @@ async fn pg_0007_backfill_is_a_fixed_point() {
 /// MUT:M1b's second face: a row with its OWN bucket (planted with one)
 /// must survive the backfill untouched.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
 
     // Plant one row already carrying a bucket — with its LABEL and its
@@ -1547,8 +1594,9 @@ async fn pg_0007_backfill_never_touches_a_row_with_a_bucket() {
 /// The bootstrap upsert keeps the FIRST id stable across re-runs (the
 /// CTE's `ON CONFLICT DO UPDATE ... RETURNING id`).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_bootstrap_bucket_id_is_stable() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let read_id = || async {
         let reply = store
             .executor
@@ -1583,8 +1631,9 @@ async fn pg_0007_bootstrap_bucket_id_is_stable() {
 /// already proves the shape; this re-runs the whole 0007 SQL block on
 /// the migrated database and counts the rows.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_seats_a_bootstrap_row_per_backend_label() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     // The lane database is shared across serial tests: earlier fixtures
     // (the M1b backfill one) seat `bootstrap-s3` themselves with a
@@ -1650,8 +1699,9 @@ async fn pg_0007_seats_a_bootstrap_row_per_backend_label() {
 /// COALESCE by slug); this plants rows of every label and reads the
 /// assignments back through the store.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_backfills_rows_by_their_storage_backend_label() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     plant_file(&store, user.id, "by-s3.png", "s3", None).await;
     plant_file(&store, user.id, "by-local.png", "local", None).await;
@@ -1707,8 +1757,9 @@ async fn pg_0007_backfills_rows_by_their_storage_backend_label() {
 /// (`gcs` is not one of the three tags) they must fold onto
 /// `bootstrap-local`.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_folders_and_unlabelled_rows_follow_the_current_backend() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     let folder = store
         .create_folder(user.id, None, "docs", None)
@@ -1765,8 +1816,9 @@ async fn pg_0007_folders_and_unlabelled_rows_follow_the_current_backend() {
 /// Q5/R-K's refusal half: a second ipfs bucket is refused by the
 /// partial unique index (DIRECT INSERT only — the upsert half is P2a).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_second_ipfs_bucket_is_refused() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     fn insert<'a>(
         store: &'a PgStore,
         slug: &'a str,
@@ -1816,8 +1868,9 @@ async fn pg_0007_second_ipfs_bucket_is_refused() {
 /// the migration runs once; this test only proves the named constants
 /// parse and the backfill asserts loudly when a row escapes).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     // The fixture's migration already ran the schema; verify the named
     // constants match what exists.
     // Exact names — a `LIKE '%table%'` count proves the pkey exists,
@@ -1919,8 +1972,9 @@ async fn pg_0007_bucket_schema_and_indexes_are_present_after_migration() {
 /// the answer to true; a probe-less implementation errors there instead,
 /// and a constant-false one fails the final assertion.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_bucket_migration_pending_tracks_the_bookkeeping_table() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     // After the fixture's migration the answer is false.
     assert!(
         !store.bucket_migration_pending().await.unwrap(),
@@ -1960,8 +2014,9 @@ async fn pg_bucket_migration_pending_tracks_the_bookkeeping_table() {
 /// `list_live_rows_by_storage_key` turns this test red on the PG store
 /// (the memory store's insertion order would still pass).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_list_live_rows_orders_by_id_asc() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     // The lane shares one scratch database across serial runs — clear the
     // probe rows a previous run may have left, or the assertion below
@@ -2022,8 +2077,9 @@ async fn pg_list_live_rows_orders_by_id_asc() {
 /// signup) that the P2a slices build on. Immutability enforcement lands
 /// with P2a's upsert rejection; this test pins what 0007 writes.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0007_seats_the_bootstrap_bucket_with_its_identity_fields() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let buckets = store.list_storage_buckets().await.unwrap();
     let bootstrap = buckets
         .iter()
@@ -2048,8 +2104,9 @@ async fn pg_0007_seats_the_bootstrap_bucket_with_its_identity_fields() {
 /// MUT:M-A2a / MUT:M-A2b / MUT:M-A2c drive the wrong PG shapes (root
 /// escape / always-allow / inverted comparison).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_set_parent_refuses_a_cross_bucket_parent() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     let buckets = store.list_storage_buckets().await.unwrap();
     let local = buckets
@@ -2211,8 +2268,9 @@ async fn plant_key(store: &PgStore, user_id: uuid::Uuid, name: &str, scopes: &st
 /// demotion-time answer — the snapshot happens at 0008's runtime, not at
 /// the key's creation).
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     // MUT:R-A-ADMIN-SET — two buckets: `open` carries grant_on_signup,
     // `closed` does not (so the admin oracle must include a bucket the
     // signup default alone would exclude). SLUG-UNIQUE slugs (one lane
@@ -2506,8 +2564,9 @@ async fn pg_0008_k_era_keys_snapshot_equals_granted_buckets_at_migration_time() 
 /// the key IS an orphan. The migration answers NO error and the other
 /// (live-owner) keys still materialize.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0008_orphan_user_key_does_not_break_the_migration() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let owner = store.create_user(scratch_user()).await.expect("user");
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let slug_signup = format!("orphansignup-{suffix}");
@@ -2606,8 +2665,9 @@ async fn pg_0008_orphan_user_key_does_not_break_the_migration() {
 /// MUT:M-P2A8 — dropping the `revoked_at IS NULL` guard makes 0008
 /// rewrite REVOKED keys too; the revoked row must stay untouched.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0008_revoked_keys_are_untouched() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     let id = plant_key(&store, user.id, "revoked", r#"{"ops":["read"]}"#).await;
     store
@@ -2648,8 +2708,9 @@ async fn pg_0008_revoked_keys_are_untouched() {
 /// MUT:M-P2A9 — dropping the `IS DISTINCT FROM 'array'` guard rewrites
 /// keys that ALREADY carry a buckets array; those must be untouched.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0008_keys_already_carrying_buckets_are_untouched() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     let id = plant_key(
         &store,
@@ -2673,8 +2734,9 @@ async fn pg_0008_keys_already_carrying_buckets_are_untouched() {
 /// plants directly; the CASE wraps it to `{}` first, and the
 /// materialized buckets land INSIDE the resulting object.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0008_wraps_a_non_object_scopes_value() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     // A raw ARRAY scopes value (jsonb_typeof = 'array', not 'object'):
     // the exact shape the CASE guard exists for.
@@ -2719,8 +2781,9 @@ async fn pg_0008_wraps_a_non_object_scopes_value() {
 /// not-carrying-buckets predicate is NOT a fixed point (or worse, is
 /// unguarded in the other direction); re-running must change nothing.
 #[tokio::test]
+#[ignore = "needs I0721_TEST_PG and I0721_DATABASE_URL -> just pg-test"]
 async fn pg_0008_is_idempotent() {
-    let Some(store) = db().await else { return };
+    let store = db().await;
     let user = store.create_user(scratch_user()).await.expect("user");
     let id = plant_key(&store, user.id, "twice", r#"{"ops":["read"]}"#).await;
     run_migration_0008(&store).await;
