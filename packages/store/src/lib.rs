@@ -334,6 +334,10 @@ pub trait Store: Send + Sync {
     async fn sum_live_sizes(&self, owner_id: Uuid) -> Result<i64, StoreError>;
 
     /// Set a user's per-user quota (None = the global default).
+    ///
+    /// A missing id is a `StoreError::Conflict` (the caller resolved the id
+    /// from a binding it had just read — a vanished row is a contradiction,
+    /// not a no-op).
     async fn set_user_quota(
         &self,
         user_id: Uuid,

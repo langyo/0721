@@ -1331,6 +1331,36 @@ mod tests {
         assert_eq!(store.count_users().await.unwrap(), 1);
     }
 
+    /// `set_user_quota` writes the cap and clears back to the default;
+    /// an unknown id is `Conflict` (the pg lane mirrors this).
+    #[tokio::test]
+    async fn set_user_quota_writes_and_conflicts_on_a_missing_id() {
+        let store = MemoryStore::new();
+        let user = store.create_user(new_user("quota-user")).await.unwrap();
+        assert_eq!(user.quota_bytes, None);
+
+        let cap = 4096i64;
+        store.set_user_quota(user.id, Some(cap)).await.unwrap();
+        assert_eq!(
+            store.get_user(user.id).await.unwrap().unwrap().quota_bytes,
+            Some(cap),
+            "the cap landed"
+        );
+
+        store.set_user_quota(user.id, None).await.unwrap();
+        assert_eq!(
+            store.get_user(user.id).await.unwrap().unwrap().quota_bytes,
+            None,
+            "None falls back to the global default"
+        );
+
+        let err = store
+            .set_user_quota(uuid::Uuid::new_v4(), Some(cap))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, crate::StoreError::Conflict(_)), "got {err:?}");
+    }
+
     /// An unknown id is `Conflict` — the same answer `set_user_quota` gives.
     #[tokio::test]
     async fn set_user_role_of_a_missing_user_is_a_conflict() {
