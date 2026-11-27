@@ -67,8 +67,10 @@ check: webui
 lint: webui
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Run all tests (no external services). The PostgreSQL lane is compiled
-# `#[ignore]`d, so it shows up as `N ignored` here — never as `passed`.
+# The PostgreSQL lane is compiled `#[ignore]`d, so a full run here reports
+# it as `N ignored` — never as a `passed` that ran zero SQL (L947).
+#
+# Run all tests (no external services).
 test: webui
     cargo test --workspace
 
@@ -85,6 +87,8 @@ test: webui
 # Serialised on purpose: the migration tests drop/recreate the global
 # unique index on a shared scratch database, so parallel index tests race
 # each other's hand-planted rows (11 failures / 26 parallel runs measured).
+#
+# Run the opt-in PostgreSQL lane against a SCRATCH database.
 pg-test:
     I0721_TEST_PG=1 cargo test --workspace pg_ -- --ignored --nocapture --test-threads=1
 
