@@ -3,18 +3,19 @@
 //!
 //! Gate contract (fail-closed **and visible while it is closed**; L947):
 //!
-//! - `I0721_TEST_PG` unset → every case below is compiled `#[ignore]`d, so
-//!   `cargo test --workspace` stays green without external services *and*
-//!   libtest counts them as `ignored`, never as `passed`: a gate-off run
-//!   reads `38 ignored` instead of `38 passed`. That count is the whole
-//!   point — a skip printed by `eprintln!` is captured by libtest and is
-//!   indistinguishable from an assertion that held.
-//! - `I0721_TEST_PG` set → the URL must resolve, the server must be
-//!   reachable and the migrations must apply; anything else **panics**.
-//!   `db()` has no `None` arm: a closed gate inside a case libtest was
-//!   told to run panics instead of skipping, so the lane cannot be
-//!   reconfigured into silence from the other side either.
-//! - `I0721_TEST_PG` set but the run did not ask for the ignored set (a
+//! - `I0721_TEST_PG` unset, or set to anything but `1` / `true` → every
+//!   case below is compiled `#[ignore]`d, so `cargo test --workspace` stays
+//!   green without external services *and* libtest counts them as
+//!   `ignored`, never as `passed`: a gate-off run reads `38 ignored` instead
+//!   of `38 passed`. That count is the whole point — a skip printed by
+//!   `eprintln!` is captured by libtest and is indistinguishable from an
+//!   assertion that held.
+//! - `I0721_TEST_PG` on (`1` / `true`) → the URL must resolve, the server
+//!   must be reachable and the migrations must apply; anything else
+//!   **panics**. `db()` has no `None` arm: a closed gate inside a case
+//!   libtest was told to run panics instead of skipping, so the lane cannot
+//!   be reconfigured into silence from the other side either.
+//! - `I0721_TEST_PG` on but the run did not ask for the ignored set (a
 //!   bare `cargo test`, no `--ignored`) → all 38 cases stay in the
 //!   `ignored` bucket, so the run would read green with zero SQL. That
 //!   state is an error by construction:
@@ -40,8 +41,12 @@
 use i0721_proto::{FileKind, NewFile, Role};
 use i0721_store::{CreateUser, PgStore, Store, StoreError};
 
+/// The gate, parsed strictly: only `1` / `true` turn the lane on (the ERP
+/// lane parses its own gate the same way). A loose `is_ok()` would read an
+/// explicit `I0721_TEST_PG=0` as "on", and the meta test below would then
+/// redden a bare `cargo test` for someone who just turned the lane off.
 fn gate_set() -> bool {
-    std::env::var("I0721_TEST_PG").is_ok()
+    std::env::var("I0721_TEST_PG").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
 fn database_url() -> String {
@@ -88,8 +93,8 @@ async fn bootstrap() {
 async fn db() -> PgStore {
     assert!(
         gate_set(),
-        "the pg_ lane was asked to run (--ignored / just pg-test) but I0721_TEST_PG is unset — \
-         set I0721_TEST_PG=1 and I0721_DATABASE_URL, or drop --ignored"
+        "the pg_ lane was asked to run (--ignored / just pg-test) but I0721_TEST_PG is not \
+         1 / true — set I0721_TEST_PG=1 and I0721_DATABASE_URL, or drop --ignored"
     );
     bootstrap().await;
     PgStore::connect(&database_url())
@@ -107,7 +112,7 @@ async fn db() -> PgStore {
 fn setting_the_gate_without_asking_for_the_ignored_set_is_an_error() {
     assert!(
         !gate_set(),
-        "I0721_TEST_PG is set but this run did not ask for the #[ignore]d pg_ lane, so zero \
+        "I0721_TEST_PG is on but this run did not ask for the #[ignore]d pg_ lane, so zero \
          database cases executed: run `just pg-test` (or \
          `cargo test --test pg_lane -- --ignored`) instead of a bare `cargo test`"
     );
