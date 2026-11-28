@@ -18,6 +18,9 @@ describe("deployment default wiring", () => {
   });
 
   it("declares the brand id on the page seam hikari reads", () => {
+    // A floor-ruling change must always trip this declaration before any
+    // default resolution — the seam is the single wiring point.
+    // MUT:brand-default-seam
     declareBrandDefault();
     expect(
       (window as unknown as { __celestiaDefaultTheme?: string }).__celestiaDefaultTheme,
@@ -29,7 +32,7 @@ describe("deployment default wiring", () => {
     const declared = (window as unknown as { __celestiaDefaultTheme?: string })
       .__celestiaDefaultTheme;
     // The seam is only honored when the id resolves — a dangling default
-    // would silently fall back to the factory scheme again.
+    // silently falls back to the factory scheme again. MUT:brand-default-seam
     expect(themePresets[declared as string]).toBeDefined();
     expect(brandPresets[declared as string]).toBeDefined();
   });
@@ -38,6 +41,7 @@ describe("deployment default wiring", () => {
     declareBrandDefault();
     // The design keeps hikari's stock `default` in the table (personal
     // installs pick it in the picker); only the DEFAULT moves to the brand.
+    // MUT:brand-factory-row-kept
     expect(themePresets["default"]).toBeDefined();
     expect(Object.keys(themePresets)).toContain(RES_THEME_ID);
   });
