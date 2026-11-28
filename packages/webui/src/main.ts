@@ -6,7 +6,7 @@ import { createApp } from "vue";
 import App from "./App";
 import { createAppI18n, setGlobalI18n, setLocale } from "@/i18n";
 import { router } from "@/router";
-import { registerBrandPresets } from "@/theme";
+import { declareBrandDefault, registerBrandPresets } from "@/theme";
 import { useAuthStore, wireUnauthorizedLogout } from "@/stores/auth";
 
 const app = createApp(App);
@@ -35,6 +35,7 @@ app.use(createErrorReporting());
 // The brand presets must be installed BEFORE initTheme() so the very
 // first applyTheme() can resolve a persisted brand selection.
 registerBrandPresets();
+declareBrandDefault();
 initTheme();
 
 const auth = useAuthStore(pinia);
