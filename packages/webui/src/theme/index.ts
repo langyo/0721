@@ -75,6 +75,19 @@ export const brandPresets: Record<string, ThemePreset> = {
  * Install the brand presets into hikari's preset table. Idempotent; call
  * before `initTheme()`. Stock presets are kept (see the module doc).
  */
+/**
+ * Declare the deployment default through hikari's page seam
+ * (`window.__celestiaDefaultTheme`, the same field the family boot
+ * loaders honor): a selection-less visitor lands on the brand, while a
+ * stored or user-chosen selection always wins and the factory scheme
+ * stays selectable in the picker for personal installs. Idempotent;
+ * call before `initTheme()` (see main.ts).
+ */
+export function declareBrandDefault(): void {
+  (window as unknown as { __celestiaDefaultTheme?: string }).__celestiaDefaultTheme =
+    RES_THEME_ID;
+}
+
 export function registerBrandPresets(): void {
   const table = themePresets as Record<string, ThemePreset>;
   for (const preset of Object.values(brandPresets)) {
